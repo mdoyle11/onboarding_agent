@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt && pip install -e .
+
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+
+      - name: Type-check with mypy
+        run: mypy src/
+
+      - name: Run unit tests
+        env:
+          # Stub env vars so config.py doesn't fail at import
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'sk-ant-test' }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || 'test-tenant' }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || 'test-client' }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET || 'test-secret' }}
+          GRAPH_EXCEL_DRIVE_ID: test-drive
+          GRAPH_EXCEL_ITEM_ID: test-item
+          GRAPH_FORMS_FORM_ID: test-form
+          TEAMS_TEAM_ID: test-team
+          TEAMS_CHANNEL_ID: test-channel
+          DOCUSIGN_ACCOUNT_ID: test-account
+          DOCUSIGN_INTEGRATION_KEY: test-integration-key
+          DOCUSIGN_USER_ID: test-user-id
+          DOCUSIGN_PRIVATE_KEY_PATH: /dev/null
+          DOCUSIGN_TEMPLATE_ID: test-template
+          MICROSOFT_APP_ID: test-app-id
+          MICROSOFT_APP_PASSWORD: test-app-password
+          WEBHOOK_SECRET: test-webhook-secret
+        run: pytest tests/unit/ -v --tb=short
