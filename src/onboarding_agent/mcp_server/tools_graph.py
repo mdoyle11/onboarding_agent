@@ -163,6 +163,67 @@ def register(mcp: FastMCP) -> None:
         return {**result, "summary": summary}
 
     @mcp.tool()
+    async def list_employees(pending_stage: str = "") -> dict[str, Any]:
+        f"""
+        List all employees in the {_backend} onboarding tracker.
+
+        Parameters:
+        - pending_stage: Optional. If provided, only returns employees who have
+          NOT yet completed this stage (i.e. the stage date is blank/empty).
+          Leave blank to return all employees regardless of stage.
+
+        Valid stage names:
+          "Added to Tracker", "Sent Offer Letter", "Offer Letter Signed",
+          "Background Submission", "Background Cleared", "Added to ADP",
+          "Complete in ADP", "Clear to Start", "Prorations Sent"
+
+        Use this to answer questions like:
+          "Who is pending / waiting for signature?" → pending_stage="Offer Letter Signed"
+          "Who hasn't been added yet?" → pending_stage="Added to Tracker"
+          "List everyone in onboarding" → no filter
+          "How many people are in the pipeline?" → no filter
+
+        Returns a dict with:
+        - count (int) — number of matching employees
+        - pending_stage (str) — the filter applied, or "" if none
+        - employees (list) — each has: name, email, start_date, department, stages (dict)
+        - summary (str) — human-readable answer ready to send to the user
+        """
+        if settings.is_sheets():
+            from onboarding_agent.integrations.sheets_client import SheetsClient
+            result = await SheetsClient().list_all_employees()
+        else:
+            return {"count": 0, "employees": [], "summary": "list_employees not supported for Excel backend"}
+
+        if not result.get("success"):
+            return result
+
+        employees = result["employees"]
+        if pending_stage:
+            employees = [e for e in employees if not e["stages"].get(pending_stage)]
+
+        # Build human-readable summary
+        if not employees:
+            if pending_stage:
+                summary = f"No employees are pending **{pending_stage}** — all have completed it."
+            else:
+                summary = "The tracker is empty — no employees have been added yet."
+        else:
+            names = ", ".join(f"{e['name']} ({e['email']})" for e in employees)
+            if pending_stage:
+                summary = (
+                    f"**{len(employees)} employee(s)** are pending **{pending_stage}**:\n"
+                    + "\n".join(f"  • {e['name']} ({e['email']})" for e in employees)
+                )
+            else:
+                summary = (
+                    f"**{len(employees)} employee(s)** in the tracker:\n"
+                    + "\n".join(f"  • {e['name']} ({e['email']})" for e in employees)
+                )
+
+        return {"count": len(employees), "pending_stage": pending_stage, "employees": employees, "summary": summary}
+
+    @mcp.tool()
     async def get_form_submission_by_id(submission_id: str) -> dict[str, Any]:
         """
         Fetch a specific Microsoft Forms submission by its ID.

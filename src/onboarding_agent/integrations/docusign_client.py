@@ -104,15 +104,21 @@ class DocuSignClient:
         try:
             api_client = self._get_api_client()
             envelopes_api = EnvelopesApi(api_client)
-            result = envelopes_api.list_status_changes(
-                account_id=settings.docusign_account_id,
-                from_date="2000-01-01",
-                status="created",
-                custom_field=f"employee_email={employee_email}",
-            )
-            envelopes = result.envelopes or []
-            if envelopes:
-                return {"exists": True, "envelope_id": envelopes[0].envelope_id or ""}
+            # Search across all active statuses — once sent the status is no longer "created"
+            for status in ("created", "sent", "delivered", "completed"):
+                result = envelopes_api.list_status_changes(
+                    account_id=settings.docusign_account_id,
+                    from_date="2000-01-01",
+                    status=status,
+                    custom_field=f"employee_email={employee_email}",
+                )
+                envelopes = result.envelopes or []
+                if envelopes:
+                    return {
+                        "exists": True,
+                        "envelope_id": envelopes[0].envelope_id or "",
+                        "status": status,
+                    }
             return {"exists": False, "envelope_id": ""}
         except ApiException as exc:
             logger.exception("check_draft_exists failed")

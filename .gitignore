@@ -26,3 +26,4 @@ htmlcov/
 .vscode/
 .idea/
 *.swp
+google_service_account.json

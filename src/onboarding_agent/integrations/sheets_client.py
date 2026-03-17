@@ -194,6 +194,31 @@ class SheetsClient:
     # Get all stages for an employee
     # ------------------------------------------------------------------
 
+    async def list_all_employees(self) -> dict[str, Any]:
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._list_all_sync
+        )
+
+    def _list_all_sync(self) -> dict[str, Any]:
+        try:
+            ws = _get_worksheet()
+            rows = ws.get_all_values()
+            employees = []
+            for row in rows[1:]:  # skip header
+                if len(row) <= _COL_EMAIL or not row[_COL_EMAIL]:
+                    continue
+                employees.append({
+                    "name": row[_COL_NAME] if len(row) > _COL_NAME else "",
+                    "email": row[_COL_EMAIL],
+                    "start_date": row[_COL_START_DATE] if len(row) > _COL_START_DATE else "",
+                    "department": row[_COL_DEPARTMENT] if len(row) > _COL_DEPARTMENT else "",
+                    "stages": _row_to_stages(row),
+                })
+            return {"success": True, "employees": employees, "count": len(employees)}
+        except Exception as exc:
+            logger.exception("list_all_employees failed")
+            return {"success": False, "employees": [], "count": 0, "error": str(exc)}
+
     async def get_employee_stages(self, employee_email: str) -> dict[str, Any]:
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_stages_sync, employee_email
