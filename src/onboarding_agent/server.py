@@ -132,20 +132,22 @@ def _setup_teams(app: web.Application) -> None:
 # ---------------------------------------------------------------------------
 
 def _setup_slack(app: web.Application) -> None:
-    from onboarding_agent.integrations.slack_bot import create_slack_handler
-
-    handler = create_slack_handler()
-
+    # Handler must be created inside the running event loop — defer to on_startup.
     async def start_socket_mode(application: web.Application) -> None:
+        from onboarding_agent.integrations.slack_bot import create_slack_handler
+        handler = create_slack_handler()
+        application["slack_handler"] = handler
         logger.info("Starting Slack Socket Mode handler…")
         asyncio.create_task(handler.start_async())
 
     async def stop_socket_mode(application: web.Application) -> None:
-        await handler.close_async()
+        handler = application.get("slack_handler")
+        if handler:
+            await handler.close_async()
 
     app.on_startup.append(start_socket_mode)
     app.on_cleanup.append(stop_socket_mode)
-    logger.info("Slack Socket Mode handler registered")
+    logger.info("Slack Socket Mode will start on server startup")
 
 
 # ---------------------------------------------------------------------------
