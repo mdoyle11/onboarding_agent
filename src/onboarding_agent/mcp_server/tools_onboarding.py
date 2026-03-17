@@ -1,4 +1,4 @@
-"""Composite onboarding tools — combine Graph + DocuSign into human-readable summaries."""
+"""Composite onboarding tools — combine tracker stages + DocuSign into human-readable summaries."""
 
 from __future__ import annotations
 
@@ -10,6 +10,17 @@ from fastmcp import FastMCP
 from onboarding_agent.config import settings
 from onboarding_agent.integrations.docusign_client import DocuSignClient
 
+logger = logging.getLogger(__name__)
+
+_DS_STATUS_LINES = {
+    "":          "No DocuSign envelope has been created yet.",
+    "created":   "A DocuSign draft has been created but not yet sent.",
+    "sent":      "DocuSign sent — awaiting signature.",
+    "delivered": "DocuSign delivered and viewed by recipient.",
+    "completed": "DocuSign fully signed and completed.",
+    "voided":    "DocuSign envelope was voided.",
+}
+
 
 def _tracker():
     if settings.is_sheets():
@@ -18,8 +29,6 @@ def _tracker():
     from onboarding_agent.integrations.graph_client import GraphClient
     return GraphClient()
 
-logger = logging.getLogger(__name__)
-
 
 def register(mcp: FastMCP) -> None:
     """Register all composite onboarding tools on the given FastMCP instance."""
@@ -27,78 +36,83 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def get_onboarding_status(employee_email: str) -> dict[str, Any]:
         """
-        Get a comprehensive onboarding status for an employee by combining data
-        from the Excel tracker and DocuSign.
+        Get a comprehensive onboarding status for an employee, combining pipeline
+        stage tracking and DocuSign envelope status.
 
-        This is the primary tool for answering HR questions like
-        "What's the status of [employee]?" or "Has [employee] signed their offer letter?".
+        This is the primary tool for HR queries like:
+          "What's the status of [employee]?"
+          "Has [employee] signed their offer letter?"
+          "Where is [employee] in the pipeline?"
 
         Parameters:
         - employee_email: The new hire's email address
 
         Returns a dict with:
-        - found (bool) — False if the employee is not in the tracker at all
+        - found (bool)
         - employee_email (str)
-        - excel_status (str) — status from the onboarding tracker
-        - docusign_envelope_id (str) — empty if no envelope exists
-        - docusign_status (str) — e.g. "created", "sent", "completed", empty if none
-        - summary (str) — human-readable one-paragraph status suitable for pasting into Teams
+        - name (str)
+        - stages (dict) — all pipeline stages with completion dates or "" if pending
+        - docusign_envelope_id (str)
+        - docusign_status (str) — created | sent | delivered | completed | voided
+        - summary (str) — full human-readable status with per-stage breakdown
         """
-        docusign_client = DocuSignClient()
+        tracker = _tracker()
 
-        tracker = await _tracker().find_employee_in_tracker(employee_email)
+        # Fetch stage data
+        if settings.is_sheets():
+            from onboarding_agent.integrations.sheets_client import SheetsClient
+            record = await SheetsClient().get_employee_stages(employee_email)
+        else:
+            from onboarding_agent.integrations.graph_client import GraphClient
+            record = await GraphClient().find_employee_in_tracker(employee_email)
 
-        if not tracker.get("found"):
+        if not record.get("found"):
             return {
                 "found": False,
                 "employee_email": employee_email,
-                "excel_status": "",
+                "stages": {},
                 "docusign_envelope_id": "",
                 "docusign_status": "",
                 "summary": (
-                    f"No onboarding record found for **{employee_email}** in the tracker. "
-                    "They may not have been added yet, or the email address may be incorrect."
+                    f"No onboarding record found for **{employee_email}**. "
+                    "They may not have been added yet, or the email may be incorrect."
                 ),
             }
 
-        excel_status = tracker.get("status", "Unknown")
-        row_id = tracker.get("row_id", "")
+        stages: dict[str, str] = record.get("stages", {})
+        name = record.get("name", employee_email)
 
-        # Check DocuSign
-        ds_check = await docusign_client.check_draft_exists(employee_email)
+        # DocuSign status
+        ds_client = DocuSignClient()
+        ds_check = await ds_client.check_draft_exists(employee_email)
         envelope_id = ds_check.get("envelope_id", "")
         docusign_status = ""
 
         if ds_check.get("exists") and envelope_id:
-            ds_status = await docusign_client.get_envelope_status(envelope_id)
-            docusign_status = ds_status.get("status", "unknown")
+            ds_result = await ds_client.get_envelope_status(envelope_id)
+            docusign_status = ds_result.get("status", "")
 
-        # Build human-readable summary
-        ds_line = ""
-        if not envelope_id:
-            ds_line = "No DocuSign envelope has been created yet."
-        elif docusign_status == "created":
-            ds_line = "A DocuSign draft has been created but not yet sent."
-        elif docusign_status == "sent":
-            ds_line = "DocuSign has been sent and is awaiting signature."
-        elif docusign_status == "delivered":
-            ds_line = "DocuSign was delivered and viewed by the recipient."
-        elif docusign_status == "completed":
-            ds_line = "DocuSign has been fully signed and completed."
-        elif docusign_status == "voided":
-            ds_line = "The DocuSign envelope was voided."
-        else:
-            ds_line = f"DocuSign status: {docusign_status}."
+        ds_line = _DS_STATUS_LINES.get(docusign_status, f"DocuSign status: {docusign_status}.")
+
+        # Build stage breakdown (active stages only for now)
+        active = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
+        stage_lines = []
+        for s in active:
+            val = stages.get(s, "")
+            icon = "✓" if val else "○"
+            stage_lines.append(f"  {icon} {s}: {val or 'pending'}")
 
         summary = (
-            f"**{employee_email}** — Tracker status: *{excel_status}*. {ds_line}"
+            f"**{name}** ({employee_email})\n"
+            + "\n".join(stage_lines)
+            + f"\n\nDocuSign: {ds_line}"
         )
 
         return {
             "found": True,
             "employee_email": employee_email,
-            "excel_row_id": row_id,
-            "excel_status": excel_status,
+            "name": name,
+            "stages": stages,
             "docusign_envelope_id": envelope_id,
             "docusign_status": docusign_status,
             "summary": summary,

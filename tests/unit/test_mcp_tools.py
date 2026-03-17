@@ -1,7 +1,7 @@
 """Tests for MCP tool logic with mocked tracker and DocuSign clients."""
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastmcp import FastMCP
 
 
@@ -22,15 +22,22 @@ class TestGetOnboardingStatus:
     def _patch_clients(self):
         self.tracker = AsyncMock()
         self.docusign = AsyncMock()
+
+        # SheetsClient is instantiated directly inside get_onboarding_status
+        # when is_sheets() is True, so we patch it at the source module too.
+        sheets_mock_cls = MagicMock(return_value=self.tracker)
+
         with (
             patch("onboarding_agent.mcp_server.tools_onboarding._tracker", return_value=self.tracker),
             patch("onboarding_agent.mcp_server.tools_onboarding.DocuSignClient", return_value=self.docusign),
+            patch("onboarding_agent.integrations.sheets_client.SheetsClient", sheets_mock_cls),
         ):
             yield
 
     @pytest.mark.asyncio
     async def test_not_found_returns_found_false(self):
         self.tracker.find_employee_in_tracker.return_value = {"found": False}
+        self.tracker.get_employee_stages.return_value = {"found": False}
 
         from onboarding_agent.mcp_server.tools_onboarding import register
         mcp = FastMCP(name="test")
@@ -44,8 +51,9 @@ class TestGetOnboardingStatus:
 
     @pytest.mark.asyncio
     async def test_found_with_draft_envelope(self):
-        self.tracker.find_employee_in_tracker.return_value = {
-            "found": True, "row_id": "3", "status": "Pending"
+        self.tracker.get_employee_stages.return_value = {
+            "found": True, "row_id": "3", "name": "Alice",
+            "stages": {"Added to Tracker": "2026-04-01", "Sent Offer Letter": "", "Offer Letter Signed": ""},
         }
         self.docusign.check_draft_exists.return_value = {
             "exists": True, "envelope_id": "env-123"
@@ -67,8 +75,13 @@ class TestGetOnboardingStatus:
 
     @pytest.mark.asyncio
     async def test_found_with_completed_envelope(self):
-        self.tracker.find_employee_in_tracker.return_value = {
-            "found": True, "row_id": "4", "status": "Completed"
+        self.tracker.get_employee_stages.return_value = {
+            "found": True, "row_id": "4", "name": "Bob",
+            "stages": {
+                "Added to Tracker": "2026-04-01",
+                "Sent Offer Letter": "2026-04-02",
+                "Offer Letter Signed": "2026-04-03",
+            },
         }
         self.docusign.check_draft_exists.return_value = {
             "exists": True, "envelope_id": "env-456"

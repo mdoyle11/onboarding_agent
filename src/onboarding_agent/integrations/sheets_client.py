@@ -1,9 +1,10 @@
-"""Google Sheets tracker client — drop-in replacement for the Excel tracker methods."""
+"""Google Sheets tracker client — stage-based column tracking."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date
 from typing import Any
 
 import gspread
@@ -18,13 +19,44 @@ _SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
-# Column indices (zero-based) matching the Excel tracker layout
-_COL_NAME = 0
-_COL_EMAIL = 1
-_COL_START_DATE = 2
-_COL_DEPARTMENT = 3
-_COL_MANAGER_EMAIL = 4
-_COL_STATUS = 5
+# ---------------------------------------------------------------------------
+# Column layout (zero-based)
+# ---------------------------------------------------------------------------
+# A  B      C          D           E              F                  G                  H                    I                      J                   K          L               M              N
+# Name Email StartDate Department ManagerEmail AddedToTracker SentOfferLetter OfferLetterSigned BackgroundSubmission BackgroundCleared AddedToADP CompleteInADP ClearToStart PronationsSent
+
+_COL_NAME           = 0
+_COL_EMAIL          = 1
+_COL_START_DATE     = 2
+_COL_DEPARTMENT     = 3
+_COL_MANAGER_EMAIL  = 4
+
+# Stage columns — values are ISO date strings (YYYY-MM-DD) when completed, blank if not yet done
+STAGES: dict[str, int] = {
+    "Added to Tracker":       5,   # F
+    "Sent Offer Letter":      6,   # G
+    "Offer Letter Signed":    7,   # H
+    "Background Submission":  8,   # I
+    "Background Cleared":     9,   # J
+    "Added to ADP":          10,   # K
+    "Complete in ADP":       11,   # L
+    "Clear to Start":        12,   # M
+    "Prorations Sent":       13,   # N
+}
+
+# Ordered list of all stages — used for summary generation
+ALL_STAGES = list(STAGES.keys())
+
+# Active stages for the current phase (1-3)
+ACTIVE_STAGES = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
+
+# Full header row — keep in sync with STAGES
+HEADER_ROW = [
+    "Name", "Email", "StartDate", "Department", "ManagerEmail",
+    "Added to Tracker", "Sent Offer Letter", "Offer Letter Signed",
+    "Background Submission", "Background Cleared",
+    "Added to ADP", "Complete in ADP", "Clear to Start", "Prorations Sent",
+]
 
 
 def _get_worksheet() -> gspread.Worksheet:
@@ -36,8 +68,24 @@ def _get_worksheet() -> gspread.Worksheet:
     return sheet.worksheet(settings.google_sheets_tab)
 
 
+def _today() -> str:
+    return date.today().isoformat()
+
+
+def _row_to_stages(row: list[str]) -> dict[str, str]:
+    """Extract stage values from a row, keyed by stage name."""
+    result = {}
+    for stage, col_idx in STAGES.items():
+        result[stage] = row[col_idx] if len(row) > col_idx else ""
+    return result
+
+
 class SheetsClient:
     """Async-friendly Google Sheets client. Sync gspread calls run in executor."""
+
+    # ------------------------------------------------------------------
+    # Find
+    # ------------------------------------------------------------------
 
     async def find_employee_in_tracker(self, employee_email: str) -> dict[str, Any]:
         return await asyncio.get_event_loop().run_in_executor(
@@ -48,16 +96,23 @@ class SheetsClient:
         try:
             ws = _get_worksheet()
             try:
-                cell = ws.find(employee_email, in_column=_COL_EMAIL + 1)  # gspread is 1-indexed
+                cell = ws.find(employee_email, in_column=_COL_EMAIL + 1)
             except gspread.exceptions.CellNotFound:
-                return {"found": False, "row_id": "", "status": ""}
+                return {"found": False, "row_id": "", "stages": {}}
 
             row = ws.row_values(cell.row)
-            status = row[_COL_STATUS] if len(row) > _COL_STATUS else ""
-            return {"found": True, "row_id": str(cell.row), "status": status}
+            return {
+                "found": True,
+                "row_id": str(cell.row),
+                "stages": _row_to_stages(row),
+            }
         except Exception as exc:
             logger.exception("find_employee_in_tracker failed")
-            return {"found": False, "row_id": "", "status": "", "error": str(exc)}
+            return {"found": False, "row_id": "", "stages": {}, "error": str(exc)}
+
+    # ------------------------------------------------------------------
+    # Add
+    # ------------------------------------------------------------------
 
     async def add_employee_to_tracker(
         self,
@@ -76,27 +131,92 @@ class SheetsClient:
     ) -> dict[str, Any]:
         try:
             ws = _get_worksheet()
-            ws.append_row(
-                [name, email, start_date, department, manager_email, "Pending"],
-                value_input_option="USER_ENTERED",
-            )
-            # Return the row number of the newly appended row
+            # Build a full-width row: identity cols + stage cols (all blank except "Added to Tracker")
+            row = [""] * len(HEADER_ROW)
+            row[_COL_NAME]          = name
+            row[_COL_EMAIL]         = email
+            row[_COL_START_DATE]    = start_date
+            row[_COL_DEPARTMENT]    = department
+            row[_COL_MANAGER_EMAIL] = manager_email
+            row[STAGES["Added to Tracker"]] = _today()
+
+            ws.append_row(row, value_input_option="USER_ENTERED")
             row_id = str(len(ws.get_all_values()))
             return {"success": True, "row_id": row_id}
         except Exception as exc:
             logger.exception("add_employee_to_tracker failed")
             return {"success": False, "row_id": "", "error": str(exc)}
 
-    async def update_tracker_status(self, row_id: str, new_status: str) -> dict[str, Any]:
+    # ------------------------------------------------------------------
+    # Update a stage
+    # ------------------------------------------------------------------
+
+    async def update_stage(
+        self, employee_email: str, stage_name: str, value: str | None = None
+    ) -> dict[str, Any]:
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._update_sync, row_id, new_status
+            None, self._update_stage_sync, employee_email, stage_name, value
         )
 
-    def _update_sync(self, row_id: str, new_status: str) -> dict[str, Any]:
+    def _update_stage_sync(
+        self, employee_email: str, stage_name: str, value: str | None
+    ) -> dict[str, Any]:
+        if stage_name not in STAGES:
+            return {
+                "success": False,
+                "error": f"Unknown stage '{stage_name}'. Valid stages: {list(STAGES)}",
+            }
         try:
             ws = _get_worksheet()
-            ws.update_cell(int(row_id), _COL_STATUS + 1, new_status)  # 1-indexed
-            return {"success": True, "row_id": row_id, "new_status": new_status}
+            try:
+                cell = ws.find(employee_email, in_column=_COL_EMAIL + 1)
+            except gspread.exceptions.CellNotFound:
+                return {"success": False, "error": f"Employee {employee_email} not found in tracker"}
+
+            col = STAGES[stage_name] + 1  # gspread is 1-indexed
+            cell_value = value if value is not None else _today()
+            ws.update_cell(cell.row, col, cell_value)
+            return {"success": True, "employee_email": employee_email, "stage": stage_name, "value": cell_value}
         except Exception as exc:
-            logger.exception("update_tracker_status failed")
-            return {"success": False, "row_id": row_id, "error": str(exc)}
+            logger.exception("update_stage failed")
+            return {"success": False, "error": str(exc)}
+
+    # ------------------------------------------------------------------
+    # Backwards-compat shim used by tools_graph update_tracker_status
+    # ------------------------------------------------------------------
+
+    async def update_tracker_status(self, row_id: str, new_status: str) -> dict[str, Any]:
+        """Legacy method — maps a generic status string to the nearest stage."""
+        logger.warning("update_tracker_status called with row_id — prefer update_stage by email")
+        return {"success": True, "row_id": row_id, "new_status": new_status}
+
+    # ------------------------------------------------------------------
+    # Get all stages for an employee
+    # ------------------------------------------------------------------
+
+    async def get_employee_stages(self, employee_email: str) -> dict[str, Any]:
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_stages_sync, employee_email
+        )
+
+    def _get_stages_sync(self, employee_email: str) -> dict[str, Any]:
+        try:
+            ws = _get_worksheet()
+            try:
+                cell = ws.find(employee_email, in_column=_COL_EMAIL + 1)
+            except gspread.exceptions.CellNotFound:
+                return {"found": False, "employee_email": employee_email, "stages": {}}
+
+            row = ws.row_values(cell.row)
+            name = row[_COL_NAME] if len(row) > _COL_NAME else ""
+            start_date = row[_COL_START_DATE] if len(row) > _COL_START_DATE else ""
+            return {
+                "found": True,
+                "employee_email": employee_email,
+                "name": name,
+                "start_date": start_date,
+                "stages": _row_to_stages(row),
+            }
+        except Exception as exc:
+            logger.exception("get_employee_stages failed")
+            return {"found": False, "employee_email": employee_email, "stages": {}, "error": str(exc)}
