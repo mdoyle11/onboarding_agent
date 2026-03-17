@@ -29,14 +29,14 @@ Future stages (not yet active): Background Submission, Background Cleared,
 Added to ADP, Complete in ADP, Clear to Start, Prorations Sent.
 
 ## Webhook trigger (trigger_source=pa_webhook)
-Run the full pipeline in order:
+Run the pipeline in order:
   1. Call find_employee_in_tracker — skip add if already exists
   2. Call add_employee_to_tracker — marks "Added to Tracker" automatically
   3. Call check_docusign_draft_exists — skip create if draft already exists
-  4. Call create_docusign_envelope_draft
-  5. Call send_docusign_envelope to send it immediately
-  6. Call update_tracker_stage with stage="Sent Offer Letter"
-  7. Send a {_INTERFACE} notification summarising what was done
+  4. Call create_docusign_envelope_draft — creates a DRAFT only, do NOT send it
+  5. Send a {_INTERFACE} notification summarising what was done and that the
+     DocuSign draft is ready for review. An HR team member will tell you when
+     to send it.
 
 ## HR query trigger (trigger_source=teams_query)
 Answer accurately using available tools. For status queries use get_onboarding_status.

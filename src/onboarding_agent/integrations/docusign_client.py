@@ -113,11 +113,15 @@ class DocuSignClient:
                     custom_field=f"employee_email={employee_email}",
                 )
                 envelopes = result.envelopes or []
-                if envelopes:
+                for env in envelopes:
+                    # Skip voided/declined — they're no longer active
+                    actual_status = (env.status or "").lower()
+                    if actual_status in ("voided", "declined"):
+                        continue
                     return {
                         "exists": True,
-                        "envelope_id": envelopes[0].envelope_id or "",
-                        "status": status,
+                        "envelope_id": env.envelope_id or "",
+                        "status": actual_status,
                     }
             return {"exists": False, "envelope_id": ""}
         except ApiException as exc:
