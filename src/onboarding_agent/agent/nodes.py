@@ -36,7 +36,7 @@ def _build_llm(tools: list) -> Any:
     if settings.is_gemini():
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
+            model=settings.gemini_model,
             google_api_key=settings.gemini_api_key,
         ).bind_tools(tools)
 

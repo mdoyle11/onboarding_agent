@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # Gemini (required when llm_provider=gemini)
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
 
     # ---------------------------------------------------------------------------
     # Chat interface — "slack" | "teams"
