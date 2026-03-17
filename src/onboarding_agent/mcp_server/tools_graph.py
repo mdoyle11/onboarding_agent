@@ -1,4 +1,4 @@
-"""Microsoft Graph tools — Excel tracker, Teams notifications, Forms lookup."""
+"""Tracker + notification tools — dispatches to Google Sheets or Excel based on config."""
 
 from __future__ import annotations
 
@@ -7,26 +7,36 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from onboarding_agent.integrations.graph_client import GraphClient
+from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
 
+def _tracker():
+    """Return the active tracker client based on TRACKER_BACKEND."""
+    if settings.is_sheets():
+        from onboarding_agent.integrations.sheets_client import SheetsClient
+        return SheetsClient()
+    from onboarding_agent.integrations.graph_client import GraphClient
+    return GraphClient()
+
+
 def register(mcp: FastMCP) -> None:
-    """Register all Graph tools on the given FastMCP instance."""
+    """Register all tracker and notification tools on the given FastMCP instance."""
+
+    _backend = "Google Sheets" if settings.is_sheets() else "Excel"
 
     @mcp.tool()
     async def find_employee_in_tracker(employee_email: str) -> dict[str, Any]:
-        """
-        Search the Excel onboarding tracker for an employee by email.
+        f"""
+        Search the {_backend} onboarding tracker for an employee by email.
 
         Returns a dict with keys:
         - found (bool)
-        - row_id (str) — Excel row identifier, empty if not found
+        - row_id (str) — row identifier, empty if not found
         - status (str) — current onboarding status, empty if not found
         """
-        client = GraphClient()
-        return await client.find_employee_in_tracker(employee_email)
+        return await _tracker().find_employee_in_tracker(employee_email)
 
     @mcp.tool()
     async def add_employee_to_tracker(
@@ -50,13 +60,12 @@ def register(mcp: FastMCP) -> None:
         - success (bool)
         - row_id (str) — identifier of the newly created row
         """
-        client = GraphClient()
-        return await client.add_employee_to_tracker(name, email, start_date, department, manager_email)
+        return await _tracker().add_employee_to_tracker(name, email, start_date, department, manager_email)
 
     @mcp.tool()
     async def update_tracker_status(row_id: str, new_status: str) -> dict[str, Any]:
-        """
-        Update the status cell for an existing employee row in the Excel tracker.
+        f"""
+        Update the status cell for an existing employee row in the {_backend} tracker.
 
         Parameters:
         - row_id: Row identifier returned by find_employee_in_tracker or add_employee_to_tracker
@@ -67,8 +76,7 @@ def register(mcp: FastMCP) -> None:
         - row_id (str)
         - new_status (str)
         """
-        client = GraphClient()
-        return await client.update_tracker_status(row_id, new_status)
+        return await _tracker().update_tracker_status(row_id, new_status)
 
     @mcp.tool()
     async def get_form_submission_by_id(submission_id: str) -> dict[str, Any]:
@@ -76,9 +84,12 @@ def register(mcp: FastMCP) -> None:
         Fetch a specific Microsoft Forms submission by its ID.
 
         Returns the raw form answers as a dict, or an error dict if not found.
+        Only available when TRACKER_BACKEND=excel (Microsoft Graph).
         """
-        client = GraphClient()
-        return await client.get_form_submission_by_id(submission_id)
+        if settings.is_sheets():
+            return {"found": False, "error": "Forms lookup not available with Google Sheets backend"}
+        from onboarding_agent.integrations.graph_client import GraphClient
+        return await GraphClient().get_form_submission_by_id(submission_id)
 
     @mcp.tool()
     async def send_teams_channel_notification(channel_id: str, message: str) -> dict[str, Any]:
@@ -93,8 +104,8 @@ def register(mcp: FastMCP) -> None:
         - success (bool)
         - message_id (str)
         """
-        client = GraphClient()
-        return await client.send_teams_channel_notification(channel_id, message)
+        from onboarding_agent.integrations.graph_client import GraphClient
+        return await GraphClient().send_teams_channel_notification(channel_id, message)
 
     @mcp.tool()
     async def send_teams_direct_message(user_id: str, message: str) -> dict[str, Any]:
@@ -109,8 +120,8 @@ def register(mcp: FastMCP) -> None:
         - success (bool)
         - chat_id (str)
         """
-        client = GraphClient()
-        return await client.send_teams_direct_message(user_id, message)
+        from onboarding_agent.integrations.graph_client import GraphClient
+        return await GraphClient().send_teams_direct_message(user_id, message)
 
     @mcp.tool()
     async def send_teams_reply(activity_id: str, message: str) -> dict[str, Any]:
@@ -123,5 +134,5 @@ def register(mcp: FastMCP) -> None:
 
         Returns a dict with success (bool).
         """
-        client = GraphClient()
-        return await client.send_teams_reply(activity_id, message)
+        from onboarding_agent.integrations.graph_client import GraphClient
+        return await GraphClient().send_teams_reply(activity_id, message)

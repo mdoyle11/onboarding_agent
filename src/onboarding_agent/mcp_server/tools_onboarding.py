@@ -7,8 +7,16 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from onboarding_agent.config import settings
 from onboarding_agent.integrations.docusign_client import DocuSignClient
-from onboarding_agent.integrations.graph_client import GraphClient
+
+
+def _tracker():
+    if settings.is_sheets():
+        from onboarding_agent.integrations.sheets_client import SheetsClient
+        return SheetsClient()
+    from onboarding_agent.integrations.graph_client import GraphClient
+    return GraphClient()
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +44,9 @@ def register(mcp: FastMCP) -> None:
         - docusign_status (str) — e.g. "created", "sent", "completed", empty if none
         - summary (str) — human-readable one-paragraph status suitable for pasting into Teams
         """
-        graph_client = GraphClient()
         docusign_client = DocuSignClient()
 
-        tracker = await graph_client.find_employee_in_tracker(employee_email)
+        tracker = await _tracker().find_employee_in_tracker(employee_email)
 
         if not tracker.get("found"):
             return {

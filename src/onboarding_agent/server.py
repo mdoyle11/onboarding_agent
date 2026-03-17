@@ -28,8 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _notification_channel() -> str:
-    """Return the configured notification channel ID for whichever interface is active."""
-    return settings.slack_channel_id if settings.is_slack() else settings.teams_channel_id
+    return settings.notification_channel()
 
 
 def _webhook_prompt(state: dict[str, Any]) -> str:

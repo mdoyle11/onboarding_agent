@@ -4,7 +4,6 @@ import asyncio
 import logging
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from onboarding_agent.agent.state import OnboardingState
@@ -12,18 +11,21 @@ from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Tracker label for the system prompt
+_TRACKER = "Google Sheets" if settings.is_sheets() else "Excel"
+_INTERFACE = settings.chat_interface.capitalize()
+
 # System prompt shared across all invocations
-_SYSTEM_PROMPT = """\
-You are an HR onboarding assistant for a company using Microsoft 365 and DocuSign.
+_SYSTEM_PROMPT = f"""\
+You are an HR onboarding assistant using {_TRACKER} for tracking and DocuSign for document signing.
 
 Your responsibilities:
-1. When triggered by a Power Automate webhook (trigger_source=pa_webhook): automatically run the
-   full onboarding pipeline — add the new hire to the Excel tracker, create a DocuSign envelope
-   draft using the existing template, and send a Teams channel notification summarising what was
-   done.
-2. When triggered by an HR Teams query (trigger_source=teams_query): answer the HR representative's
+1. When triggered by a webhook (trigger_source=pa_webhook): automatically run the full onboarding
+   pipeline — add the new hire to the {_TRACKER} tracker, create a DocuSign envelope draft using
+   the existing template, and send a {_INTERFACE} notification summarising what was done.
+2. When triggered by an HR query (trigger_source=teams_query): answer the HR representative's
    question accurately using the available tools. Common queries include checking onboarding status,
-   pushing a DocuSign draft to sent, or looking up form submission details.
+   pushing a DocuSign draft to sent, or looking up employee details.
 
 Always be concise. Prefer tool calls over speculation. If a tool fails, explain the error clearly
 and suggest next steps. Never expose raw credentials or envelope IDs unless directly asked.
@@ -31,6 +33,14 @@ and suggest next steps. Never expose raw credentials or envelope IDs unless dire
 
 
 def _build_llm(tools: list) -> Any:
+    if settings.is_gemini():
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",
+            google_api_key=settings.gemini_api_key,
+        ).bind_tools(tools)
+
+    from langchain_anthropic import ChatAnthropic
     return ChatAnthropic(
         model="claude-sonnet-4-6",
         api_key=settings.anthropic_api_key,
