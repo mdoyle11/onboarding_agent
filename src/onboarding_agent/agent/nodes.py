@@ -40,6 +40,9 @@ Run the pipeline in order:
 
 ## HR query trigger (trigger_source=teams_query)
 Answer accurately using available tools. For status queries use get_onboarding_status.
+When asked to send a DocuSign envelope for an employee, use check_docusign_draft_exists
+with their email to find the envelope ID, then call send_docusign_envelope with it.
+Do NOT ask the user for the envelope ID — always look it up by email.
 After any DocuSign send action, always call update_tracker_stage to keep the tracker current.
 When DocuSign status is "completed", call update_tracker_stage with stage="Offer Letter Signed".
 

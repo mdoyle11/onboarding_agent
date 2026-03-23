@@ -22,26 +22,27 @@ _SCOPES = [
 # ---------------------------------------------------------------------------
 # Column layout (zero-based)
 # ---------------------------------------------------------------------------
-# A  B      C          D           E              F                  G                  H                    I                      J                   K          L               M              N
-# Name Email StartDate Department ManagerEmail AddedToTracker SentOfferLetter OfferLetterSigned BackgroundSubmission BackgroundCleared AddedToADP CompleteInADP ClearToStart PronationsSent
+# A     B      C         D          E           F              G                  H                  I                    J                      K                   L          M               N              O
+# Name  Email  Location  StartDate  Department  ManagerEmail   AddedToTracker     SentOfferLetter    OfferLetterSigned    BackgroundSubmission   BackgroundCleared   AddedToADP CompleteInADP   ClearToStart   ProrationsSent
 
 _COL_NAME           = 0
 _COL_EMAIL          = 1
-_COL_START_DATE     = 2
-_COL_DEPARTMENT     = 3
-_COL_MANAGER_EMAIL  = 4
+_COL_LOCATION       = 2
+_COL_START_DATE     = 3
+_COL_DEPARTMENT     = 4
+_COL_MANAGER_EMAIL  = 5
 
 # Stage columns — values are ISO date strings (YYYY-MM-DD) when completed, blank if not yet done
 STAGES: dict[str, int] = {
-    "Added to Tracker":       5,   # F
-    "Sent Offer Letter":      6,   # G
-    "Offer Letter Signed":    7,   # H
-    "Background Submission":  8,   # I
-    "Background Cleared":     9,   # J
-    "Added to ADP":          10,   # K
-    "Complete in ADP":       11,   # L
-    "Clear to Start":        12,   # M
-    "Prorations Sent":       13,   # N
+    "Added to Tracker":       6,   # G
+    "Sent Offer Letter":      7,   # H
+    "Offer Letter Signed":    8,   # I
+    "Background Submission":  9,   # J
+    "Background Cleared":    10,   # K
+    "Added to ADP":          11,   # L
+    "Complete in ADP":       12,   # M
+    "Clear to Start":        13,   # N
+    "Prorations Sent":       14,   # O
 }
 
 # Ordered list of all stages — used for summary generation
@@ -52,7 +53,7 @@ ACTIVE_STAGES = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
 
 # Full header row — keep in sync with STAGES
 HEADER_ROW = [
-    "Name", "Email", "StartDate", "Department", "ManagerEmail",
+    "Name", "Email", "Location", "StartDate", "Department", "ManagerEmail",
     "Added to Tracker", "Sent Offer Letter", "Offer Letter Signed",
     "Background Submission", "Background Cleared",
     "Added to ADP", "Complete in ADP", "Clear to Start", "Prorations Sent",
@@ -121,13 +122,15 @@ class SheetsClient:
         start_date: str,
         department: str,
         manager_email: str,
+        location: str = "",
     ) -> dict[str, Any]:
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._add_sync, name, email, start_date, department, manager_email
+            None, self._add_sync, name, email, start_date, department, manager_email, location
         )
 
     def _add_sync(
-        self, name: str, email: str, start_date: str, department: str, manager_email: str
+        self, name: str, email: str, start_date: str, department: str, manager_email: str,
+        location: str = "",
     ) -> dict[str, Any]:
         try:
             ws = _get_worksheet()
@@ -135,6 +138,7 @@ class SheetsClient:
             row = [""] * len(HEADER_ROW)
             row[_COL_NAME]          = name
             row[_COL_EMAIL]         = email
+            row[_COL_LOCATION]      = location
             row[_COL_START_DATE]    = start_date
             row[_COL_DEPARTMENT]    = department
             row[_COL_MANAGER_EMAIL] = manager_email
@@ -210,6 +214,7 @@ class SheetsClient:
                 employees.append({
                     "name": row[_COL_NAME] if len(row) > _COL_NAME else "",
                     "email": row[_COL_EMAIL],
+                    "location": row[_COL_LOCATION] if len(row) > _COL_LOCATION else "",
                     "start_date": row[_COL_START_DATE] if len(row) > _COL_START_DATE else "",
                     "department": row[_COL_DEPARTMENT] if len(row) > _COL_DEPARTMENT else "",
                     "stages": _row_to_stages(row),
@@ -234,11 +239,13 @@ class SheetsClient:
 
             row = ws.row_values(cell.row)
             name = row[_COL_NAME] if len(row) > _COL_NAME else ""
+            location = row[_COL_LOCATION] if len(row) > _COL_LOCATION else ""
             start_date = row[_COL_START_DATE] if len(row) > _COL_START_DATE else ""
             return {
                 "found": True,
                 "employee_email": employee_email,
                 "name": name,
+                "location": location,
                 "start_date": start_date,
                 "stages": _row_to_stages(row),
             }

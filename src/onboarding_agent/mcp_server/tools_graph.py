@@ -60,6 +60,7 @@ def register(mcp: FastMCP) -> None:
         start_date: str,
         department: str,
         manager_email: str,
+        location: str = "",
     ) -> dict[str, Any]:
         f"""
         Append a new employee row to the {_backend} onboarding tracker and
@@ -71,12 +72,13 @@ def register(mcp: FastMCP) -> None:
         - start_date: ISO 8601 date string (YYYY-MM-DD)
         - department: Department name
         - manager_email: Hiring manager's email
+        - location: Office location / campus (e.g. "Miami", "Remote")
 
         Returns a dict with:
         - success (bool)
         - row_id (str) — identifier of the newly created row
         """
-        return await _tracker().add_employee_to_tracker(name, email, start_date, department, manager_email)
+        return await _tracker().add_employee_to_tracker(name, email, start_date, department, manager_email, location)
 
     @mcp.tool()
     async def update_tracker_stage(employee_email: str, stage_name: str) -> dict[str, Any]:

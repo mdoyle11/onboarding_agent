@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     docusign_private_key_path: str
     docusign_template_id: str
     docusign_base_url: str = "https://demo.docusign.net/restapi"
+    docusign_connect_url: str = ""  # ngrok URL for DocuSign Connect callbacks
 
     # ---------------------------------------------------------------------------
     # Server
