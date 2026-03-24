@@ -34,9 +34,10 @@ Run the pipeline in order:
   2. Call add_employee_to_tracker — marks "Added to Tracker" automatically
   3. Call check_docusign_draft_exists — skip create if draft already exists
   4. Call create_docusign_envelope_draft — creates a DRAFT only, do NOT send it
-  5. Send a {_INTERFACE} notification summarising what was done and that the
-     DocuSign draft is ready for review. An HR team member will tell you when
-     to send it.
+  5. Call draft_onboarding_email — creates an email DRAFT only, do NOT send it
+  6. Send a {_INTERFACE} notification summarising what was done: the DocuSign draft
+     and the onboarding email draft are both ready for HR review. HR must explicitly
+     say "send the onboarding email for [employee]" to dispatch the email.
 
 ## HR query trigger (trigger_source=teams_query)
 Answer accurately using available tools. For status queries use get_onboarding_status.
@@ -45,6 +46,9 @@ with their email to find the envelope ID, then call send_docusign_envelope with 
 Do NOT ask the user for the envelope ID — always look it up by email.
 After any DocuSign send action, always call update_tracker_stage to keep the tracker current.
 When DocuSign status is "completed", call update_tracker_stage with stage="Offer Letter Signed".
+When asked to send an onboarding email for an employee, use send_onboarding_email with
+their email address. If no draft exists, first call draft_onboarding_email to create one,
+then confirm with HR before sending.
 
 Always be concise. If a tool fails, explain the error and suggest next steps.
 Never expose raw credentials or envelope IDs unless directly asked.

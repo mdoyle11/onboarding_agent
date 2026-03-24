@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 
 from onboarding_agent.config import settings
 from onboarding_agent.mcp_server.tools_docusign import register as register_docusign
+from onboarding_agent.mcp_server.tools_email import register as register_email
 from onboarding_agent.mcp_server.tools_graph import register as register_graph
 from onboarding_agent.mcp_server.tools_onboarding import register as register_onboarding
 
@@ -17,14 +18,16 @@ mcp = FastMCP(
     name="onboarding-tools",
     instructions=(
         f"Tools for HR onboarding: Microsoft Graph (Excel tracker, Forms), "
-        f"DocuSign (draft, send, status), and {_interface.capitalize()} notifications. "
+        f"DocuSign (draft, send, status), email (draft, send), and "
+        f"{_interface.capitalize()} notifications. "
         "Use get_onboarding_status for composite queries."
     ),
 )
 
-# Always registered — Excel tracker, Forms, DocuSign, composite status
+# Always registered — Excel tracker, Forms, DocuSign, email, composite status
 register_graph(mcp)
 register_docusign(mcp)
+register_email(mcp)
 register_onboarding(mcp)
 
 # Chat interface tools — only one set is registered based on CHAT_INTERFACE

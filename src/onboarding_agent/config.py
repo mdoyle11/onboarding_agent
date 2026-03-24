@@ -69,6 +69,24 @@ class Settings(BaseSettings):
     docusign_connect_url: str = ""  # ngrok URL for DocuSign Connect callbacks
 
     # ---------------------------------------------------------------------------
+    # Email backend — "gmail" | "outlook"
+    # ---------------------------------------------------------------------------
+    email_backend: str = "gmail"
+
+    # Gmail (required when email_backend=gmail)
+    gmail_sender_email: str = ""          # Gmail address to send from
+    gmail_client_id: str = ""             # OAuth2 client ID from Cloud Console
+    gmail_client_secret: str = ""         # OAuth2 client secret
+    gmail_refresh_token: str = ""         # Refresh token from scripts/generate_gmail_token.py
+
+    # Outlook (required when email_backend=outlook)
+    outlook_sender_email: str = ""        # Mailbox to send from via Graph API
+
+    # Email template
+    email_template_path: str = "templates/onboarding_email.html"
+    email_subject_template: str = "Welcome to the team, $employee_name!"
+
+    # ---------------------------------------------------------------------------
     # Server
     # ---------------------------------------------------------------------------
     host: str = "0.0.0.0"
@@ -89,6 +107,9 @@ class Settings(BaseSettings):
 
     def is_sheets(self) -> bool:
         return self.tracker_backend.lower() == "sheets"
+
+    def is_gmail(self) -> bool:
+        return self.email_backend.lower() == "gmail"
 
     def notification_channel(self) -> str:
         """Return the configured notification channel ID for the active interface."""

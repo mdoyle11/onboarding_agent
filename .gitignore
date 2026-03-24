@@ -4,6 +4,7 @@
 *.pem
 *.key
 *.p12
+keys/
 google_service_account.json
 
 # Python

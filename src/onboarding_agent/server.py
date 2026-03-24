@@ -44,9 +44,10 @@ def _webhook_prompt(state: dict[str, Any]) -> str:
         "Please run the onboarding pipeline: "
         "1) Check if employee is already in the tracker; if not, add them. "
         "2) Check if a DocuSign draft already exists; if not, create one (draft only — do NOT send it). "
-        f"3) Send a {interface} channel notification using {notification_tool} "
-        f"to channel '{_notification_channel()}' summarising what was done and that the "
-        "DocuSign draft is ready for HR to review and send."
+        "3) Draft the onboarding welcome email using draft_onboarding_email (draft only — do NOT send it). "
+        f"4) Send a {interface} channel notification using {notification_tool} "
+        f"to channel '{_notification_channel()}' summarising what was done: the DocuSign draft "
+        "and onboarding email draft are ready for HR to review. HR must explicitly approve sending each."
     )
 
 
