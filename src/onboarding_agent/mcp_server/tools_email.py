@@ -159,3 +159,51 @@ def register(mcp: FastMCP) -> None:
             "error": result.get("error", "Unknown error"),
             "message": f"Failed to send email to {employee_email}. Draft preserved — you can retry.",
         }
+
+    @mcp.tool()
+    async def send_background_clearance_confirmation(
+        employee_email: str,
+        employee_name: str,
+    ) -> dict[str, Any]:
+        """
+        Send a confirmation email after an employee submits their background clearance form.
+        This is sent immediately — no HR approval required.
+
+        Parameters:
+        - employee_email: The employee's email address
+        - employee_name: Full name of the employee
+        """
+        template_path = Path(__file__).resolve().parents[3] / "templates" / "background_clearance_confirmation.html"
+        try:
+            body_html = Template(template_path.read_text()).safe_substitute(
+                employee_name=employee_name,
+            )
+        except FileNotFoundError:
+            logger.error("Background clearance template not found at %s", template_path)
+            return {
+                "success": False,
+                "error": f"Template not found: {template_path}",
+            }
+
+        subject = f"Background Clearance Form Received — {employee_name}"
+
+        result = await _email_client().send_email(
+            to_email=employee_email.strip(),
+            subject=subject,
+            body_html=body_html,
+        )
+
+        if result.get("success"):
+            logger.info("Background clearance confirmation sent to %s", employee_email)
+            return {
+                "success": True,
+                "employee_email": employee_email,
+                "message": f"Background clearance confirmation email sent to {employee_email}.",
+            }
+
+        logger.warning("Background clearance email failed for %s: %s", employee_email, result.get("error"))
+        return {
+            "success": False,
+            "employee_email": employee_email,
+            "error": result.get("error", "Unknown error"),
+        }

@@ -25,7 +25,10 @@ Active stages (phases 1-3):
   2. Sent Offer Letter     — set when the DocuSign envelope is sent
   3. Offer Letter Signed   — set when DocuSign status becomes "completed"
 
-Future stages (not yet active): Background Submission, Background Cleared,
+Active stages (phase 4):
+  4. Background Submission — set when the background clearance form is submitted
+
+Future stages (not yet active): Background Cleared,
 Added to ADP, Complete in ADP, Clear to Start, Prorations Sent.
 
 ## Webhook trigger (trigger_source=pa_webhook)
@@ -38,6 +41,12 @@ Run the pipeline in order:
   6. Send a {_INTERFACE} notification summarising what was done: the DocuSign draft
      and the onboarding email draft are both ready for HR review. HR must explicitly
      say "send the onboarding email for [employee]" to dispatch the email.
+
+## Background clearance webhook
+When a background clearance form submission is received:
+  1. Call update_tracker_stage with stage="Background Submission" for the employee
+  2. Send a {_INTERFACE} notification informing HR of the submission
+  3. Call send_background_clearance_confirmation to email the employee a confirmation
 
 ## HR query trigger (trigger_source=teams_query)
 Answer accurately using available tools. For status queries use get_onboarding_status.

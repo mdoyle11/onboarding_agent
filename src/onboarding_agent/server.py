@@ -216,6 +216,62 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Background clearance webhook (form submission callback)
+# ---------------------------------------------------------------------------
+
+def _background_clearance_prompt(employee_email: str, employee_name: str) -> str:
+    interface = "Slack" if settings.is_slack() else "Teams"
+    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_teams_channel_notification"
+    return (
+        f"Background clearance form submitted by {employee_name} ({employee_email}). "
+        "Please run the following steps: "
+        f"1) Call update_tracker_stage with stage='Background Submission' for {employee_email}. "
+        f"2) Send a {interface} channel notification using {notification_tool} "
+        f"to channel '{_notification_channel()}' informing HR that {employee_name} "
+        "has submitted their background clearance form. "
+        f"3) Call send_background_clearance_confirmation for {employee_email} ({employee_name}) "
+        "to send a confirmation email to the employee."
+    )
+
+
+async def handle_background_clearance_webhook(request: web.Request) -> web.Response:
+    """POST /webhook/background-clearance — Power Automate background clearance form callback."""
+    provided_secret = request.headers.get("X-Webhook-Secret", "")
+    if not hmac.compare_digest(provided_secret, settings.webhook_secret):
+        logger.warning("Background clearance webhook rejected: invalid secret")
+        return web.Response(status=401, text="Unauthorized")
+
+    try:
+        payload: dict[str, Any] = await request.json()
+    except json.JSONDecodeError:
+        return web.Response(status=400, text="Invalid JSON")
+
+    employee_email = payload.get("employeeEmail", "")
+    employee_name = payload.get("employeeName", "")
+
+    logger.info("Background clearance webhook received: %s", employee_email or "unknown")
+
+    state = default_state()
+    state["trigger_source"] = "pa_webhook"
+    state["employee_email"] = employee_email
+    state["employee_name"] = employee_name
+    state["teams_channel_id"] = _notification_channel()
+    state["messages"] = [HumanMessage(content=_background_clearance_prompt(employee_email, employee_name))]
+
+    compiled = graph_module.compiled_graph
+    if compiled is None:
+        return web.Response(status=503, text="Agent not ready")
+
+    config = {"configurable": {"thread_id": f"bg-clearance-{employee_email}" or "webhook"}}
+    try:
+        asyncio.create_task(compiled.ainvoke(state, config))
+        return web.Response(status=200, text="Background clearance pipeline triggered")
+    except Exception as exc:
+        logger.exception("Background clearance webhook graph invocation failed")
+        return web.Response(status=500, text=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Teams — Bot Framework adapter (only when CHAT_INTERFACE=teams)
 # ---------------------------------------------------------------------------
 
@@ -292,6 +348,7 @@ def create_app() -> web.Application:
     app = web.Application()
     app.router.add_post("/webhook/new-hire", handle_new_hire_webhook)
     app.router.add_post("/webhook/docusign", handle_docusign_webhook)
+    app.router.add_post("/webhook/background-clearance", handle_background_clearance_webhook)
     app.on_startup.append(_on_startup)
 
     if settings.is_slack():
