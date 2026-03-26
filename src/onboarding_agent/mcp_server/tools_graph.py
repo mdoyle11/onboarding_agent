@@ -255,6 +255,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Post a rich new hire Adaptive Card to a Teams channel."""
         from onboarding_agent.integrations.adaptive_cards import new_hire_card
+        from onboarding_agent.integrations.card_state import save_new_hire_card
         from onboarding_agent.integrations.graph_client import GraphClient
 
         card = new_hire_card(
@@ -266,7 +267,20 @@ def register(mcp: FastMCP) -> None:
             manager_email,
             summary,
         )
-        return await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
+        result = await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
+        if result.get("success") and result.get("message_id"):
+            save_new_hire_card(
+                employee_email=employee_email,
+                channel_id=channel_id,
+                message_id=result["message_id"],
+                employee_name=employee_name,
+                start_date=start_date,
+                department=department,
+                location=location,
+                manager_email=manager_email,
+                summary=summary,
+            )
+        return result
 
     @mcp.tool()
     async def send_docusign_status_card(

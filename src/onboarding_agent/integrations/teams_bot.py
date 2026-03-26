@@ -7,9 +7,15 @@ from json import JSONDecodeError, loads
 from typing import Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
+from microsoft_agents.activity import Activity, Attachment
 from microsoft_agents.hosting.core import TurnContext, TurnState
 
 from onboarding_agent.agent.state import default_state
+from onboarding_agent.integrations.adaptive_cards import new_hire_card
+from onboarding_agent.integrations.card_state import (
+    get_new_hire_card,
+    mark_new_hire_action_complete,
+)
 from onboarding_agent.integrations.teams_proactive import save_conversation_reference
 
 logger = logging.getLogger(__name__)
@@ -34,9 +40,14 @@ def register_handlers(agent_app: Any) -> None:
 
         activity = context.activity
         conversation_type = getattr(activity.conversation, "conversation_type", "") or ""
-        card_action_text = _card_action_to_command(activity)
+        card_action = _extract_card_action(activity)
+        card_action_text = _card_action_to_command(card_action)
 
         if card_action_text:
+            if _card_action_already_completed(card_action):
+                await _refresh_new_hire_card(context, card_action)
+                await context.send_activity(_already_completed_message(card_action))
+                return
             user_text = card_action_text
         elif conversation_type in ("channel", "groupChat"):
             if not _is_mentioned(activity):
@@ -71,7 +82,10 @@ def register_handlers(agent_app: Any) -> None:
 
         try:
             final_state: dict[str, Any] = await compiled.ainvoke(state, config)
-            reply_text = "" if _should_suppress_reply(final_state) else _extract_reply(final_state)
+            if card_action and await _complete_card_action(context, card_action, final_state):
+                reply_text = ""
+            else:
+                reply_text = "" if _should_suppress_reply(final_state) else _extract_reply(final_state)
         except Exception as exc:
             logger.exception("Graph invocation failed")
             reply_text = f"Sorry, something went wrong: {exc}"
@@ -80,22 +94,116 @@ def register_handlers(agent_app: Any) -> None:
             await context.send_activity(reply_text)
 
 
-def _card_action_to_command(activity: Any) -> str:
-    """Translate Adaptive Card Action.Submit payloads into plain-text commands."""
+def _extract_card_action(activity: Any) -> dict[str, str] | None:
     value = getattr(activity, "value", None)
     if not isinstance(value, dict):
-        return ""
+        return None
 
     action = str(value.get("action", "")).strip().lower()
     employee_email = str(value.get("employee_email", "")).strip()
     if not action or not employee_email:
+        return None
+    return {"action": action, "employee_email": employee_email}
+
+
+def _card_action_to_command(card_action: dict[str, str] | None) -> str:
+    """Translate Adaptive Card Action.Submit payloads into plain-text commands."""
+    if not card_action:
         return ""
 
+    action = card_action["action"]
+    employee_email = card_action["employee_email"]
     if action == "send_onboarding_email":
         return f"send the onboarding email for {employee_email}"
     if action == "send_docusign":
         return f"send the docusign envelope for {employee_email}"
     return ""
+
+
+def _card_action_already_completed(card_action: dict[str, str] | None) -> bool:
+    if not card_action:
+        return False
+    card = get_new_hire_card(card_action["employee_email"])
+    if not card:
+        return False
+    if card_action["action"] == "send_onboarding_email":
+        return bool(card.get("email_sent"))
+    if card_action["action"] == "send_docusign":
+        return bool(card.get("docusign_sent"))
+    return False
+
+
+def _already_completed_message(card_action: dict[str, str]) -> str:
+    if card_action["action"] == "send_onboarding_email":
+        return f"Welcome email was already sent for {card_action['employee_email']}."
+    return f"Offer letter was already sent for {card_action['employee_email']}."
+
+
+async def _complete_card_action(
+    context: TurnContext,
+    card_action: dict[str, str],
+    final_state: dict[str, Any],
+) -> bool:
+    action = card_action["action"]
+    employee_email = card_action["employee_email"]
+    tool_name = "send_onboarding_email" if action == "send_onboarding_email" else "send_docusign_envelope"
+    if not _tool_named_succeeded(final_state, tool_name):
+        return False
+
+    card = mark_new_hire_action_complete(employee_email, action)
+    if not card:
+        return False
+    return await _update_new_hire_card(context, card)
+
+
+def _tool_named_succeeded(state: dict[str, Any], tool_name: str) -> bool:
+    for msg in reversed(state.get("messages", [])):
+        if isinstance(msg, ToolMessage) and msg.name == tool_name:
+            return _tool_message_succeeded(msg)
+    return False
+
+
+async def _refresh_new_hire_card(context: TurnContext, card_action: dict[str, str]) -> bool:
+    card = get_new_hire_card(card_action["employee_email"])
+    if not card:
+        return False
+    return await _update_new_hire_card(context, card)
+
+
+async def _update_new_hire_card(context: TurnContext, card: dict[str, Any]) -> bool:
+    target_id = getattr(context.activity, "reply_to_id", "") or card.get("message_id", "")
+    if not target_id:
+        return False
+
+    updated_card = new_hire_card(
+        employee_name=card.get("employee_name", ""),
+        employee_email=card.get("employee_email", ""),
+        start_date=card.get("start_date", ""),
+        department=card.get("department", ""),
+        location=card.get("location", ""),
+        manager_email=card.get("manager_email", ""),
+        summary=card.get("summary", ""),
+        email_sent=bool(card.get("email_sent")),
+        docusign_sent=bool(card.get("docusign_sent")),
+    )
+    activity = Activity(
+        type="message",
+        id=target_id,
+        text="",
+        attachments=[
+            Attachment(
+                content_type="application/vnd.microsoft.card.adaptive",
+                content=updated_card,
+            )
+        ],
+    )
+    try:
+        await context.update_activity(activity)
+        logger.info("Updated new-hire card %s after action", target_id)
+        return True
+    except Exception:
+        logger.exception("Failed to update new-hire card %s", target_id)
+        return False
 
 
 def _is_mentioned(activity: Any) -> bool:

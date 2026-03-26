@@ -17,8 +17,47 @@ def new_hire_card(
     location: str,
     manager_email: str,
     summary: str,
+    email_sent: bool = False,
+    docusign_sent: bool = False,
 ) -> dict[str, Any]:
     """Card sent when a new hire webhook triggers the pipeline."""
+    actions: list[dict[str, Any]] = []
+    if email_sent:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "\u2713 Welcome Email Sent",
+                "isEnabled": False,
+                "data": {"action": "send_onboarding_email", "employee_email": employee_email},
+            }
+        )
+    else:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "Send Welcome Email",
+                "data": {"action": "send_onboarding_email", "employee_email": employee_email},
+            }
+        )
+
+    if docusign_sent:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "\u2713 Offer Letter Sent",
+                "isEnabled": False,
+                "data": {"action": "send_docusign", "employee_email": employee_email},
+            }
+        )
+    else:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "Send Offer Letter",
+                "data": {"action": "send_docusign", "employee_email": employee_email},
+            }
+        )
+
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -46,15 +85,14 @@ def new_hire_card(
                     {"title": "Department", "value": department or "N/A"},
                     {"title": "Location", "value": location or "N/A"},
                     {"title": "Manager", "value": manager_email or "N/A"},
+                    {"title": "Welcome Email", "value": "Sent \u2713" if email_sent else "Ready"},
+                    {"title": "Offer Letter", "value": "Sent \u2713" if docusign_sent else "Ready"},
                 ],
             },
             {"type": "TextBlock", "text": " ", "separator": True},
             {"type": "TextBlock", "text": summary, "wrap": True},
         ],
-        "actions": [
-            {"type": "Action.Submit", "title": "Send Onboarding Email", "data": {"action": "send_onboarding_email", "employee_email": employee_email}},
-            {"type": "Action.Submit", "title": "Send DocuSign", "data": {"action": "send_docusign", "employee_email": employee_email}},
-        ],
+        "actions": actions,
     }
 
 

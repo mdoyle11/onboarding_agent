@@ -174,3 +174,51 @@ async def send_proactive_message(
         result["error"] = str(exc)
 
     return result
+
+
+async def update_proactive_card(
+    channel_id: str,
+    message_id: str,
+    card: dict[str, Any],
+) -> dict[str, Any]:
+    """Update an existing proactive Teams card message."""
+    current_adapter = _ensure_adapter()
+    if current_adapter is None:
+        return {"success": False, "error": "Cloud adapter not initialized"}
+
+    ref = get_conversation_reference(channel_id)
+    if ref is None:
+        return {
+            "success": False,
+            "error": (
+                f"No conversation reference for channel {channel_id}. "
+                "The agent must first receive an install event or message from that channel."
+            ),
+        }
+
+    result: dict[str, Any] = {"success": False}
+    continuation_activity = ref.get_continuation_activity()
+
+    async def _callback(turn_context: TurnContext) -> None:
+        outgoing = Activity(
+            type="message",
+            id=message_id,
+            text="",
+            attachments=[
+                Attachment(
+                    content_type="application/vnd.microsoft.card.adaptive",
+                    content=card,
+                )
+            ],
+        )
+        await turn_context.update_activity(outgoing)
+        result["success"] = True
+        result["message_id"] = message_id
+
+    try:
+        await current_adapter.continue_conversation(bot_app_id, continuation_activity, _callback)
+    except Exception as exc:
+        logger.exception("Proactive card update failed for channel %s message %s", channel_id, message_id)
+        result["error"] = str(exc)
+
+    return result

@@ -74,7 +74,24 @@ def register(mcp: FastMCP) -> None:
         - status (str) — should be "sent"
         """
         client = DocuSignClient()
-        return await client.send_envelope(envelope_id)
+        result = await client.send_envelope(envelope_id)
+        if result.get("success"):
+            from onboarding_agent.integrations.card_state import (
+                mark_new_hire_action_complete,
+                refresh_new_hire_card,
+            )
+
+            status = await client.get_envelope_status(envelope_id)
+            recipients = status.get("recipients", [])
+            employee_email = ""
+            if recipients:
+                employee_email = recipients[0].get("email", "") or ""
+
+            if employee_email:
+                card = mark_new_hire_action_complete(employee_email, "send_docusign")
+                if card is not None:
+                    await refresh_new_hire_card(employee_email)
+        return result
 
     @mcp.tool()
     async def get_docusign_envelope_status(envelope_id: str) -> dict[str, Any]:
