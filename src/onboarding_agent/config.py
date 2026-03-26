@@ -19,35 +19,18 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
 
     # ---------------------------------------------------------------------------
-    # Chat interface — "slack" | "teams"
+    # Teams / Agents SDK
     # ---------------------------------------------------------------------------
-    chat_interface: str = "teams"
-
-    # Slack (required when chat_interface=slack)
-    slack_bot_token: str = ""       # xoxb-...
-    slack_app_token: str = ""       # xapp-... (Socket Mode)
-    slack_channel_id: str = ""      # default HR notification channel
-
-    # Teams (required when chat_interface=teams)
     teams_team_id: str = ""
     teams_channel_id: str = ""
 
-    # Teams / Agents SDK auth (required when chat_interface=teams for authenticated flows)
     microsoft_app_id: str = ""
     microsoft_app_password: str = ""
     microsoft_app_allow_anonymous: bool = False
 
     # ---------------------------------------------------------------------------
-    # Tracker backend — "sheets" | "excel"
+    # Microsoft Graph — Excel tracker
     # ---------------------------------------------------------------------------
-    tracker_backend: str = "excel"
-
-    # Google Sheets (required when tracker_backend=sheets)
-    google_service_account_path: str = ""   # path to service account JSON key
-    google_sheets_id: str = ""              # ID from the Google Sheets URL
-    google_sheets_tab: str = "Onboarding"  # worksheet tab name
-
-    # Microsoft Graph — Excel (required when tracker_backend=excel)
     azure_tenant_id: str = ""
     azure_client_id: str = ""
     azure_client_secret: str = ""
@@ -70,18 +53,9 @@ class Settings(BaseSettings):
     docusign_connect_url: str = ""  # ngrok URL for DocuSign Connect callbacks
 
     # ---------------------------------------------------------------------------
-    # Email backend — "gmail" | "outlook"
+    # Outlook email
     # ---------------------------------------------------------------------------
-    email_backend: str = "gmail"
-
-    # Gmail (required when email_backend=gmail)
-    gmail_sender_email: str = ""          # Gmail address to send from
-    gmail_client_id: str = ""             # OAuth2 client ID from Cloud Console
-    gmail_client_secret: str = ""         # OAuth2 client secret
-    gmail_refresh_token: str = ""         # Refresh token from scripts/generate_gmail_token.py
-
-    # Outlook (required when email_backend=outlook)
-    outlook_sender_email: str = ""        # Mailbox to send from via Graph API
+    outlook_sender_email: str = ""
 
     # Email template
     email_template_path: str = "templates/onboarding_email.html"
@@ -97,24 +71,12 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------------------------
     # Convenience helpers
     # ---------------------------------------------------------------------------
-    def is_slack(self) -> bool:
-        return self.chat_interface.lower() == "slack"
-
-    def is_teams(self) -> bool:
-        return self.chat_interface.lower() == "teams"
-
     def is_gemini(self) -> bool:
         return self.llm_provider.lower() == "gemini"
 
-    def is_sheets(self) -> bool:
-        return self.tracker_backend.lower() == "sheets"
-
-    def is_gmail(self) -> bool:
-        return self.email_backend.lower() == "gmail"
-
     def notification_channel(self) -> str:
-        """Return the configured notification channel ID for the active interface."""
-        return self.slack_channel_id if self.is_slack() else self.teams_channel_id
+        """Return the configured Teams notification channel ID."""
+        return self.teams_channel_id
 
 
 # Module-level singleton — imported everywhere

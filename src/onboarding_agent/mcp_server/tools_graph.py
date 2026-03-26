@@ -1,4 +1,4 @@
-"""Tracker + notification tools — dispatches to Google Sheets or Excel based on config."""
+"""Excel tracker and Teams notification tools."""
 
 from __future__ import annotations
 
@@ -7,11 +7,9 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from onboarding_agent.config import settings
-
 logger = logging.getLogger(__name__)
 
-# Stage definitions (kept in sync with sheets_client.STAGES)
+# Stage definitions for the Excel tracker
 _ALL_STAGES = [
     "Added to Tracker",
     "Sent Offer Letter",
@@ -27,10 +25,7 @@ _ACTIVE_STAGES = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"
 
 
 def _tracker():
-    """Return the active tracker client based on TRACKER_BACKEND."""
-    if settings.is_sheets():
-        from onboarding_agent.integrations.sheets_client import SheetsClient
-        return SheetsClient()
+    """Return the Microsoft Graph Excel tracker client."""
     from onboarding_agent.integrations.graph_client import GraphClient
     return GraphClient()
 
@@ -38,7 +33,7 @@ def _tracker():
 def register(mcp: FastMCP) -> None:
     """Register all tracker and notification tools on the given FastMCP instance."""
 
-    _backend = "Google Sheets" if settings.is_sheets() else "Excel"
+    _backend = "Excel"
 
     @mcp.tool()
     async def find_employee_in_tracker(employee_email: str) -> dict[str, Any]:
@@ -124,12 +119,8 @@ def register(mcp: FastMCP) -> None:
         - stages (dict) — each stage name mapped to its completion date or "" if not done
         - summary (str) — human-readable pipeline status
         """
-        if settings.is_sheets():
-            from onboarding_agent.integrations.sheets_client import SheetsClient
-            result = await SheetsClient().get_employee_stages(employee_email)
-        else:
-            from onboarding_agent.integrations.graph_client import GraphClient
-            result = await GraphClient().find_employee_in_tracker(employee_email)
+        from onboarding_agent.integrations.graph_client import GraphClient
+        result = await GraphClient().find_employee_in_tracker(employee_email)
 
         if not result.get("found"):
             return {
@@ -191,12 +182,7 @@ def register(mcp: FastMCP) -> None:
         - employees (list) — each has: name, email, start_date, department, stages (dict)
         - summary (str) — human-readable answer ready to send to the user
         """
-        if settings.is_sheets():
-            from onboarding_agent.integrations.sheets_client import SheetsClient
-            result = await SheetsClient().list_all_employees()
-        else:
-            return {"count": 0, "employees": [], "summary": "list_employees not supported for Excel backend"}
-
+        result = await _tracker().list_all_employees()
         if not result.get("success"):
             return result
 
@@ -229,10 +215,7 @@ def register(mcp: FastMCP) -> None:
     async def get_form_submission_by_id(submission_id: str) -> dict[str, Any]:
         """
         Fetch a specific Microsoft Forms submission by its ID.
-        Only available when TRACKER_BACKEND=excel.
         """
-        if settings.is_sheets():
-            return {"found": False, "error": "Forms lookup not available with Google Sheets backend"}
         from onboarding_agent.integrations.graph_client import GraphClient
         return await GraphClient().get_form_submission_by_id(submission_id)
 

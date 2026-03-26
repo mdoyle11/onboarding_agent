@@ -1,9 +1,4 @@
-"""aiohttp application — hosts /api/messages (Teams) and /webhook/new-hire (Power Automate).
-
-Chat interface is selected via CHAT_INTERFACE env var:
-  - "teams" (default): Bot Framework adapter on POST /api/messages
-  - "slack": Socket Mode handler started alongside the aiohttp server
-"""
+"""aiohttp application — hosts /api/messages (Teams) and Power Automate webhooks."""
 
 from __future__ import annotations
 
@@ -39,8 +34,6 @@ def _notification_channel() -> str:
 
 
 def _webhook_prompt(state: dict[str, Any]) -> str:
-    interface = "Slack" if settings.is_slack() else "Teams"
-    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_new_hire_card"
     return (
         f"A new hire has been submitted via Microsoft Forms. "
         f"Employee: {state['employee_name']} ({state['employee_email']}), "
@@ -52,7 +45,7 @@ def _webhook_prompt(state: dict[str, Any]) -> str:
         "1) Check if employee is already in the tracker; if not, add them. "
         "2) Check if a DocuSign draft already exists; if not, create one (draft only — do NOT send it). "
         "3) Draft the onboarding welcome email using draft_onboarding_email (draft only — do NOT send it). "
-        f"4) Send a {interface} channel notification using {notification_tool} "
+        "4) Send a Teams channel notification using send_new_hire_card "
         f"to channel '{_notification_channel()}' summarising what was done: the DocuSign draft "
         "and onboarding email draft are ready for HR to review. Include the employee name, email, "
         "start date, department, location, manager email, and a concise summary in the card."
@@ -104,15 +97,13 @@ async def handle_new_hire_webhook(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 def _docusign_prompt(envelope_id: str, status: str, employee_email: str) -> str:
-    interface = "Slack" if settings.is_slack() else "Teams"
-    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_docusign_status_card"
     return (
         f"DocuSign envelope {envelope_id} for {employee_email} has changed to status: {status}. "
         f"1) If the status is 'completed', call update_tracker_stage with "
         f'stage="Offer Letter Signed" for {employee_email}. '
         f"2) If the status is 'sent', call update_tracker_stage with "
         f'stage="Sent Offer Letter" for {employee_email}. '
-        f"3) Send a {interface} channel notification using {notification_tool} "
+        "3) Send a Teams channel notification using send_docusign_status_card "
         f"to channel '{_notification_channel()}' summarising the DocuSign status change."
     )
 
@@ -228,15 +219,11 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 def _background_clearance_prompt(employee_email: str, employee_name: str) -> str:
-    interface = "Slack" if settings.is_slack() else "Teams"
-    notification_tool = (
-        "send_slack_channel_notification" if settings.is_slack() else "send_background_clearance_card"
-    )
     return (
         f"Background clearance form submitted by {employee_name} ({employee_email}). "
         "Please run the following steps: "
         f"1) Call update_tracker_stage with stage='Background Submission' for {employee_email}. "
-        f"2) Send a {interface} channel notification using {notification_tool} "
+        "2) Send a Teams channel notification using send_background_clearance_card "
         f"to channel '{_notification_channel()}' informing HR that {employee_name} "
         "has submitted their background clearance form. "
         f"3) Call send_background_clearance_confirmation for {employee_email} ({employee_name}) "
@@ -282,7 +269,7 @@ async def handle_background_clearance_webhook(request: web.Request) -> web.Respo
 
 
 # ---------------------------------------------------------------------------
-# Teams — Agents SDK runtime (only when CHAT_INTERFACE=teams)
+# Teams — Agents SDK runtime
 # ---------------------------------------------------------------------------
 
 _agent_app: AgentApplication[TurnState] | None = None
@@ -358,36 +345,13 @@ def _setup_teams(app: web.Application) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slack — Socket Mode (only when CHAT_INTERFACE=slack)
-# ---------------------------------------------------------------------------
-
-def _setup_slack(app: web.Application) -> None:
-    # Handler must be created inside the running event loop — defer to on_startup.
-    async def start_socket_mode(application: web.Application) -> None:
-        from onboarding_agent.integrations.slack_bot import create_slack_handler
-        handler = create_slack_handler()
-        application["slack_handler"] = handler
-        logger.info("Starting Slack Socket Mode handler…")
-        asyncio.create_task(handler.start_async())
-
-    async def stop_socket_mode(application: web.Application) -> None:
-        handler = application.get("slack_handler")
-        if handler:
-            await handler.close_async()
-
-    app.on_startup.append(start_socket_mode)
-    app.on_cleanup.append(stop_socket_mode)
-    logger.info("Slack Socket Mode will start on server startup")
-
-
-# ---------------------------------------------------------------------------
 # App factory + startup
 # ---------------------------------------------------------------------------
 
 async def _on_startup(app: web.Application) -> None:
     logger.info("Building LangGraph agent…")
     graph_module.compiled_graph = await graph_module.build_graph()
-    logger.info("Agent ready — chat interface: %s", settings.chat_interface)
+    logger.info("Agent ready — Teams interface active")
 
 
 def create_app() -> web.Application:
@@ -396,12 +360,7 @@ def create_app() -> web.Application:
     app.router.add_post("/webhook/docusign", handle_docusign_webhook)
     app.router.add_post("/webhook/background-clearance", handle_background_clearance_webhook)
     app.on_startup.append(_on_startup)
-
-    if settings.is_slack():
-        _setup_slack(app)
-    else:
-        _setup_teams(app)
-
+    _setup_teams(app)
     return app
 
 

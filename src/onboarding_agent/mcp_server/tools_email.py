@@ -34,10 +34,7 @@ def _save_drafts(drafts: dict[str, dict[str, str]]) -> None:
 
 
 def _email_client():
-    """Return the active email client based on EMAIL_BACKEND."""
-    if settings.is_gmail():
-        from onboarding_agent.integrations.gmail_client import GmailClient
-        return GmailClient()
+    """Return the Outlook email client."""
     from onboarding_agent.integrations.outlook_email_client import OutlookEmailClient
     return OutlookEmailClient()
 

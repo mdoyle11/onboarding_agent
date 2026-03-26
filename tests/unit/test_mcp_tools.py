@@ -1,7 +1,7 @@
 """Tests for MCP tool logic with mocked tracker and DocuSign clients."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from fastmcp import FastMCP
 
 
@@ -23,14 +23,9 @@ class TestGetOnboardingStatus:
         self.tracker = AsyncMock()
         self.docusign = AsyncMock()
 
-        # SheetsClient is instantiated directly inside get_onboarding_status
-        # when is_sheets() is True, so we patch it at the source module too.
-        sheets_mock_cls = MagicMock(return_value=self.tracker)
-
         with (
             patch("onboarding_agent.mcp_server.tools_onboarding._tracker", return_value=self.tracker),
             patch("onboarding_agent.mcp_server.tools_onboarding.DocuSignClient", return_value=self.docusign),
-            patch("onboarding_agent.integrations.sheets_client.SheetsClient", sheets_mock_cls),
         ):
             yield
 

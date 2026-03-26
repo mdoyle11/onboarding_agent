@@ -11,18 +11,11 @@ from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Tracker label for the system prompt
-_TRACKER = "Google Sheets" if settings.is_sheets() else "Excel"
-_INTERFACE = settings.chat_interface.capitalize()
-_NEW_HIRE_NOTIFICATION_TOOL = (
-    "send_slack_channel_notification" if settings.is_slack() else "send_new_hire_card"
-)
-_DOCUSIGN_NOTIFICATION_TOOL = (
-    "send_slack_channel_notification" if settings.is_slack() else "send_docusign_status_card"
-)
-_BACKGROUND_NOTIFICATION_TOOL = (
-    "send_slack_channel_notification" if settings.is_slack() else "send_background_clearance_card"
-)
+_TRACKER = "Excel"
+_INTERFACE = "Teams"
+_NEW_HIRE_NOTIFICATION_TOOL = "send_new_hire_card"
+_DOCUSIGN_NOTIFICATION_TOOL = "send_docusign_status_card"
+_BACKGROUND_NOTIFICATION_TOOL = "send_background_clearance_card"
 
 # System prompt shared across all invocations
 _SYSTEM_PROMPT = f"""\

@@ -7,7 +7,6 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from onboarding_agent.config import settings
 from onboarding_agent.integrations.docusign_client import DocuSignClient
 
 logger = logging.getLogger(__name__)
@@ -23,9 +22,6 @@ _DS_STATUS_LINES = {
 
 
 def _tracker():
-    if settings.is_sheets():
-        from onboarding_agent.integrations.sheets_client import SheetsClient
-        return SheetsClient()
     from onboarding_agent.integrations.graph_client import GraphClient
     return GraphClient()
 
@@ -57,11 +53,7 @@ def register(mcp: FastMCP) -> None:
         - summary (str) — full human-readable status with per-stage breakdown
         """
         tracker = _tracker()
-
-        if hasattr(tracker, "get_employee_stages"):
-            record = await tracker.get_employee_stages(employee_email)
-        else:
-            record = await tracker.find_employee_in_tracker(employee_email)
+        record = await tracker.get_employee_stages(employee_email)
 
         if not record.get("found"):
             return {
