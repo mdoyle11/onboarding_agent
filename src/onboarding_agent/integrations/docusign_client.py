@@ -13,6 +13,10 @@ from docusign_esign import (
     ApiClient,
     EnvelopesApi,
     EnvelopeDefinition,
+    EventNotification,
+    EnvelopeEvent,
+    FoldersApi,
+    RecipientEvent,
     TemplateRole,
     Text,
     Tabs,
@@ -104,15 +108,49 @@ class DocuSignClient:
         try:
             api_client = self._get_api_client()
             envelopes_api = EnvelopesApi(api_client)
-            result = envelopes_api.list_status_changes(
+            folders_api = FoldersApi(api_client)
+            result = folders_api.search(
                 account_id=settings.docusign_account_id,
-                from_date="2000-01-01",
-                status="created",
-                custom_field=f"employee_email={employee_email}",
+                search_folder_id="drafts",
+                include_recipients="true",
+                order="desc",
+                order_by="created",
+                count="25",
             )
-            envelopes = result.envelopes or []
-            if envelopes:
-                return {"exists": True, "envelope_id": envelopes[0].envelope_id or ""}
+            items = result.folder_items or []
+            for item in items:
+                envelope_id = item.envelope_id or ""
+                actual_status = (item.status or "").lower()
+                if not envelope_id or actual_status != "created":
+                    continue
+
+                try:
+                    recipients_result = envelopes_api.list_recipients(
+                        account_id=settings.docusign_account_id,
+                        envelope_id=envelope_id,
+                    )
+                    recipient_emails = {
+                        (signer.email or "").lower()
+                        for signer in (recipients_result.signers or [])
+                        if signer.email
+                    }
+                    if employee_email.lower() not in recipient_emails:
+                        logger.info(
+                            "Ignoring draft %s for %s because recipients=%s",
+                            envelope_id,
+                            employee_email,
+                            sorted(recipient_emails),
+                        )
+                        continue
+                except ApiException:
+                    logger.info("Ignoring stale draft reference %s", envelope_id)
+                    continue
+
+                return {
+                    "exists": True,
+                    "envelope_id": envelope_id,
+                    "status": actual_status,
+                }
             return {"exists": False, "envelope_id": ""}
         except ApiException as exc:
             logger.exception("check_draft_exists failed")
@@ -158,10 +196,32 @@ class DocuSignClient:
                 ),
             )
 
+            # Build event notification if a Connect URL is configured
+            event_notification = None
+            if settings.docusign_connect_url:
+                event_notification = EventNotification(
+                    url=f"{settings.docusign_connect_url}/webhook/docusign",
+                    logging_enabled="true",
+                    require_acknowledgment="true",
+                    use_soap_interface="false",
+                    include_envelope_void_reason="true",
+                    include_document_fields="true",
+                    envelope_events=[
+                        EnvelopeEvent(envelope_event_status_code="sent"),
+                        EnvelopeEvent(envelope_event_status_code="delivered"),
+                        EnvelopeEvent(envelope_event_status_code="completed"),
+                        EnvelopeEvent(envelope_event_status_code="voided"),
+                    ],
+                    recipient_events=[
+                        RecipientEvent(recipient_event_status_code="Completed"),
+                    ],
+                )
+
             envelope_def = EnvelopeDefinition(
                 template_id=settings.docusign_template_id,
                 template_roles=[signer_role],
                 status="created",  # draft — not yet sent
+                event_notification=event_notification,
                 custom_fields={
                     "textCustomFields": [
                         {"name": "employee_email", "value": employee_email, "show": "false"}

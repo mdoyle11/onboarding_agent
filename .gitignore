@@ -1,8 +1,11 @@
 # Secrets — never commit
 .env
+.env.*
 *.pem
 *.key
 *.p12
+keys/
+google_service_account.json
 
 # Python
 __pycache__/
@@ -24,3 +27,4 @@ htmlcov/
 .vscode/
 .idea/
 *.swp
+google_service_account.json

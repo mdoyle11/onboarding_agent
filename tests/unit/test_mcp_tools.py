@@ -1,7 +1,16 @@
-"""Tests for MCP tool logic with mocked Graph/DocuSign clients."""
+"""Tests for MCP tool logic with mocked tracker and DocuSign clients."""
 
 import pytest
 from unittest.mock import AsyncMock, patch
+from fastmcp import FastMCP
+
+
+async def _get_tool_fn(mcp: FastMCP, tool_name: str):
+    """Extract the raw async function from a FastMCP tool (v3 async API)."""
+    tool = await mcp.get_tool(tool_name)
+    if tool is None:
+        raise KeyError(f"Tool {tool_name!r} not found in MCP registry")
+    return tool.fn
 
 
 # ---------------------------------------------------------------------------
@@ -11,28 +20,25 @@ from unittest.mock import AsyncMock, patch
 class TestGetOnboardingStatus:
     @pytest.fixture(autouse=True)
     def _patch_clients(self):
+        self.tracker = AsyncMock()
+        self.docusign = AsyncMock()
+
         with (
-            patch("onboarding_agent.mcp_server.tools_onboarding.GraphClient") as gc,
-            patch("onboarding_agent.mcp_server.tools_onboarding.DocuSignClient") as dc,
+            patch("onboarding_agent.mcp_server.tools_onboarding._tracker", return_value=self.tracker),
+            patch("onboarding_agent.mcp_server.tools_onboarding.DocuSignClient", return_value=self.docusign),
         ):
-            self.graph = AsyncMock()
-            self.docusign = AsyncMock()
-            gc.return_value = self.graph
-            dc.return_value = self.docusign
             yield
 
     @pytest.mark.asyncio
     async def test_not_found_returns_found_false(self):
-        self.graph.find_employee_in_tracker.return_value = {"found": False}
+        self.tracker.find_employee_in_tracker.return_value = {"found": False}
+        self.tracker.get_employee_stages.return_value = {"found": False}
 
         from onboarding_agent.mcp_server.tools_onboarding import register
-        from fastmcp import FastMCP
         mcp = FastMCP(name="test")
         register(mcp)
 
-        # Call the function directly via the registered tool's underlying function
-        # We access the wrapped function through FastMCP's tool registry
-        tool_fn = _get_tool_fn(mcp, "get_onboarding_status")
+        tool_fn = await _get_tool_fn(mcp, "get_onboarding_status")
         result = await tool_fn(employee_email="nobody@example.com")
 
         assert result["found"] is False
@@ -40,8 +46,9 @@ class TestGetOnboardingStatus:
 
     @pytest.mark.asyncio
     async def test_found_with_draft_envelope(self):
-        self.graph.find_employee_in_tracker.return_value = {
-            "found": True, "row_id": "3", "status": "Pending"
+        self.tracker.get_employee_stages.return_value = {
+            "found": True, "row_id": "3", "name": "Alice",
+            "stages": {"Added to Tracker": "2026-04-01", "Sent Offer Letter": "", "Offer Letter Signed": ""},
         }
         self.docusign.check_draft_exists.return_value = {
             "exists": True, "envelope_id": "env-123"
@@ -51,11 +58,10 @@ class TestGetOnboardingStatus:
         }
 
         from onboarding_agent.mcp_server.tools_onboarding import register
-        from fastmcp import FastMCP
         mcp = FastMCP(name="test2")
         register(mcp)
 
-        tool_fn = _get_tool_fn(mcp, "get_onboarding_status")
+        tool_fn = await _get_tool_fn(mcp, "get_onboarding_status")
         result = await tool_fn(employee_email="alice@example.com")
 
         assert result["found"] is True
@@ -64,8 +70,13 @@ class TestGetOnboardingStatus:
 
     @pytest.mark.asyncio
     async def test_found_with_completed_envelope(self):
-        self.graph.find_employee_in_tracker.return_value = {
-            "found": True, "row_id": "4", "status": "Completed"
+        self.tracker.get_employee_stages.return_value = {
+            "found": True, "row_id": "4", "name": "Bob",
+            "stages": {
+                "Added to Tracker": "2026-04-01",
+                "Sent Offer Letter": "2026-04-02",
+                "Offer Letter Signed": "2026-04-03",
+            },
         }
         self.docusign.check_draft_exists.return_value = {
             "exists": True, "envelope_id": "env-456"
@@ -75,22 +86,11 @@ class TestGetOnboardingStatus:
         }
 
         from onboarding_agent.mcp_server.tools_onboarding import register
-        from fastmcp import FastMCP
         mcp = FastMCP(name="test3")
         register(mcp)
 
-        tool_fn = _get_tool_fn(mcp, "get_onboarding_status")
+        tool_fn = await _get_tool_fn(mcp, "get_onboarding_status")
         result = await tool_fn(employee_email="bob@example.com")
 
         assert result["docusign_status"] == "completed"
         assert "fully signed" in result["summary"]
-
-
-def _get_tool_fn(mcp, tool_name):
-    """Extract the raw async function from a FastMCP tool registry."""
-    # FastMCP stores tools in ._tool_manager or similar; access varies by version
-    # Fall back to iterating registered tools
-    for name, tool in mcp._tool_manager._tools.items():
-        if name == tool_name:
-            return tool.fn
-    raise KeyError(f"Tool {tool_name!r} not found in MCP registry")

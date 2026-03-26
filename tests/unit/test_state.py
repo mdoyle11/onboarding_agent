@@ -25,7 +25,7 @@ def test_default_state_strings_empty():
     state = default_state()
     string_fields = [
         "trigger_source", "triggered_by_user_id", "employee_email", "employee_name",
-        "employee_start_date", "employee_department", "employee_manager_email",
+        "employee_start_date", "employee_department", "employee_location", "employee_manager_email",
         "forms_submission_id", "excel_row_id", "excel_status",
         "docusign_envelope_id", "docusign_envelope_status",
         "teams_channel_id", "current_step", "error_message",

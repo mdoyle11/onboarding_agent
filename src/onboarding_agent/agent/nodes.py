@@ -4,7 +4,6 @@ import asyncio
 import logging
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from onboarding_agent.agent.state import OnboardingState
@@ -12,25 +11,75 @@ from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
+_TRACKER = "Excel"
+_INTERFACE = "Teams"
+_NEW_HIRE_NOTIFICATION_TOOL = "send_new_hire_card"
+_DOCUSIGN_NOTIFICATION_TOOL = "send_docusign_status_card"
+_BACKGROUND_NOTIFICATION_TOOL = "send_background_clearance_card"
+
 # System prompt shared across all invocations
-_SYSTEM_PROMPT = """\
-You are an HR onboarding assistant for a company using Microsoft 365 and DocuSign.
+_SYSTEM_PROMPT = f"""\
+You are an HR onboarding assistant using {_TRACKER} for pipeline tracking and DocuSign for document signing.
 
-Your responsibilities:
-1. When triggered by a Power Automate webhook (trigger_source=pa_webhook): automatically run the
-   full onboarding pipeline — add the new hire to the Excel tracker, create a DocuSign envelope
-   draft using the existing template, and send a Teams channel notification summarising what was
-   done.
-2. When triggered by an HR Teams query (trigger_source=teams_query): answer the HR representative's
-   question accurately using the available tools. Common queries include checking onboarding status,
-   pushing a DocuSign draft to sent, or looking up form submission details.
+## Pipeline stages (column-tracked with completion dates)
+Active stages (phases 1-3):
+  1. Added to Tracker      — set automatically when a new hire is added
+  2. Sent Offer Letter     — set when the DocuSign envelope is sent
+  3. Offer Letter Signed   — set when DocuSign status becomes "completed"
 
-Always be concise. Prefer tool calls over speculation. If a tool fails, explain the error clearly
-and suggest next steps. Never expose raw credentials or envelope IDs unless directly asked.
+Active stages (phase 4):
+  4. Background Submission — set when the background clearance form is submitted
+
+Future stages (not yet active): Background Cleared,
+Added to ADP, Complete in ADP, Clear to Start, Prorations Sent.
+
+## Webhook trigger (trigger_source=pa_webhook)
+Run the pipeline in order:
+  1. Call find_employee_in_tracker — skip add if already exists
+  2. Call add_employee_to_tracker — marks "Added to Tracker" automatically
+  3. Call check_docusign_draft_exists — skip create if draft already exists
+  4. Call create_docusign_envelope_draft — creates a DRAFT only, do NOT send it
+  5. Call draft_onboarding_email — creates an email DRAFT only, do NOT send it
+  6. Send the final {_INTERFACE} notification using {_NEW_HIRE_NOTIFICATION_TOOL}.
+     This is required for webhook runs. Do not stop after plain text reasoning.
+     The DocuSign draft and the onboarding email draft should both be described
+     as ready for HR review. HR must explicitly say "send the onboarding email
+     for [employee]" to dispatch the email.
+
+## Background clearance webhook
+When a background clearance form submission is received:
+  1. Call update_tracker_stage with stage="Background Submission" for the employee
+  2. Send a {_INTERFACE} notification using {_BACKGROUND_NOTIFICATION_TOOL}
+     informing HR of the submission
+  3. Call send_background_clearance_confirmation to email the employee a confirmation
+
+## HR query trigger (trigger_source=teams_query)
+Answer accurately using available tools. For status queries use get_onboarding_status.
+When asked to send a DocuSign envelope for an employee, use check_docusign_draft_exists
+with their email to find the envelope ID, then call send_docusign_envelope with it.
+Do NOT ask the user for the envelope ID — always look it up by email.
+After any DocuSign send action, always call update_tracker_stage to keep the tracker current.
+When DocuSign status is "completed", call update_tracker_stage with stage="Offer Letter Signed".
+For DocuSign webhook status-change runs, send the final {_INTERFACE} notification using
+{_DOCUSIGN_NOTIFICATION_TOOL}; do not finish with plain text only.
+When asked to send an onboarding email for an employee, use send_onboarding_email with
+their email address. If no draft exists, first call draft_onboarding_email to create one,
+then confirm with HR before sending.
+
+Always be concise. If a tool fails, explain the error and suggest next steps.
+Never expose raw credentials or envelope IDs unless directly asked.
 """
 
 
 def _build_llm(tools: list) -> Any:
+    if settings.is_gemini():
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=settings.gemini_model,
+            google_api_key=settings.gemini_api_key,
+        ).bind_tools(tools)
+
+    from langchain_anthropic import ChatAnthropic
     return ChatAnthropic(
         model="claude-sonnet-4-6",
         api_key=settings.anthropic_api_key,
@@ -47,7 +96,13 @@ async def agent_node(state: OnboardingState, tools: list) -> dict[str, Any]:
         messages = [SystemMessage(content=_SYSTEM_PROMPT)] + messages
 
     response: AIMessage = await llm.ainvoke(messages)
-    logger.debug("agent_node response: %s tool_calls", len(response.tool_calls))
+    trigger_source = state.get("trigger_source", "unknown")
+    logger.info(
+        "agent_node response for %s: tool_calls=%s content=%s",
+        trigger_source,
+        len(response.tool_calls),
+        response.content,
+    )
 
     return {
         "messages": [response],
@@ -72,7 +127,9 @@ async def tool_executor_node(state: OnboardingState, tool_map: dict[str, Any]) -
             )
         try:
             tool = tool_map[name]
+            logger.info("Executing tool %s with args=%s", name, args)
             result = await tool.arun(args) if asyncio.iscoroutinefunction(tool.arun) else tool.run(args)
+            logger.info("Tool %s result=%s", name, result)
             return ToolMessage(content=str(result), tool_call_id=call_id, name=name)
         except Exception as exc:
             logger.exception("Tool %s failed", name)

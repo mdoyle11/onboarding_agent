@@ -5,22 +5,27 @@ import logging
 from fastmcp import FastMCP
 
 from onboarding_agent.mcp_server.tools_docusign import register as register_docusign
+from onboarding_agent.mcp_server.tools_email import register as register_email
 from onboarding_agent.mcp_server.tools_graph import register as register_graph
 from onboarding_agent.mcp_server.tools_onboarding import register as register_onboarding
 
 logging.basicConfig(level=logging.WARNING)
+logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 
 mcp = FastMCP(
     name="onboarding-tools",
     instructions=(
-        "Tools for HR onboarding: Microsoft Graph (Excel tracker, Teams, Forms) "
-        "and DocuSign (draft, send, status). Use get_onboarding_status for composite queries."
+        f"Tools for HR onboarding: Microsoft Graph (Excel tracker, Forms), "
+        "DocuSign (draft, send, status), Outlook email (draft, send), and "
+        "Teams notifications. "
+        "Use get_onboarding_status for composite queries."
     ),
 )
 
-# Register all tool groups
+# Always registered — Excel tracker, Forms, DocuSign, email, composite status
 register_graph(mcp)
 register_docusign(mcp)
+register_email(mcp)
 register_onboarding(mcp)
 
 

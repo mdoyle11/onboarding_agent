@@ -19,6 +19,7 @@ class OnboardingState(TypedDict):
     employee_name: str
     employee_start_date: str
     employee_department: str
+    employee_location: str
     employee_manager_email: str
 
     # Forms
@@ -55,6 +56,7 @@ def default_state() -> dict[str, Any]:
         "employee_name": "",
         "employee_start_date": "",
         "employee_department": "",
+        "employee_location": "",
         "employee_manager_email": "",
         "forms_submission_id": "",
         "forms_data_raw": {},
