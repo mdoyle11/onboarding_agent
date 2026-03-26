@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,8 @@ _CARD_STATE_PATH = Path(__file__).resolve().parents[3] / "data" / "card_state.js
 def _load_state() -> dict[str, dict[str, Any]]:
     if _CARD_STATE_PATH.exists():
         try:
-            return json.loads(_CARD_STATE_PATH.read_text())
+            loaded = json.loads(_CARD_STATE_PATH.read_text())
+            return cast(dict[str, dict[str, Any]], loaded)
         except (json.JSONDecodeError, OSError):
             logger.warning("Could not read card state file, starting fresh")
     return {}

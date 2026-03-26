@@ -24,17 +24,17 @@ logger = logging.getLogger(__name__)
 def register_handlers(agent_app: Any) -> None:
     """Register Teams message and conversation handlers on an AgentApplication."""
 
-    @agent_app.conversation_update("membersAdded")
+    @agent_app.conversation_update("membersAdded")  # type: ignore[untyped-decorator]
     async def on_members_added(context: TurnContext, _state: TurnState) -> bool:
         save_conversation_reference(context.activity)
         return False
 
-    @agent_app.activity("installationUpdate")
+    @agent_app.activity("installationUpdate")  # type: ignore[untyped-decorator]
     async def on_installation_update(context: TurnContext, _state: TurnState) -> None:
         save_conversation_reference(context.activity)
         logger.info("Stored conversation reference from installationUpdate event")
 
-    @agent_app.activity("message")
+    @agent_app.activity("message")  # type: ignore[untyped-decorator]
     async def on_message(context: TurnContext, _state: TurnState) -> None:
         save_conversation_reference(context.activity)
 
@@ -44,6 +44,7 @@ def register_handlers(agent_app: Any) -> None:
         card_action_text = _card_action_to_command(card_action)
 
         if card_action_text:
+            assert card_action is not None
             if _card_action_already_completed(card_action):
                 await _refresh_new_hire_card(context, card_action)
                 await context.send_activity(_already_completed_message(card_action))

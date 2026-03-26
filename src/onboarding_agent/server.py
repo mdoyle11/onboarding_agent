@@ -7,7 +7,7 @@ import hmac
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import web
 from langchain_core.messages import HumanMessage
@@ -331,7 +331,7 @@ def _setup_teams(app: web.Application) -> None:
             response = await adapter.process(request, agent_app)
             if response is None:
                 return web.Response(status=201)
-            return response
+            return cast(web.Response, response)
         except Exception as exc:
             logger.exception("Error processing Teams activity")
             return web.Response(status=500, text=str(exc))

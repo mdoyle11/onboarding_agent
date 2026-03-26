@@ -1,14 +1,15 @@
-"""OnboardingState TypedDict — the single source of truth for graph execution."""
+"""OnboardingState TypedDict - the single source of truth for graph execution."""
 
 from typing import Annotated, Any
 
+from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 
 class OnboardingState(TypedDict):
     # Agent loop messages (append-only via reducer)
-    messages: Annotated[list, add_messages]
+    messages: Annotated[list[AnyMessage], add_messages]
 
     # Trigger context
     trigger_source: str          # "teams_query" | "pa_webhook"

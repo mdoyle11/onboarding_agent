@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import FastMCP
 
@@ -22,7 +22,8 @@ _DRAFTS_PATH = Path(__file__).resolve().parents[3] / "data" / "email_drafts.json
 def _load_drafts() -> dict[str, dict[str, str]]:
     if _DRAFTS_PATH.exists():
         try:
-            return json.loads(_DRAFTS_PATH.read_text())
+            loaded = json.loads(_DRAFTS_PATH.read_text())
+            return cast(dict[str, dict[str, str]], loaded)
         except (json.JSONDecodeError, OSError):
             logger.warning("Could not read drafts file, starting fresh")
     return {}
@@ -33,7 +34,7 @@ def _save_drafts(drafts: dict[str, dict[str, str]]) -> None:
     _DRAFTS_PATH.write_text(json.dumps(drafts, indent=2))
 
 
-def _email_client():
+def _email_client() -> Any:
     """Return the Outlook email client."""
     from onboarding_agent.integrations.outlook_email_client import OutlookEmailClient
     return OutlookEmailClient()

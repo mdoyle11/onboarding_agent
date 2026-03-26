@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import FastMCP
 
@@ -21,7 +21,7 @@ _DS_STATUS_LINES = {
 }
 
 
-def _tracker():
+def _tracker() -> Any:
     from onboarding_agent.integrations.graph_client import GraphClient
     return GraphClient()
 
@@ -53,7 +53,7 @@ def register(mcp: FastMCP) -> None:
         - summary (str) — full human-readable status with per-stage breakdown
         """
         tracker = _tracker()
-        record = await tracker.get_employee_stages(employee_email)
+        record = cast(dict[str, Any], await tracker.get_employee_stages(employee_email))
 
         if not record.get("found"):
             return {

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import aiohttp
 from azure.identity.aio import ClientSecretCredential
-from msgraph import GraphServiceClient
+from msgraph import GraphServiceClient  # type: ignore[attr-defined]
 
 from onboarding_agent.config import settings
 
@@ -104,7 +104,7 @@ class GraphClient:
         values = data.get("values", []) if isinstance(data, dict) else []
         if not values:
             return []
-        return values
+        return cast(list[list[Any]], values)
 
     async def _graph_access_token(self) -> str:
         cred = ClientSecretCredential(

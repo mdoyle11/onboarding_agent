@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import FastMCP
 
@@ -24,7 +24,7 @@ _ALL_STAGES = [
 _ACTIVE_STAGES = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
 
 
-def _tracker():
+def _tracker() -> Any:
     """Return the Microsoft Graph Excel tracker client."""
     from onboarding_agent.integrations.graph_client import GraphClient
     return GraphClient()
@@ -44,7 +44,7 @@ def register(mcp: FastMCP) -> None:
         - stages (dict) — all stage columns keyed by stage name, values are completion
           dates (YYYY-MM-DD) or empty string if not yet completed
         """
-        return await _tracker().find_employee_in_tracker(employee_email)
+        return cast(dict[str, Any], await _tracker().find_employee_in_tracker(employee_email))
 
     @mcp.tool()
     async def add_employee_to_tracker(
@@ -71,7 +71,15 @@ def register(mcp: FastMCP) -> None:
         - success (bool)
         - row_id (str) — identifier of the newly created row
         """
-        return await _tracker().add_employee_to_tracker(name, email, start_date, department, manager_email, location)
+        result = await _tracker().add_employee_to_tracker(
+            name,
+            email,
+            start_date,
+            department,
+            manager_email,
+            location,
+        )
+        return cast(dict[str, Any], result)
 
     @mcp.tool()
     async def update_tracker_stage(employee_email: str, stage_name: str) -> dict[str, Any]:
@@ -97,7 +105,7 @@ def register(mcp: FastMCP) -> None:
         - stage (str)
         - value (str) — the date recorded
         """
-        return await _tracker().update_stage(employee_email, stage_name)
+        return cast(dict[str, Any], await _tracker().update_stage(employee_email, stage_name))
 
     @mcp.tool()
     async def get_employee_stages(employee_email: str) -> dict[str, Any]:
@@ -142,9 +150,10 @@ def register(mcp: FastMCP) -> None:
         elif not next_pending:
             summary = f"**{name}** has completed all pipeline stages."
         else:
+            last_completed_stage = last_completed or ""
             summary = (
-                f"**{name}** — last completed stage: *{last_completed}* "
-                f"({stages[last_completed]}). Next: *{next_pending}*."
+                f"**{name}** — last completed stage: *{last_completed_stage}* "
+                f"({stages.get(last_completed_stage, '')}). Next: *{next_pending}*."
             )
 
         # Append detail for active stages
@@ -180,7 +189,7 @@ def register(mcp: FastMCP) -> None:
         - employees (list) — each has: name, email, start_date, department, stages (dict)
         - summary (str) — human-readable answer ready to send to the user
         """
-        result = await _tracker().list_all_employees()
+        result = cast(dict[str, Any], await _tracker().list_all_employees())
         if not result.get("success"):
             return result
 

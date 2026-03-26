@@ -1,10 +1,13 @@
 """Node functions for the onboarding LangGraph."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from pydantic import SecretStr
 
 from onboarding_agent.agent.state import OnboardingState
 from onboarding_agent.config import settings
@@ -71,7 +74,7 @@ Never expose raw credentials or envelope IDs unless directly asked.
 """
 
 
-def _build_llm(tools: list) -> Any:
+def _build_llm(tools: list[Any]) -> Any:
     if settings.is_gemini():
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
@@ -80,14 +83,16 @@ def _build_llm(tools: list) -> Any:
         ).bind_tools(tools)
 
     from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(
+    chat_anthropic_cls: Any = ChatAnthropic
+    anthropic_llm: Any = chat_anthropic_cls(
         model="claude-sonnet-4-6",
-        api_key=settings.anthropic_api_key,
+        api_key=SecretStr(settings.anthropic_api_key),
         max_tokens=4096,
-    ).bind_tools(tools)
+    )
+    return anthropic_llm.bind_tools(tools)
 
 
-async def agent_node(state: OnboardingState, tools: list) -> dict[str, Any]:
+async def agent_node(state: OnboardingState, tools: list[Any]) -> dict[str, Any]:
     """Invoke the LLM with current messages and bound tools."""
     llm = _build_llm(tools)
 
@@ -95,7 +100,7 @@ async def agent_node(state: OnboardingState, tools: list) -> dict[str, Any]:
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=_SYSTEM_PROMPT)] + messages
 
-    response: AIMessage = await llm.ainvoke(messages)
+    response = cast(AIMessage, await llm.ainvoke(messages))
     trigger_source = state.get("trigger_source", "unknown")
     logger.info(
         "agent_node response for %s: tool_calls=%s content=%s",
@@ -112,12 +117,12 @@ async def agent_node(state: OnboardingState, tools: list) -> dict[str, Any]:
 
 async def tool_executor_node(state: OnboardingState, tool_map: dict[str, Any]) -> dict[str, Any]:
     """Execute all tool calls from the last AIMessage in parallel."""
-    last_message: AIMessage = state["messages"][-1]  # type: ignore[assignment]
+    last_message = cast(AIMessage, state["messages"][-1])
 
-    async def _run_tool(tool_call: dict[str, Any]) -> ToolMessage:
-        name = tool_call["name"]
-        args = tool_call["args"]
-        call_id = tool_call["id"]
+    async def _run_tool(tool_call: Any) -> ToolMessage:
+        name = str(tool_call["name"])
+        args = cast(dict[str, Any], tool_call["args"])
+        call_id = str(tool_call["id"])
 
         if name not in tool_map:
             return ToolMessage(
