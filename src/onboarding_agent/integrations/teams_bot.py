@@ -34,8 +34,11 @@ def register_handlers(agent_app: Any) -> None:
 
         activity = context.activity
         conversation_type = getattr(activity.conversation, "conversation_type", "") or ""
+        card_action_text = _card_action_to_command(activity)
 
-        if conversation_type in ("channel", "groupChat"):
+        if card_action_text:
+            user_text = card_action_text
+        elif conversation_type in ("channel", "groupChat"):
             if not _is_mentioned(activity):
                 logger.debug("Ignoring non-mentioned message in %s", conversation_type)
                 return
@@ -75,6 +78,24 @@ def register_handlers(agent_app: Any) -> None:
 
         if reply_text:
             await context.send_activity(reply_text)
+
+
+def _card_action_to_command(activity: Any) -> str:
+    """Translate Adaptive Card Action.Submit payloads into plain-text commands."""
+    value = getattr(activity, "value", None)
+    if not isinstance(value, dict):
+        return ""
+
+    action = str(value.get("action", "")).strip().lower()
+    employee_email = str(value.get("employee_email", "")).strip()
+    if not action or not employee_email:
+        return ""
+
+    if action == "send_onboarding_email":
+        return f"send the onboarding email for {employee_email}"
+    if action == "send_docusign":
+        return f"send the docusign envelope for {employee_email}"
+    return ""
 
 
 def _is_mentioned(activity: Any) -> bool:

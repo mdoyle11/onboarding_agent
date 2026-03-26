@@ -410,6 +410,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
+    logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
     app = create_app()
     web.run_app(app, host=settings.host, port=settings.port)
 

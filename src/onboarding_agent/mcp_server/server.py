@@ -11,6 +11,7 @@ from onboarding_agent.mcp_server.tools_graph import register as register_graph
 from onboarding_agent.mcp_server.tools_onboarding import register as register_onboarding
 
 logging.basicConfig(level=logging.WARNING)
+logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 
 _interface = settings.chat_interface.lower()
 
