@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from urllib.parse import quote
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from azure.identity.aio import ClientSecretCredential
@@ -132,15 +132,17 @@ class GraphClient:
             f"/workbook{workbook_path}"
         )
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        async with aiohttp.ClientSession() as session:
-            async with session.request(method, url, headers=headers, json=json_body) as resp:
-                if resp.status >= 400:
-                    body = await resp.text()
-                    raise RuntimeError(f"Graph workbook request failed ({resp.status}): {body}")
-                if resp.content_length == 0:
-                    return {}
-                text = await resp.text()
-                return {} if not text else await resp.json()
+        async with (
+            aiohttp.ClientSession() as session,
+            session.request(method, url, headers=headers, json=json_body) as resp,
+        ):
+            if resp.status >= 400:
+                body = await resp.text()
+                raise RuntimeError(f"Graph workbook request failed ({resp.status}): {body}")
+            if resp.content_length == 0:
+                return {}
+            text = await resp.text()
+            return {} if not text else await resp.json()
 
     # ------------------------------------------------------------------
     # Excel tracker helpers
@@ -321,14 +323,13 @@ class GraphClient:
                 f"https://graph.microsoft.com/v1.0/forms/{settings.graph_forms_form_id}"
                 f"/responses/{submission_id}"
             )
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url, headers={"Authorization": f"Bearer {token.token}"}
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return {"found": True, "data": data}
-                    return {"found": False, "error": f"HTTP {resp.status}"}
+            async with aiohttp.ClientSession() as session, session.get(
+                url, headers={"Authorization": f"Bearer {token.token}"}
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {"found": True, "data": data}
+                return {"found": False, "error": f"HTTP {resp.status}"}
         except Exception as exc:
             logger.exception("get_form_submission_by_id failed")
             return {"found": False, "error": str(exc)}

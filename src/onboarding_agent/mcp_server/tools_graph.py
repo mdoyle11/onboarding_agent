@@ -33,12 +33,10 @@ def _tracker():
 def register(mcp: FastMCP) -> None:
     """Register all tracker and notification tools on the given FastMCP instance."""
 
-    _backend = "Excel"
-
     @mcp.tool()
     async def find_employee_in_tracker(employee_email: str) -> dict[str, Any]:
-        f"""
-        Search the {_backend} onboarding tracker for an employee by email.
+        """
+        Search the Excel onboarding tracker for an employee by email.
 
         Returns a dict with:
         - found (bool)
@@ -57,8 +55,8 @@ def register(mcp: FastMCP) -> None:
         manager_email: str,
         location: str = "",
     ) -> dict[str, Any]:
-        f"""
-        Append a new employee row to the {_backend} onboarding tracker and
+        """
+        Append a new employee row to the Excel onboarding tracker and
         automatically mark the "Added to Tracker" stage with today's date.
 
         Parameters:
@@ -77,8 +75,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def update_tracker_stage(employee_email: str, stage_name: str) -> dict[str, Any]:
-        f"""
-        Mark a pipeline stage as completed for an employee in the {_backend} tracker.
+        """
+        Mark a pipeline stage as completed for an employee in the Excel tracker.
         Records today's date in the corresponding stage column.
 
         Currently active stages (phases 1-3):
@@ -103,8 +101,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_employee_stages(employee_email: str) -> dict[str, Any]:
-        f"""
-        Return the full pipeline stage breakdown for an employee from the {_backend} tracker.
+        """
+        Return the full pipeline stage breakdown for an employee from the Excel tracker.
 
         Use this to answer questions like:
           "What stage is [employee] at?"
@@ -157,8 +155,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def list_employees(pending_stage: str = "") -> dict[str, Any]:
-        f"""
-        List all employees in the {_backend} onboarding tracker.
+        """
+        List all employees in the Excel onboarding tracker.
 
         Parameters:
         - pending_stage: Optional. If provided, only returns employees who have
@@ -197,7 +195,6 @@ def register(mcp: FastMCP) -> None:
             else:
                 summary = "The tracker is empty — no employees have been added yet."
         else:
-            names = ", ".join(f"{e['name']} ({e['email']})" for e in employees)
             if pending_stage:
                 summary = (
                     f"**{len(employees)} employee(s)** are pending **{pending_stage}**:\n"

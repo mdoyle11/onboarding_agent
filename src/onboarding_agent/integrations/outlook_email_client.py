@@ -69,23 +69,25 @@ class OutlookEmailClient:
                 f"https://graph.microsoft.com/v1.0/users/"
                 f"{settings.outlook_sender_email}/sendMail"
             )
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=message_payload, headers=headers) as resp:
-                    if resp.status == 202:
-                        logger.info("Outlook email sent to %s with subject %s", to_email, subject)
-                        return {"success": True, "message_id": ""}
-                    error_text = await resp.text()
-                    logger.warning(
-                        "Outlook sendMail failed for %s via %s: HTTP %s %s",
-                        to_email,
-                        settings.outlook_sender_email,
-                        resp.status,
-                        error_text,
-                    )
-                    return {
-                        "success": False,
-                        "error": f"Graph sendMail failed ({resp.status}): {error_text}",
-                    }
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(url, json=message_payload, headers=headers) as resp,
+            ):
+                if resp.status == 202:
+                    logger.info("Outlook email sent to %s with subject %s", to_email, subject)
+                    return {"success": True, "message_id": ""}
+                error_text = await resp.text()
+                logger.warning(
+                    "Outlook sendMail failed for %s via %s: HTTP %s %s",
+                    to_email,
+                    settings.outlook_sender_email,
+                    resp.status,
+                    error_text,
+                )
+                return {
+                    "success": False,
+                    "error": f"Graph sendMail failed ({resp.status}): {error_text}",
+                }
         except Exception as exc:
             logger.exception("Outlook send_email failed for %s", to_email)
             return {"success": False, "error": str(exc)}

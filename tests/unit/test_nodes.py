@@ -1,7 +1,6 @@
 """Tests for routing logic in agent nodes."""
 
-import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
 from onboarding_agent.agent.nodes import after_error_handler, should_continue
 from onboarding_agent.agent.state import default_state

@@ -15,7 +15,7 @@ logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERR
 mcp = FastMCP(
     name="onboarding-tools",
     instructions=(
-        f"Tools for HR onboarding: Microsoft Graph (Excel tracker, Forms), "
+        "Tools for HR onboarding: Microsoft Graph (Excel tracker, Forms), "
         "DocuSign (draft, send, status), Outlook email (draft, send), and "
         "Teams notifications. "
         "Use get_onboarding_status for composite queries."

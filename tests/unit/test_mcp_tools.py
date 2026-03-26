@@ -1,7 +1,8 @@
 """Tests for MCP tool logic with mocked tracker and DocuSign clients."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastmcp import FastMCP
 
 

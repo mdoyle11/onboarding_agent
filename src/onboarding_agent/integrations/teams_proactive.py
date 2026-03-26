@@ -8,7 +8,12 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
-from microsoft_agents.activity import Activity, Attachment, load_configuration_from_env, ConversationReference
+from microsoft_agents.activity import (
+    Activity,
+    Attachment,
+    ConversationReference,
+    load_configuration_from_env,
+)
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.hosting.core import TurnContext

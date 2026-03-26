@@ -18,7 +18,6 @@ from onboarding_agent.agent.nodes import (
     tool_executor_node,
 )
 from onboarding_agent.agent.state import OnboardingState
-from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
