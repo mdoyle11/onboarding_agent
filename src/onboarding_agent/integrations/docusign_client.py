@@ -11,15 +11,15 @@ from typing import Any
 import jwt as pyjwt
 from docusign_esign import (
     ApiClient,
-    EnvelopesApi,
     EnvelopeDefinition,
-    EventNotification,
     EnvelopeEvent,
+    EnvelopesApi,
+    EventNotification,
     FoldersApi,
     RecipientEvent,
+    Tabs,
     TemplateRole,
     Text,
-    Tabs,
 )
 from docusign_esign.client.api_exception import ApiException
 
