@@ -84,6 +84,7 @@ async def request_it_equipment(employee_email: str, equipment_type: str) -> dict
 ## Development
 
 ```bash
+uv sync --extra dev
 uv run pytest tests/unit -q
 ```
 
