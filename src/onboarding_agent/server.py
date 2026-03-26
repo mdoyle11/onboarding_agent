@@ -11,14 +11,21 @@ import asyncio
 import hmac
 import json
 import logging
+import os
 from typing import Any
 
 from aiohttp import web
 from langchain_core.messages import HumanMessage
+from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.authentication.msal import MsalConnectionManager
+from microsoft_agents.hosting.aiohttp import CloudAdapter
+from microsoft_agents.hosting.core import AgentApplication, Authorization, MemoryStorage, TurnState
 
 from onboarding_agent.agent import graph as graph_module
 from onboarding_agent.agent.state import default_state
 from onboarding_agent.config import settings
+from onboarding_agent.integrations import teams_proactive
+from onboarding_agent.integrations.teams_bot import register_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +40,7 @@ def _notification_channel() -> str:
 
 def _webhook_prompt(state: dict[str, Any]) -> str:
     interface = "Slack" if settings.is_slack() else "Teams"
-    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_teams_channel_notification"
+    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_new_hire_card"
     return (
         f"A new hire has been submitted via Microsoft Forms. "
         f"Employee: {state['employee_name']} ({state['employee_email']}), "
@@ -47,7 +54,8 @@ def _webhook_prompt(state: dict[str, Any]) -> str:
         "3) Draft the onboarding welcome email using draft_onboarding_email (draft only — do NOT send it). "
         f"4) Send a {interface} channel notification using {notification_tool} "
         f"to channel '{_notification_channel()}' summarising what was done: the DocuSign draft "
-        "and onboarding email draft are ready for HR to review. HR must explicitly approve sending each."
+        "and onboarding email draft are ready for HR to review. Include the employee name, email, "
+        "start date, department, location, manager email, and a concise summary in the card."
     )
 
 
@@ -97,7 +105,7 @@ async def handle_new_hire_webhook(request: web.Request) -> web.Response:
 
 def _docusign_prompt(envelope_id: str, status: str, employee_email: str) -> str:
     interface = "Slack" if settings.is_slack() else "Teams"
-    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_teams_channel_notification"
+    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_docusign_status_card"
     return (
         f"DocuSign envelope {envelope_id} for {employee_email} has changed to status: {status}. "
         f"1) If the status is 'completed', call update_tracker_stage with "
@@ -221,7 +229,9 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
 
 def _background_clearance_prompt(employee_email: str, employee_name: str) -> str:
     interface = "Slack" if settings.is_slack() else "Teams"
-    notification_tool = "send_slack_channel_notification" if settings.is_slack() else "send_teams_channel_notification"
+    notification_tool = (
+        "send_slack_channel_notification" if settings.is_slack() else "send_background_clearance_card"
+    )
     return (
         f"Background clearance form submitted by {employee_name} ({employee_email}). "
         "Please run the following steps: "
@@ -272,43 +282,79 @@ async def handle_background_clearance_webhook(request: web.Request) -> web.Respo
 
 
 # ---------------------------------------------------------------------------
-# Teams — Bot Framework adapter (only when CHAT_INTERFACE=teams)
+# Teams — Agents SDK runtime (only when CHAT_INTERFACE=teams)
 # ---------------------------------------------------------------------------
 
-def _setup_teams(app: web.Application) -> None:
-    from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings
-    from botbuilder.schema import Activity
-    from onboarding_agent.integrations.teams_bot import OnboardingBot
+_agent_app: AgentApplication[TurnState] | None = None
+_adapter: CloudAdapter | None = None
 
-    adapter = BotFrameworkAdapter(
-        BotFrameworkAdapterSettings(
-            app_id=settings.microsoft_app_id,
-            app_password=settings.microsoft_app_password,
-        )
+
+def _ensure_agents_sdk_env() -> None:
+    has_service_connection = bool(
+        settings.microsoft_app_id and settings.microsoft_app_password and settings.azure_tenant_id
     )
-    bot = OnboardingBot()
+    if has_service_connection:
+        os.environ.setdefault(
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID",
+            settings.microsoft_app_id,
+        )
+        os.environ.setdefault(
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET",
+            settings.microsoft_app_password,
+        )
+        os.environ.setdefault(
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID",
+            settings.azure_tenant_id,
+        )
+    if settings.microsoft_app_allow_anonymous or not has_service_connection:
+        os.environ.setdefault(
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED",
+            "true",
+        )
+    os.environ.setdefault("PORT", str(settings.port))
 
-    async def on_error(context: Any, error: Exception) -> None:
-        logger.exception("Bot adapter error: %s", error)
 
-    adapter.on_turn_error = on_error  # type: ignore[assignment]
+def _setup_teams(app: web.Application) -> None:
+    _ensure_agents_sdk_env()
+
+    config = load_configuration_from_env(os.environ)
+    storage = MemoryStorage()
+    connection_manager = MsalConnectionManager(**config)
+    adapter = CloudAdapter(connection_manager=connection_manager)
+    authorization = Authorization(storage, connection_manager, **config)
+    agent_app = AgentApplication[TurnState](
+        storage=storage,
+        adapter=adapter,
+        authorization=authorization,
+        **config,
+    )
+    register_handlers(agent_app)
+    teams_proactive.adapter = adapter
+    teams_proactive.bot_app_id = settings.microsoft_app_id
+
+    global _agent_app, _adapter
+    _agent_app = agent_app
+    _adapter = adapter
 
     async def handle_messages(request: web.Request) -> web.Response:
-        """POST /api/messages — Bot Framework Teams messages."""
+        """POST /api/messages — Microsoft 365 Agents SDK endpoint for Teams/App Tester."""
         if "application/json" not in request.content_type:
             return web.Response(status=415)
-        body = await request.json()
-        activity = Activity().deserialize(body)
-        auth_header = request.headers.get("Authorization", "")
         try:
-            await adapter.process_activity(activity, auth_header, bot.on_turn)
-            return web.Response(status=200)
+            response = await adapter.process(request, agent_app)
+            if response is None:
+                return web.Response(status=201)
+            return response
         except Exception as exc:
             logger.exception("Error processing Teams activity")
             return web.Response(status=500, text=str(exc))
 
+    async def handle_messages_probe(_request: web.Request) -> web.Response:
+        return web.Response(status=200, text="ok")
+
+    app.router.add_get("/api/messages", handle_messages_probe)
     app.router.add_post("/api/messages", handle_messages)
-    logger.info("Teams Bot Framework adapter registered on POST /api/messages")
+    logger.info("Teams Agents SDK endpoint registered on /api/messages")
 
 
 # ---------------------------------------------------------------------------

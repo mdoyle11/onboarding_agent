@@ -1,31 +1,88 @@
-"""Microsoft Graph API client — Excel, Teams, Forms."""
+"""Microsoft Graph API client — Excel tracker, Teams, and Forms."""
 
 from __future__ import annotations
 
 import logging
+from datetime import date
+from urllib.parse import quote
 from typing import Any
 
+import aiohttp
 from azure.identity.aio import ClientSecretCredential
 from msgraph import GraphServiceClient
-from msgraph.generated.models.chat_message import ChatMessage
-from msgraph.generated.models.item_body import ItemBody
 
 from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Graph scopes required by the app registration
-_SCOPES = [
-    "https://graph.microsoft.com/.default",
-]
+_SCOPES = ["https://graph.microsoft.com/.default"]
 
-# Column indices in the Excel tracker (zero-based)
+# ---------------------------------------------------------------------------
+# Column layout (zero-based) — aligned with the Google Sheets tracker
+# ---------------------------------------------------------------------------
+# A     B      C         D          E           F              G                  H
+# Name  Email  Location  StartDate  Department  ManagerEmail   AddedToTracker     SentOfferLetter
+# I                    J                      K                   L          M               N              O
+# OfferLetterSigned    BackgroundSubmission   BackgroundCleared   AddedToADP CompleteInADP   ClearToStart   ProrationsSent
+
 _COL_NAME = 0
 _COL_EMAIL = 1
-_COL_START_DATE = 2
-_COL_DEPARTMENT = 3
-_COL_MANAGER_EMAIL = 4
-_COL_STATUS = 5
+_COL_LOCATION = 2
+_COL_START_DATE = 3
+_COL_DEPARTMENT = 4
+_COL_MANAGER_EMAIL = 5
+
+STAGES: dict[str, int] = {
+    "Added to Tracker": 6,
+    "Sent Offer Letter": 7,
+    "Offer Letter Signed": 8,
+    "Background Submission": 9,
+    "Background Cleared": 10,
+    "Added to ADP": 11,
+    "Complete in ADP": 12,
+    "Clear to Start": 13,
+    "Prorations Sent": 14,
+}
+
+ALL_STAGES = list(STAGES.keys())
+ACTIVE_STAGES = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
+
+HEADER_ROW = [
+    "Name",
+    "Email",
+    "Location",
+    "StartDate",
+    "Department",
+    "ManagerEmail",
+    "Added to Tracker",
+    "Sent Offer Letter",
+    "Offer Letter Signed",
+    "Background Submission",
+    "Background Cleared",
+    "Added to ADP",
+    "Complete in ADP",
+    "Clear to Start",
+    "Prorations Sent",
+]
+
+
+def _today() -> str:
+    return date.today().isoformat()
+
+
+def _row_to_stages(row: list[Any]) -> dict[str, str]:
+    return {
+        stage: str(row[col_idx]) if len(row) > col_idx and row[col_idx] is not None else ""
+        for stage, col_idx in STAGES.items()
+    }
+
+
+def _latest_active_stage(stages: dict[str, str]) -> str:
+    latest = ""
+    for stage in ACTIVE_STAGES:
+        if stages.get(stage):
+            latest = stage
+    return latest
 
 
 class GraphClient:
@@ -39,37 +96,83 @@ class GraphClient:
         )
         return GraphServiceClient(credential, scopes=_SCOPES)
 
+    async def _used_range_rows(self) -> list[list[Any]]:
+        data = await self._graph_workbook_request(
+            "GET",
+            f"/worksheets/{quote(settings.graph_excel_sheet_name)}/usedRange(valuesOnly=true)",
+        )
+        values = data.get("values", []) if isinstance(data, dict) else []
+        if not values:
+            return []
+        return values
+
+    async def _graph_access_token(self) -> str:
+        cred = ClientSecretCredential(
+            tenant_id=settings.azure_tenant_id,
+            client_id=settings.azure_client_id,
+            client_secret=settings.azure_client_secret,
+        )
+        try:
+            token = await cred.get_token("https://graph.microsoft.com/.default")
+            return token.token
+        finally:
+            await cred.close()
+
+    async def _graph_workbook_request(
+        self,
+        method: str,
+        workbook_path: str,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        token = await self._graph_access_token()
+        url = (
+            "https://graph.microsoft.com/v1.0"
+            f"/drives/{settings.graph_excel_drive_id}"
+            f"/items/{settings.graph_excel_item_id}"
+            f"/workbook{workbook_path}"
+        )
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        async with aiohttp.ClientSession() as session:
+            async with session.request(method, url, headers=headers, json=json_body) as resp:
+                if resp.status >= 400:
+                    body = await resp.text()
+                    raise RuntimeError(f"Graph workbook request failed ({resp.status}): {body}")
+                if resp.content_length == 0:
+                    return {}
+                text = await resp.text()
+                return {} if not text else await resp.json()
+
     # ------------------------------------------------------------------
     # Excel tracker helpers
     # ------------------------------------------------------------------
 
     async def find_employee_in_tracker(self, employee_email: str) -> dict[str, Any]:
-        """Return {found, row_id, status} for the given email."""
-        client = self._get_client()
+        """Return tracker row details for the given email."""
         try:
-            rows = await (
-                client.drives
-                .by_drive_id(settings.graph_excel_drive_id)
-                .items
-                .by_drive_item_id(settings.graph_excel_item_id)
-                .workbook
-                .worksheets
-                .by_workbook_worksheet_id(settings.graph_excel_sheet_name)
-                .used_range()
-                .get()
-            )
-            if not rows or not rows.values:
-                return {"found": False, "row_id": "", "status": ""}
+            rows = await self._used_range_rows()
+            if not rows:
+                return {"found": False, "row_id": "", "stages": {}}
 
-            for i, row in enumerate(rows.values):
+            for i, row in enumerate(rows[1:], start=2):  # skip header row
                 if len(row) > _COL_EMAIL and str(row[_COL_EMAIL]).lower() == employee_email.lower():
-                    status = str(row[_COL_STATUS]) if len(row) > _COL_STATUS else ""
-                    return {"found": True, "row_id": str(i + 1), "status": status}
+                    stages = _row_to_stages(row)
+                    return {
+                        "found": True,
+                        "row_id": str(i),
+                        "name": str(row[_COL_NAME]) if len(row) > _COL_NAME else "",
+                        "email": str(row[_COL_EMAIL]) if len(row) > _COL_EMAIL else "",
+                        "location": str(row[_COL_LOCATION]) if len(row) > _COL_LOCATION else "",
+                        "start_date": str(row[_COL_START_DATE]) if len(row) > _COL_START_DATE else "",
+                        "department": str(row[_COL_DEPARTMENT]) if len(row) > _COL_DEPARTMENT else "",
+                        "manager_email": str(row[_COL_MANAGER_EMAIL]) if len(row) > _COL_MANAGER_EMAIL else "",
+                        "stages": stages,
+                        "status": _latest_active_stage(stages),
+                    }
 
-            return {"found": False, "row_id": "", "status": ""}
+            return {"found": False, "row_id": "", "stages": {}}
         except Exception as exc:
             logger.exception("find_employee_in_tracker failed")
-            return {"found": False, "row_id": "", "status": "", "error": str(exc)}
+            return {"found": False, "row_id": "", "stages": {}, "error": str(exc)}
 
     async def add_employee_to_tracker(
         self,
@@ -78,73 +181,125 @@ class GraphClient:
         start_date: str,
         department: str,
         manager_email: str,
+        location: str = "",
     ) -> dict[str, Any]:
         """Append a new row to the Excel tracker."""
-        client = self._get_client()
         try:
-            from msgraph.generated.models.workbook_range import WorkbookRange
+            rows = await self._used_range_rows()
+            next_row = len(rows) + 1 if rows else 2
 
-            # Find the next empty row index by fetching used range
-            rows = await (
-                client.drives
-                .by_drive_id(settings.graph_excel_drive_id)
-                .items
-                .by_drive_item_id(settings.graph_excel_item_id)
-                .workbook
-                .worksheets
-                .by_workbook_worksheet_id(settings.graph_excel_sheet_name)
-                .used_range()
-                .get()
+            row = [""] * len(HEADER_ROW)
+            row[_COL_NAME] = name
+            row[_COL_EMAIL] = email
+            row[_COL_LOCATION] = location
+            row[_COL_START_DATE] = start_date
+            row[_COL_DEPARTMENT] = department
+            row[_COL_MANAGER_EMAIL] = manager_email
+            row[STAGES["Added to Tracker"]] = _today()
+
+            logger.info(
+                "Writing Excel row %s with direct mapping values=%s",
+                next_row,
+                row,
             )
-            next_row = (len(rows.values) + 1) if rows and rows.values else 2  # skip header
 
-            # Write the row via range address (e.g. "A5:F5")
-            range_address = f"A{next_row}:F{next_row}"
-            range_body = WorkbookRange()
-            range_body.values = [[name, email, start_date, department, manager_email, "Pending"]]
-
-            await (
-                client.drives
-                .by_drive_id(settings.graph_excel_drive_id)
-                .items
-                .by_drive_item_id(settings.graph_excel_item_id)
-                .workbook
-                .worksheets
-                .by_workbook_worksheet_id(settings.graph_excel_sheet_name)
-                .range_with_address(range_address)
-                .patch(range_body)
+            range_address = quote(f"A{next_row}:O{next_row}")
+            await self._graph_workbook_request(
+                "PATCH",
+                f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
+                {"values": [row]},
             )
             return {"success": True, "row_id": str(next_row)}
         except Exception as exc:
             logger.exception("add_employee_to_tracker failed")
             return {"success": False, "row_id": "", "error": str(exc)}
 
-    async def update_tracker_status(self, row_id: str, new_status: str) -> dict[str, Any]:
-        """Patch the status cell for a given row."""
-        client = self._get_client()
+    async def update_stage(
+        self,
+        employee_email: str,
+        stage_name: str,
+        value: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a completion date for a tracker stage."""
+        if stage_name not in STAGES:
+            return {
+                "success": False,
+                "error": f"Unknown stage '{stage_name}'. Valid stages: {list(STAGES)}",
+            }
+
+        employee = await self.find_employee_in_tracker(employee_email)
+        if not employee.get("found"):
+            return {"success": False, "error": f"Employee {employee_email} not found in tracker"}
+
         try:
-            from msgraph.generated.models.workbook_range import WorkbookRange
-
-            # Status is column F (index 5)
-            range_address = f"F{row_id}"
-            range_body = WorkbookRange()
-            range_body.values = [[new_status]]
-
-            await (
-                client.drives
-                .by_drive_id(settings.graph_excel_drive_id)
-                .items
-                .by_drive_item_id(settings.graph_excel_item_id)
-                .workbook
-                .worksheets
-                .by_workbook_worksheet_id(settings.graph_excel_sheet_name)
-                .range_with_address(range_address)
-                .patch(range_body)
+            row_id = employee["row_id"]
+            col_letter = chr(ord("A") + STAGES[stage_name])
+            cell_value = value if value is not None else _today()
+            range_address = quote(f"{col_letter}{row_id}")
+            await self._graph_workbook_request(
+                "PATCH",
+                f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
+                {"values": [[cell_value]]},
             )
-            return {"success": True, "row_id": row_id, "new_status": new_status}
+            return {
+                "success": True,
+                "employee_email": employee_email,
+                "stage": stage_name,
+                "value": cell_value,
+            }
         except Exception as exc:
-            logger.exception("update_tracker_status failed")
-            return {"success": False, "row_id": row_id, "error": str(exc)}
+            logger.exception("update_stage failed")
+            return {"success": False, "error": str(exc)}
+
+    async def update_tracker_status(self, row_id: str, new_status: str) -> dict[str, Any]:
+        """Legacy shim retained for compatibility."""
+        logger.warning("update_tracker_status called with row_id=%s; prefer update_stage", row_id)
+        stage_name = new_status if new_status in STAGES else "Added to Tracker"
+        rows = await self._used_range_rows()
+        index = int(row_id) - 1
+        if index < 1 or index >= len(rows):
+            return {"success": False, "row_id": row_id, "error": "Row not found"}
+        employee_email = str(rows[index][_COL_EMAIL]) if len(rows[index]) > _COL_EMAIL else ""
+        if not employee_email:
+            return {"success": False, "row_id": row_id, "error": "Email not found for row"}
+        result = await self.update_stage(employee_email, stage_name)
+        return {"row_id": row_id, **result}
+
+    async def list_all_employees(self) -> dict[str, Any]:
+        """List all employees in the Excel tracker."""
+        try:
+            rows = await self._used_range_rows()
+            employees = []
+            for row in rows[1:]:
+                if len(row) <= _COL_EMAIL or not row[_COL_EMAIL]:
+                    continue
+                employees.append(
+                    {
+                        "name": str(row[_COL_NAME]) if len(row) > _COL_NAME else "",
+                        "email": str(row[_COL_EMAIL]),
+                        "location": str(row[_COL_LOCATION]) if len(row) > _COL_LOCATION else "",
+                        "start_date": str(row[_COL_START_DATE]) if len(row) > _COL_START_DATE else "",
+                        "department": str(row[_COL_DEPARTMENT]) if len(row) > _COL_DEPARTMENT else "",
+                        "stages": _row_to_stages(row),
+                    }
+                )
+            return {"success": True, "employees": employees, "count": len(employees)}
+        except Exception as exc:
+            logger.exception("list_all_employees failed")
+            return {"success": False, "employees": [], "count": 0, "error": str(exc)}
+
+    async def get_employee_stages(self, employee_email: str) -> dict[str, Any]:
+        """Return stage details for one employee."""
+        result = await self.find_employee_in_tracker(employee_email)
+        if not result.get("found"):
+            return {"found": False, "employee_email": employee_email, "stages": {}}
+        return {
+            "found": True,
+            "employee_email": employee_email,
+            "name": result.get("name", ""),
+            "start_date": result.get("start_date", ""),
+            "stages": result.get("stages", {}),
+        }
 
     # ------------------------------------------------------------------
     # Forms
@@ -185,27 +340,15 @@ class GraphClient:
     # ------------------------------------------------------------------
 
     async def send_teams_channel_notification(
-        self, channel_id: str, message: str
+        self, channel_id: str, message: str, card: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Post a message to a Teams channel via Graph."""
-        client = self._get_client()
-        try:
-            body = ChatMessage()
-            body.body = ItemBody()
-            body.body.content = message
+        """Post a message to a Teams channel via Agents SDK proactive messaging."""
+        from onboarding_agent.integrations.adaptive_cards import generic_notification_card
+        from onboarding_agent.integrations.teams_proactive import send_proactive_message
 
-            result = await (
-                client.teams
-                .by_team_id(settings.teams_team_id)
-                .channels
-                .by_channel_id(channel_id)
-                .messages
-                .post(body)
-            )
-            return {"success": True, "message_id": result.id if result else ""}
-        except Exception as exc:
-            logger.exception("send_teams_channel_notification failed")
-            return {"success": False, "message_id": "", "error": str(exc)}
+        if card is None:
+            card = generic_notification_card(title="Onboarding Agent", message=message)
+        return await send_proactive_message(channel_id, message, card=card)
 
     async def send_teams_direct_message(self, user_id: str, message: str) -> dict[str, Any]:
         """Create or reuse a 1:1 chat and post a message."""
@@ -222,7 +365,6 @@ class GraphClient:
             headers = {"Authorization": f"Bearer {token.token}", "Content-Type": "application/json"}
 
             async with aiohttp.ClientSession() as session:
-                # Create or get existing 1:1 chat
                 chat_payload = {
                     "chatType": "oneOnOne",
                     "members": [
@@ -241,7 +383,6 @@ class GraphClient:
                     chat_data = await resp.json()
                     chat_id = chat_data.get("id", "")
 
-                # Send the message
                 msg_payload = {"body": {"content": message}}
                 async with session.post(
                     f"https://graph.microsoft.com/v1.0/chats/{chat_id}/messages",
@@ -258,7 +399,5 @@ class GraphClient:
             await cred.close()
 
     async def send_teams_reply(self, activity_id: str, message: str) -> dict[str, Any]:
-        """Reply in a Teams thread. Requires the channel_id from context."""
-        # activity_id format: "19:channelId@thread.tacv2/messages/messageId"
-        # For simplicity we send to the HR channel with an @mention reference.
+        """Reply in a Teams thread."""
         return await self.send_teams_channel_notification(settings.teams_channel_id, message)

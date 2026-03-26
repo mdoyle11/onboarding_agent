@@ -243,6 +243,61 @@ def register(mcp: FastMCP) -> None:
         return await GraphClient().send_teams_channel_notification(channel_id, message)
 
     @mcp.tool()
+    async def send_new_hire_card(
+        channel_id: str,
+        employee_name: str,
+        employee_email: str,
+        start_date: str,
+        department: str,
+        location: str,
+        manager_email: str,
+        summary: str,
+    ) -> dict[str, Any]:
+        """Post a rich new hire Adaptive Card to a Teams channel."""
+        from onboarding_agent.integrations.adaptive_cards import new_hire_card
+        from onboarding_agent.integrations.graph_client import GraphClient
+
+        card = new_hire_card(
+            employee_name,
+            employee_email,
+            start_date,
+            department,
+            location,
+            manager_email,
+            summary,
+        )
+        return await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
+
+    @mcp.tool()
+    async def send_docusign_status_card(
+        channel_id: str,
+        employee_email: str,
+        envelope_id: str,
+        status: str,
+        summary: str,
+    ) -> dict[str, Any]:
+        """Post a DocuSign status Adaptive Card to a Teams channel."""
+        from onboarding_agent.integrations.adaptive_cards import docusign_status_card
+        from onboarding_agent.integrations.graph_client import GraphClient
+
+        card = docusign_status_card(employee_email, envelope_id, status, summary)
+        return await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
+
+    @mcp.tool()
+    async def send_background_clearance_card(
+        channel_id: str,
+        employee_name: str,
+        employee_email: str,
+        summary: str,
+    ) -> dict[str, Any]:
+        """Post a background clearance Adaptive Card to a Teams channel."""
+        from onboarding_agent.integrations.adaptive_cards import background_clearance_card
+        from onboarding_agent.integrations.graph_client import GraphClient
+
+        card = background_clearance_card(employee_name, employee_email, summary)
+        return await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
+
+    @mcp.tool()
     async def send_teams_direct_message(user_id: str, message: str) -> dict[str, Any]:
         """Send a 1:1 Teams direct message to a user."""
         from onboarding_agent.integrations.graph_client import GraphClient

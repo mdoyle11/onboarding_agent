@@ -58,13 +58,10 @@ def register(mcp: FastMCP) -> None:
         """
         tracker = _tracker()
 
-        # Fetch stage data
-        if settings.is_sheets():
-            from onboarding_agent.integrations.sheets_client import SheetsClient
-            record = await SheetsClient().get_employee_stages(employee_email)
+        if hasattr(tracker, "get_employee_stages"):
+            record = await tracker.get_employee_stages(employee_email)
         else:
-            from onboarding_agent.integrations.graph_client import GraphClient
-            record = await GraphClient().find_employee_in_tracker(employee_email)
+            record = await tracker.find_employee_in_tracker(employee_email)
 
         if not record.get("found"):
             return {

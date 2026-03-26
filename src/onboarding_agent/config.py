@@ -32,9 +32,10 @@ class Settings(BaseSettings):
     teams_team_id: str = ""
     teams_channel_id: str = ""
 
-    # Azure Bot (required when chat_interface=teams)
+    # Teams / Agents SDK auth (required when chat_interface=teams for authenticated flows)
     microsoft_app_id: str = ""
     microsoft_app_password: str = ""
+    microsoft_app_allow_anonymous: bool = False
 
     # ---------------------------------------------------------------------------
     # Tracker backend — "sheets" | "excel"

@@ -15,6 +15,7 @@ from docusign_esign import (
     EnvelopeDefinition,
     EventNotification,
     EnvelopeEvent,
+    FoldersApi,
     RecipientEvent,
     TemplateRole,
     Text,
@@ -107,25 +108,49 @@ class DocuSignClient:
         try:
             api_client = self._get_api_client()
             envelopes_api = EnvelopesApi(api_client)
-            # Only look for in-progress envelopes (draft, sent, delivered)
-            # Completed/voided/declined are finished — a new envelope can be created
-            for status in ("created", "sent", "delivered"):
-                result = envelopes_api.list_status_changes(
-                    account_id=settings.docusign_account_id,
-                    from_date="2000-01-01",
-                    status=status,
-                    custom_field=f"employee_email={employee_email}",
-                )
-                envelopes = result.envelopes or []
-                for env in envelopes:
-                    actual_status = (env.status or "").lower()
-                    if actual_status in ("voided", "declined", "completed"):
-                        continue
-                    return {
-                        "exists": True,
-                        "envelope_id": env.envelope_id or "",
-                        "status": actual_status,
+            folders_api = FoldersApi(api_client)
+            result = folders_api.search(
+                account_id=settings.docusign_account_id,
+                search_folder_id="drafts",
+                include_recipients="true",
+                order="desc",
+                order_by="created",
+                count="25",
+            )
+            items = result.folder_items or []
+            for item in items:
+                envelope_id = item.envelope_id or ""
+                actual_status = (item.status or "").lower()
+                if not envelope_id or actual_status != "created":
+                    continue
+
+                try:
+                    recipients_result = envelopes_api.list_recipients(
+                        account_id=settings.docusign_account_id,
+                        envelope_id=envelope_id,
+                    )
+                    recipient_emails = {
+                        (signer.email or "").lower()
+                        for signer in (recipients_result.signers or [])
+                        if signer.email
                     }
+                    if employee_email.lower() not in recipient_emails:
+                        logger.info(
+                            "Ignoring draft %s for %s because recipients=%s",
+                            envelope_id,
+                            employee_email,
+                            sorted(recipient_emails),
+                        )
+                        continue
+                except ApiException:
+                    logger.info("Ignoring stale draft reference %s", envelope_id)
+                    continue
+
+                return {
+                    "exists": True,
+                    "envelope_id": envelope_id,
+                    "status": actual_status,
+                }
             return {"exists": False, "envelope_id": ""}
         except ApiException as exc:
             logger.exception("check_draft_exists failed")
