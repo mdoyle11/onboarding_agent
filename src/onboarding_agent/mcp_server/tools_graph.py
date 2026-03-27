@@ -218,6 +218,57 @@ def register(mcp: FastMCP) -> None:
         return {"count": len(employees), "pending_stage": pending_stage, "employees": employees, "summary": summary}
 
     @mcp.tool()
+    async def check_staff_roster_capacity(location: str, job_category: str) -> dict[str, Any]:
+        """
+        Check whether a location's staff roster has remaining capacity for a job category.
+
+        Parameters:
+        - location: Exact location/campus name mapped to a configured roster workbook
+        - job_category: Exact value from the roster's Group column / capacity sheet
+
+        Returns a dict with:
+        - success (bool)
+        - current_count (int)
+        - max_capacity (int)
+        - remaining_capacity (int)
+        - has_capacity (bool)
+        """
+        return cast(
+            dict[str, Any],
+            await _tracker().check_staff_roster_capacity(location, job_category),
+        )
+
+    @mcp.tool()
+    async def add_employee_to_staff_roster(employee_email: str, job_category: str) -> dict[str, Any]:
+        """
+        Add an employee from the onboarding tracker to the configured staff roster workbook.
+
+        This tool:
+        - looks up the employee in the onboarding tracker
+        - resolves the roster workbook from the employee's location
+        - checks capacity for the requested job category
+        - appends a new row only if capacity is available
+
+        Parameters:
+        - employee_email: Employee email already present in the onboarding tracker
+        - job_category: Exact roster category/group value to place the employee under
+        """
+        result = cast(
+            dict[str, Any],
+            await _tracker().add_employee_to_staff_roster(employee_email, job_category),
+        )
+        if result.get("success"):
+            from onboarding_agent.integrations.card_state import (
+                mark_docusign_roster_complete,
+                refresh_docusign_status_card,
+            )
+
+            card = mark_docusign_roster_complete(employee_email, job_category)
+            if card is not None:
+                await refresh_docusign_status_card(employee_email)
+        return result
+
+    @mcp.tool()
     async def get_form_submission_by_id(submission_id: str) -> dict[str, Any]:
         """
         Fetch a specific Microsoft Forms submission by its ID.
@@ -281,10 +332,21 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Post a DocuSign status Adaptive Card to a Teams channel."""
         from onboarding_agent.integrations.adaptive_cards import docusign_status_card
+        from onboarding_agent.integrations.card_state import save_docusign_status_card
         from onboarding_agent.integrations.graph_client import GraphClient
 
         card = docusign_status_card(employee_email, envelope_id, status, summary)
-        return await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
+        result = await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
+        if result.get("success") and result.get("message_id") and status.lower() == "completed":
+            save_docusign_status_card(
+                employee_email=employee_email,
+                channel_id=channel_id,
+                message_id=result["message_id"],
+                envelope_id=envelope_id,
+                status=status,
+                summary=summary,
+            )
+        return result
 
     @mcp.tool()
     async def send_background_clearance_card(

@@ -65,6 +65,12 @@ After any DocuSign send action, always call update_tracker_stage to keep the tra
 When DocuSign status is "completed", call update_tracker_stage with stage="Offer Letter Signed".
 For DocuSign webhook status-change runs, send the final {_INTERFACE} notification using
 {_DOCUSIGN_NOTIFICATION_TOOL}; do not finish with plain text only.
+When asked to check staff roster capacity, call check_staff_roster_capacity with the exact
+location and exact job category provided by HR.
+When asked to add an employee to the staff roster, call add_employee_to_staff_roster with the
+employee email and the exact job category. This tool will derive the employee's location from
+the onboarding tracker and check capacity before writing. If the exact job category is missing,
+ask HR to provide it before using the tool.
 When asked to send an onboarding email for an employee, use send_onboarding_email with
 their email address. If no draft exists, first call draft_onboarding_email to create one,
 then confirm with HR before sending.

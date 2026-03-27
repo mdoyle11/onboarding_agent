@@ -96,7 +96,14 @@ def new_hire_card(
     }
 
 
-def docusign_status_card(employee_email: str, envelope_id: str, status: str, summary: str) -> dict[str, Any]:
+def docusign_status_card(
+    employee_email: str,
+    envelope_id: str,
+    status: str,
+    summary: str,
+    roster_added: bool = False,
+    job_category: str = "",
+) -> dict[str, Any]:
     """Card sent when a DocuSign envelope status changes."""
     status_icon = {
         "completed": "\u2705",
@@ -107,31 +114,66 @@ def docusign_status_card(employee_email: str, envelope_id: str, status: str, sum
     }.get(status.lower(), "\U0001f4cb")
 
     status_color = "Good" if status.lower() == "completed" else "Default"
+    actions: list[dict[str, Any]] = []
+    body: list[dict[str, Any]] = [
+        {
+            "type": "ColumnSet",
+            "columns": [
+                {"type": "Column", "width": "auto", "items": [{"type": "TextBlock", "text": status_icon, "size": "Large"}]},
+                {
+                    "type": "Column",
+                    "width": "stretch",
+                    "items": [
+                        {"type": "TextBlock", "text": "DocuSign Update", "weight": "Bolder", "size": "Medium", "wrap": True},
+                        {"type": "TextBlock", "text": f"Envelope status: **{status}**", "spacing": "None", "color": status_color, "wrap": True},
+                    ],
+                },
+            ],
+        },
+        {"type": "TextBlock", "text": " ", "separator": True},
+        {"type": "FactSet", "facts": [{"title": "Employee", "value": employee_email or "Unknown"}, {"title": "Envelope", "value": envelope_id[:8] + "..." if len(envelope_id) > 8 else envelope_id}]},
+        {"type": "TextBlock", "text": " ", "separator": True},
+        {"type": "TextBlock", "text": summary, "wrap": True},
+    ]
+
+    if status.lower() == "completed":
+        body.extend(
+            [
+                {"type": "TextBlock", "text": " ", "separator": True},
+                {
+                    "type": "Input.Text",
+                    "id": "job_category",
+                    "label": "Staff roster job category",
+                    "placeholder": "Enter the exact Group/category value",
+                    "value": job_category,
+                    "isRequired": not roster_added,
+                },
+            ]
+        )
+        if roster_added:
+            actions.append(
+                {
+                    "type": "Action.Submit",
+                    "title": "\u2713 Added To Staff Roster",
+                    "isEnabled": False,
+                    "data": {"action": "add_to_staff_roster", "employee_email": employee_email},
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "type": "Action.Submit",
+                    "title": "Add To Staff Roster",
+                    "data": {"action": "add_to_staff_roster", "employee_email": employee_email},
+                }
+            )
 
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
         "version": "1.5",
-        "body": [
-            {
-                "type": "ColumnSet",
-                "columns": [
-                    {"type": "Column", "width": "auto", "items": [{"type": "TextBlock", "text": status_icon, "size": "Large"}]},
-                    {
-                        "type": "Column",
-                        "width": "stretch",
-                        "items": [
-                            {"type": "TextBlock", "text": "DocuSign Update", "weight": "Bolder", "size": "Medium", "wrap": True},
-                            {"type": "TextBlock", "text": f"Envelope status: **{status}**", "spacing": "None", "color": status_color, "wrap": True},
-                        ],
-                    },
-                ],
-            },
-            {"type": "TextBlock", "text": " ", "separator": True},
-            {"type": "FactSet", "facts": [{"title": "Employee", "value": employee_email or "Unknown"}, {"title": "Envelope", "value": envelope_id[:8] + "..." if len(envelope_id) > 8 else envelope_id}]},
-            {"type": "TextBlock", "text": " ", "separator": True},
-            {"type": "TextBlock", "text": summary, "wrap": True},
-        ],
+        "body": body,
+        "actions": actions,
     }
 
 

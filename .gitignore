@@ -5,6 +5,7 @@
 *.key
 *.p12
 keys/
+staff_rosters.json
 google_service_account.json
 
 # Python

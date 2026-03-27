@@ -66,9 +66,58 @@ HEADER_ROW = [
     "Prorations Sent",
 ]
 
+_ROSTER_REQUIRED_ALIASES = {
+    "name": {"employee name", "name"},
+    "email": {"employee email", "email"},
+    "group": {"group", "job category", "category"},
+}
+
+_ROSTER_OPTIONAL_ALIASES = {
+    "start_date": {"start date", "startdate"},
+    "department": {"department"},
+    "manager_email": {"manager email", "manageremail"},
+    "location": {"location"},
+}
+
+_CAPACITY_ALIASES = {
+    "group": {"group", "job category", "category"},
+    "capacity": {"capacity", "max capacity", "maxcapacity"},
+}
+
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+def _normalize_header(value: Any) -> str:
+    return "".join(ch.lower() for ch in str(value or "").strip() if ch.isalnum())
+
+
+def _column_letter(index: int) -> str:
+    result = ""
+    current = index + 1
+    while current > 0:
+        current, remainder = divmod(current - 1, 26)
+        result = chr(ord("A") + remainder) + result
+    return result
+
+
+def _header_map(header_row: list[Any], aliases: dict[str, set[str]]) -> dict[str, int]:
+    normalized = {_normalize_header(value): idx for idx, value in enumerate(header_row)}
+    resolved: dict[str, int] = {}
+    for key, names in aliases.items():
+        for name in names:
+            idx = normalized.get(_normalize_header(name))
+            if idx is not None:
+                resolved[key] = idx
+                break
+    return resolved
+
+
+def _cell(row: list[Any], index: int | None) -> str:
+    if index is None or index >= len(row):
+        return ""
+    return str(row[index] or "").strip()
 
 
 def _row_to_stages(row: list[Any]) -> dict[str, str]:
@@ -97,10 +146,18 @@ class GraphClient:
         )
         return GraphServiceClient(credential, scopes=_SCOPES)
 
-    async def _used_range_rows(self) -> list[list[Any]]:
+    async def _used_range_rows(
+        self,
+        *,
+        drive_id: str | None = None,
+        item_id: str | None = None,
+        sheet_name: str | None = None,
+    ) -> list[list[Any]]:
         data = await self._graph_workbook_request(
             "GET",
-            f"/worksheets/{quote(settings.graph_excel_sheet_name)}/usedRange(valuesOnly=true)",
+            f"/worksheets/{quote(sheet_name or settings.graph_excel_sheet_name)}/usedRange(valuesOnly=true)",
+            drive_id=drive_id,
+            item_id=item_id,
         )
         values = data.get("values", []) if isinstance(data, dict) else []
         if not values:
@@ -124,13 +181,16 @@ class GraphClient:
         method: str,
         workbook_path: str,
         json_body: dict[str, Any] | None = None,
+        *,
+        drive_id: str | None = None,
+        item_id: str | None = None,
     ) -> dict[str, Any]:
         started = perf_counter()
         token = await self._graph_access_token()
         url = (
             "https://graph.microsoft.com/v1.0"
-            f"/drives/{settings.graph_excel_drive_id}"
-            f"/items/{settings.graph_excel_item_id}"
+            f"/drives/{drive_id or settings.graph_excel_drive_id}"
+            f"/items/{item_id or settings.graph_excel_item_id}"
             f"/workbook{workbook_path}"
         )
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -158,6 +218,14 @@ class GraphClient:
                 perf_counter() - started,
             )
             return result
+
+    def _staff_roster_workbook(self, location: str) -> dict[str, str]:
+        workbook = settings.staff_roster_workbook(location)
+        if workbook is None:
+            raise ValueError(f"No staff roster workbook configured for location '{location}'")
+        if not workbook.get("drive_id") or not workbook.get("item_id"):
+            raise ValueError(f"Staff roster workbook for '{location}' is missing drive_id or item_id")
+        return workbook
 
     # ------------------------------------------------------------------
     # Excel tracker helpers
@@ -317,6 +385,198 @@ class GraphClient:
             "start_date": result.get("start_date", ""),
             "stages": result.get("stages", {}),
         }
+
+    # ------------------------------------------------------------------
+    # Staff Roster
+    # ------------------------------------------------------------------
+
+    async def check_staff_roster_capacity(self, location: str, job_category: str) -> dict[str, Any]:
+        """Return current and max capacity for a location/category staff roster."""
+        try:
+            workbook = self._staff_roster_workbook(location)
+            capacity_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["capacity_sheet_name"],
+            )
+            roster_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["roster_sheet_name"],
+            )
+
+            if not capacity_rows:
+                return {"success": False, "error": "Capacity sheet is empty"}
+            if not roster_rows:
+                return {"success": False, "error": "Roster sheet is empty"}
+
+            capacity_header = _header_map(capacity_rows[0], _CAPACITY_ALIASES)
+            if "group" not in capacity_header or "capacity" not in capacity_header:
+                return {"success": False, "error": "Capacity sheet must contain Group and Capacity columns"}
+
+            roster_aliases = {**_ROSTER_REQUIRED_ALIASES, **_ROSTER_OPTIONAL_ALIASES}
+            roster_header = _header_map(roster_rows[0], roster_aliases)
+            missing = [key for key in _ROSTER_REQUIRED_ALIASES if key not in roster_header]
+            if missing:
+                missing_list = ", ".join(missing)
+                return {"success": False, "error": f"Roster sheet is missing required columns: {missing_list}"}
+
+            normalized_category = job_category.strip().lower()
+            max_capacity: int | None = None
+            for row in capacity_rows[1:]:
+                if _cell(row, capacity_header.get("group")).lower() != normalized_category:
+                    continue
+                capacity_text = _cell(row, capacity_header.get("capacity"))
+                if capacity_text:
+                    max_capacity = int(float(capacity_text))
+                break
+
+            if max_capacity is None:
+                return {
+                    "success": False,
+                    "location": location,
+                    "job_category": job_category,
+                    "error": f"No capacity row found for category '{job_category}'",
+                }
+
+            current_count = 0
+            for row in roster_rows[1:]:
+                email = _cell(row, roster_header.get("email"))
+                group = _cell(row, roster_header.get("group"))
+                if not email or not group:
+                    continue
+                if group.lower() == normalized_category:
+                    current_count += 1
+
+            return {
+                "success": True,
+                "location": location,
+                "job_category": job_category,
+                "current_count": current_count,
+                "max_capacity": max_capacity,
+                "remaining_capacity": max_capacity - current_count,
+                "has_capacity": current_count < max_capacity,
+            }
+        except Exception as exc:
+            logger.exception("check_staff_roster_capacity failed")
+            return {
+                "success": False,
+                "location": location,
+                "job_category": job_category,
+                "error": str(exc),
+            }
+
+    async def add_employee_to_staff_roster(self, employee_email: str, job_category: str) -> dict[str, Any]:
+        """Append an employee to the configured location staff roster if capacity allows."""
+        try:
+            employee = await self.find_employee_in_tracker(employee_email)
+            if not employee.get("found"):
+                return {
+                    "success": False,
+                    "employee_email": employee_email,
+                    "job_category": job_category,
+                    "error": f"Employee {employee_email} not found in onboarding tracker",
+                }
+
+            location = str(employee.get("location", "") or "")
+            workbook = self._staff_roster_workbook(location)
+            roster_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["roster_sheet_name"],
+            )
+            if not roster_rows:
+                return {"success": False, "error": "Roster sheet is empty"}
+
+            roster_aliases = {**_ROSTER_REQUIRED_ALIASES, **_ROSTER_OPTIONAL_ALIASES}
+            roster_header = _header_map(roster_rows[0], roster_aliases)
+            missing = [key for key in _ROSTER_REQUIRED_ALIASES if key not in roster_header]
+            if missing:
+                missing_list = ", ".join(missing)
+                return {"success": False, "error": f"Roster sheet is missing required columns: {missing_list}"}
+
+            normalized_email = employee_email.strip().lower()
+            for index, row in enumerate(roster_rows[1:], start=2):
+                if _cell(row, roster_header.get("email")).lower() == normalized_email:
+                    return {
+                        "success": True,
+                        "employee_email": employee_email,
+                        "job_category": job_category,
+                        "location": location,
+                        "row_id": str(index),
+                        "already_exists": True,
+                    }
+
+            capacity = await self.check_staff_roster_capacity(location, job_category)
+            if not capacity.get("success"):
+                return {
+                    "success": False,
+                    "employee_email": employee_email,
+                    "job_category": job_category,
+                    "location": location,
+                    "error": str(capacity.get("error", "Capacity check failed")),
+                }
+            if not capacity.get("has_capacity"):
+                return {
+                    "success": False,
+                    "employee_email": employee_email,
+                    "job_category": job_category,
+                    "location": location,
+                    "current_count": capacity.get("current_count", 0),
+                    "max_capacity": capacity.get("max_capacity", 0),
+                    "error": f"Category '{job_category}' at {location} is at capacity",
+                }
+
+            row_width = max(len(roster_rows[0]), max(roster_header.values()) + 1)
+            next_row = len(roster_rows) + 1
+            new_row = [""] * row_width
+            new_row[roster_header["name"]] = str(employee.get("name", "") or "")
+            new_row[roster_header["email"]] = employee_email
+            new_row[roster_header["group"]] = job_category
+
+            optional_values = {
+                "start_date": str(employee.get("start_date", "") or ""),
+                "department": str(employee.get("department", "") or ""),
+                "manager_email": str(employee.get("manager_email", "") or ""),
+                "location": location,
+            }
+            for key, value in optional_values.items():
+                idx = roster_header.get(key)
+                if idx is not None:
+                    new_row[idx] = value
+
+            logger.info(
+                "Writing staff roster row %s for %s/%s values=%s",
+                next_row,
+                location,
+                job_category,
+                new_row,
+            )
+            range_address = quote(f"A{next_row}:{_column_letter(len(new_row) - 1)}{next_row}")
+            await self._graph_workbook_request(
+                "PATCH",
+                f"/worksheets/{quote(workbook['roster_sheet_name'])}/range(address='{range_address}')",
+                {"values": [new_row]},
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+            )
+            return {
+                "success": True,
+                "employee_email": employee_email,
+                "job_category": job_category,
+                "location": location,
+                "row_id": str(next_row),
+                "already_exists": False,
+                "remaining_capacity": int(capacity.get("remaining_capacity", 0)) - 1,
+            }
+        except Exception as exc:
+            logger.exception("add_employee_to_staff_roster failed")
+            return {
+                "success": False,
+                "employee_email": employee_email,
+                "job_category": job_category,
+                "error": str(exc),
+            }
 
     # ------------------------------------------------------------------
     # Forms

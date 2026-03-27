@@ -1,0 +1,18 @@
+{
+  "collier": {
+    "item_id": "COLLIER_WORKBOOK_ITEM_ID",
+    "roster_sheet_name": "Roster_Data",
+    "capacity_sheet_name": "Capacity"
+  },
+  "miami": {
+    "item_id": "MIAMI_WORKBOOK_ITEM_ID",
+    "roster_sheet_name": "Roster_Data",
+    "capacity_sheet_name": "Capacity"
+  },
+  "remote": {
+    "drive_id": "REMOTE_DRIVE_ID_IF_DIFFERENT",
+    "item_id": "REMOTE_WORKBOOK_ITEM_ID",
+    "roster_sheet_name": "Roster_Data",
+    "capacity_sheet_name": "Capacity"
+  }
+}

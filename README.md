@@ -69,6 +69,40 @@ The new-hire Teams card supports:
 
 When one of those actions succeeds, the original card is updated to show completion so teammates do not send the same step twice. Natural-language sends from a DM, group chat, or channel message also update the original card in the notification channel.
 
+When a DocuSign envelope reaches `completed`, the DocuSign status card also supports:
+
+- `Add To Staff Roster`
+
+That action requires HR to enter the exact staff-roster job category. The agent can also do the same flow from natural language in Teams, for example:
+
+- `check staff roster capacity for Collier Teacher`
+- `add mdoyle@example.com to the staff roster as Teacher`
+
+## Staff roster config
+
+Staff rosters are configured as one Excel workbook per location. Each location workbook should contain:
+
+- a `Roster_Data` sheet with one employee per row
+- a `Capacity` sheet with `Group` and `Capacity` columns
+
+Preferred setup:
+
+- set `STAFF_ROSTER_LOCATIONS_FILE=config/staff_rosters.json` in `.env`
+- copy [config/staff_rosters.example.json](/home/matthewdoyle/projects/onboarding_agent/config/staff_rosters.example.json) to `config/staff_rosters.json`
+- fill in the workbook IDs there
+
+Examples are in:
+
+- [.env.example](/home/matthewdoyle/projects/onboarding_agent/.env.example)
+- [staff_rosters.example.json](/home/matthewdoyle/projects/onboarding_agent/config/staff_rosters.example.json)
+
+Defaults:
+
+- `STAFF_ROSTER_LOCATIONS_FILE` takes precedence over `STAFF_ROSTER_LOCATIONS_JSON`
+- `drive_id`: falls back to `GRAPH_EXCEL_DRIVE_ID`
+- `roster_sheet_name`: `Roster_Data`
+- `capacity_sheet_name`: `Capacity`
+
 ## Adding new onboarding steps
 
 Add a function in `src/onboarding_agent/mcp_server/tools_*.py` decorated with `@mcp.tool()`.

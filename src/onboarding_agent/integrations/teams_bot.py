@@ -13,7 +13,9 @@ from microsoft_agents.hosting.core import TurnContext, TurnState
 from onboarding_agent.agent.state import default_state
 from onboarding_agent.integrations.adaptive_cards import new_hire_card
 from onboarding_agent.integrations.card_state import (
+    get_docusign_status_card,
     get_new_hire_card,
+    mark_docusign_roster_complete,
     mark_new_hire_action_complete,
 )
 from onboarding_agent.integrations.teams_proactive import save_conversation_reference
@@ -50,6 +52,11 @@ def register_handlers(agent_app: Any) -> None:
                 await context.send_activity(_already_completed_message(card_action))
                 return
             user_text = card_action_text
+        elif card_action and card_action["action"] == "add_to_staff_roster":
+            await context.send_activity(
+                f"Please enter the exact staff roster job category for {card_action['employee_email']} before submitting."
+            )
+            return
         elif conversation_type in ("channel", "groupChat"):
             if not _is_mentioned(activity):
                 logger.debug("Ignoring non-mentioned message in %s", conversation_type)
@@ -104,7 +111,11 @@ def _extract_card_action(activity: Any) -> dict[str, str] | None:
     employee_email = str(value.get("employee_email", "")).strip()
     if not action or not employee_email:
         return None
-    return {"action": action, "employee_email": employee_email}
+    return {
+        "action": action,
+        "employee_email": employee_email,
+        "job_category": str(value.get("job_category", "")).strip(),
+    }
 
 
 def _card_action_to_command(card_action: dict[str, str] | None) -> str:
@@ -118,6 +129,11 @@ def _card_action_to_command(card_action: dict[str, str] | None) -> str:
         return f"send the onboarding email for {employee_email}"
     if action == "send_docusign":
         return f"send the docusign envelope for {employee_email}"
+    if action == "add_to_staff_roster":
+        job_category = card_action.get("job_category", "").strip()
+        if not job_category:
+            return ""
+        return f"add {employee_email} to the staff roster using the exact job category {job_category}"
     return ""
 
 
@@ -131,12 +147,17 @@ def _card_action_already_completed(card_action: dict[str, str] | None) -> bool:
         return bool(card.get("email_sent"))
     if card_action["action"] == "send_docusign":
         return bool(card.get("docusign_sent"))
+    if card_action["action"] == "add_to_staff_roster":
+        docusign_card = get_docusign_status_card(card_action["employee_email"])
+        return bool(docusign_card and docusign_card.get("roster_added"))
     return False
 
 
 def _already_completed_message(card_action: dict[str, str]) -> str:
     if card_action["action"] == "send_onboarding_email":
         return f"Welcome email was already sent for {card_action['employee_email']}."
+    if card_action["action"] == "add_to_staff_roster":
+        return f"Staff roster was already updated for {card_action['employee_email']}."
     return f"Offer letter was already sent for {card_action['employee_email']}."
 
 
@@ -147,9 +168,23 @@ async def _complete_card_action(
 ) -> bool:
     action = card_action["action"]
     employee_email = card_action["employee_email"]
-    tool_name = "send_onboarding_email" if action == "send_onboarding_email" else "send_docusign_envelope"
+    if action == "send_onboarding_email":
+        tool_name = "send_onboarding_email"
+    elif action == "send_docusign":
+        tool_name = "send_docusign_envelope"
+    else:
+        tool_name = "add_employee_to_staff_roster"
     if not _tool_named_succeeded(final_state, tool_name):
         return False
+
+    if action == "add_to_staff_roster":
+        docusign_card = mark_docusign_roster_complete(
+            employee_email,
+            card_action.get("job_category", "").strip(),
+        )
+        if not docusign_card:
+            return False
+        return await _update_docusign_status_card(context, docusign_card)
 
     card = mark_new_hire_action_complete(employee_email, action)
     if not card:
@@ -165,6 +200,11 @@ def _tool_named_succeeded(state: dict[str, Any], tool_name: str) -> bool:
 
 
 async def _refresh_new_hire_card(context: TurnContext, card_action: dict[str, str]) -> bool:
+    if card_action["action"] == "add_to_staff_roster":
+        card = get_docusign_status_card(card_action["employee_email"])
+        if not card:
+            return False
+        return await _update_docusign_status_card(context, card)
     card = get_new_hire_card(card_action["employee_email"])
     if not card:
         return False
@@ -204,6 +244,41 @@ async def _update_new_hire_card(context: TurnContext, card: dict[str, Any]) -> b
         return True
     except Exception:
         logger.exception("Failed to update new-hire card %s", target_id)
+        return False
+
+
+async def _update_docusign_status_card(context: TurnContext, card: dict[str, Any]) -> bool:
+    target_id = getattr(context.activity, "reply_to_id", "") or card.get("message_id", "")
+    if not target_id:
+        return False
+
+    from onboarding_agent.integrations.adaptive_cards import docusign_status_card
+
+    updated_card = docusign_status_card(
+        employee_email=card.get("employee_email", ""),
+        envelope_id=card.get("envelope_id", ""),
+        status=card.get("status", ""),
+        summary=card.get("summary", ""),
+        roster_added=bool(card.get("roster_added")),
+        job_category=card.get("job_category", ""),
+    )
+    activity = Activity(
+        type="message",
+        id=target_id,
+        text="",
+        attachments=[
+            Attachment(
+                content_type="application/vnd.microsoft.card.adaptive",
+                content=updated_card,
+            )
+        ],
+    )
+    try:
+        await context.update_activity(activity)
+        logger.info("Updated DocuSign status card %s after roster action", target_id)
+        return True
+    except Exception:
+        logger.exception("Failed to update DocuSign status card %s", target_id)
         return False
 
 
