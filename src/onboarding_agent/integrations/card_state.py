@@ -116,7 +116,6 @@ def save_docusign_status_card(
 ) -> None:
     state = _load_state(_DOCUSIGN_CARD_STATE_PATH)
     key = employee_email.strip().lower()
-    existing = state.get(key, {})
     state[key] = {
         "channel_id": channel_id,
         "message_id": message_id,
@@ -124,8 +123,8 @@ def save_docusign_status_card(
         "envelope_id": envelope_id,
         "status": status,
         "summary": summary,
-        "roster_added": bool(existing.get("roster_added", False)),
-        "job_category": str(existing.get("job_category", "") or ""),
+        "roster_added": False,
+        "job_category": "",
     }
     _save_state(_DOCUSIGN_CARD_STATE_PATH, state)
 

@@ -43,6 +43,9 @@ def register_handlers(agent_app: Any) -> None:
         activity = context.activity
         conversation_type = getattr(activity.conversation, "conversation_type", "") or ""
         card_action = _extract_card_action(activity)
+        if card_action and card_action["action"] == "add_to_staff_roster":
+            await _handle_staff_roster_card_action(context, card_action)
+            return
         card_action_text = _card_action_to_command(card_action)
 
         if card_action_text:
@@ -52,11 +55,6 @@ def register_handlers(agent_app: Any) -> None:
                 await context.send_activity(_already_completed_message(card_action))
                 return
             user_text = card_action_text
-        elif card_action and card_action["action"] == "add_to_staff_roster":
-            await context.send_activity(
-                f"Please enter the exact staff roster job category for {card_action['employee_email']} before submitting."
-            )
-            return
         elif conversation_type in ("channel", "groupChat"):
             if not _is_mentioned(activity):
                 logger.debug("Ignoring non-mentioned message in %s", conversation_type)
@@ -159,6 +157,63 @@ def _already_completed_message(card_action: dict[str, str]) -> str:
     if card_action["action"] == "add_to_staff_roster":
         return f"Staff roster was already updated for {card_action['employee_email']}."
     return f"Offer letter was already sent for {card_action['employee_email']}."
+
+
+async def _handle_staff_roster_card_action(context: TurnContext, card_action: dict[str, str]) -> None:
+    employee_email = card_action["employee_email"]
+    job_category = card_action.get("job_category", "").strip()
+
+    try:
+        from onboarding_agent.integrations.graph_client import GraphClient
+
+        client = GraphClient()
+        if await _staff_roster_stage_completed(client, employee_email):
+            await _refresh_new_hire_card(context, card_action)
+            await context.send_activity(_already_completed_message(card_action))
+            return
+
+        if not job_category:
+            await context.send_activity(
+                f"Please enter the exact staff roster job category for {employee_email} before submitting."
+            )
+            return
+
+        result = await client.add_employee_to_staff_roster(employee_email, job_category)
+        if result.get("success"):
+            await client.update_stage(employee_email, "Added to Staff Roster")
+            docusign_card = mark_docusign_roster_complete(employee_email, job_category)
+            if docusign_card and await _update_docusign_status_card(context, docusign_card):
+                return
+            await context.send_activity(
+                f"Added {employee_email} to the staff roster as {job_category}."
+            )
+            return
+
+        error = str(result.get("error", "Unknown error"))
+        await context.send_activity(
+            f"Failed to add {employee_email} to the staff roster as {job_category}. {error}"
+        )
+    except Exception as exc:
+        logger.exception("Staff roster card action failed")
+        await context.send_activity(
+            f"Failed to add {employee_email} to the staff roster as {job_category}. {exc}"
+        )
+
+
+async def _staff_roster_stage_completed(client: Any, employee_email: str) -> bool:
+    try:
+        result = await client.get_employee_stages(employee_email)
+    except Exception:
+        logger.exception("Failed to verify Added to Staff Roster stage for %s", employee_email)
+        return False
+
+    if not result.get("found"):
+        return False
+    stages = result.get("stages", {})
+    if not isinstance(stages, dict):
+        return False
+    value = stages.get("Added to Staff Roster", "")
+    return bool(str(value).strip())
 
 
 async def _complete_card_action(
