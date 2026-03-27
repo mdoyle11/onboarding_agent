@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from time import perf_counter
 from typing import Any, cast
 
 from microsoft_agents.activity import (
@@ -140,6 +141,7 @@ async def send_proactive_message(
     card: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Send a proactive message to a Teams channel with an optional Adaptive Card."""
+    started = perf_counter()
     current_adapter = _ensure_adapter()
     if current_adapter is None:
         return {"success": False, "error": "Cloud adapter not initialized"}
@@ -177,6 +179,13 @@ async def send_proactive_message(
     except Exception as exc:
         logger.exception("Proactive message failed for channel %s", channel_id)
         result["error"] = str(exc)
+    finally:
+        logger.info(
+            "Proactive Teams send completed for %s in %.3fs success=%s",
+            channel_id,
+            perf_counter() - started,
+            result.get("success", False),
+        )
 
     return result
 
@@ -187,6 +196,7 @@ async def update_proactive_card(
     card: dict[str, Any],
 ) -> dict[str, Any]:
     """Update an existing proactive Teams card message."""
+    started = perf_counter()
     current_adapter = _ensure_adapter()
     if current_adapter is None:
         return {"success": False, "error": "Cloud adapter not initialized"}
@@ -225,5 +235,13 @@ async def update_proactive_card(
     except Exception as exc:
         logger.exception("Proactive card update failed for channel %s message %s", channel_id, message_id)
         result["error"] = str(exc)
+    finally:
+        logger.info(
+            "Proactive Teams card update completed for %s/%s in %.3fs success=%s",
+            channel_id,
+            message_id,
+            perf_counter() - started,
+            result.get("success", False),
+        )
 
     return result

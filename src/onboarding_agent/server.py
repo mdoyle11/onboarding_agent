@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import time
 from typing import Any, cast
 
 from aiohttp import web
@@ -54,6 +55,8 @@ def _webhook_prompt(state: dict[str, Any]) -> str:
 
 async def handle_new_hire_webhook(request: web.Request) -> web.Response:
     """POST /webhook/new-hire — Power Automate form submission webhook."""
+    started = time.perf_counter()
+    employee_email = "unknown"
     provided_secret = request.headers.get("X-Webhook-Secret", "")
     if not hmac.compare_digest(provided_secret, settings.webhook_secret):
         logger.warning("Webhook rejected: invalid secret")
@@ -64,7 +67,8 @@ async def handle_new_hire_webhook(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.Response(status=400, text="Invalid JSON")
 
-    logger.info("New-hire webhook received: %s", payload.get("employeeEmail", "unknown"))
+    employee_email = str(payload.get("employeeEmail", "unknown"))
+    logger.info("New-hire webhook received: %s", employee_email)
 
     state = default_state()
     state["trigger_source"] = "pa_webhook"
@@ -85,11 +89,23 @@ async def handle_new_hire_webhook(request: web.Request) -> web.Response:
 
     config = {"configurable": {"thread_id": state["employee_email"] or "webhook"}}
     try:
+        graph_started = time.perf_counter()
         await compiled.ainvoke(state, config)
+        logger.info(
+            "New-hire webhook graph completed for %s in %.3fs",
+            state["employee_email"] or "unknown",
+            time.perf_counter() - graph_started,
+        )
         return web.Response(status=200, text="Onboarding pipeline triggered")
     except Exception as exc:
         logger.exception("Webhook graph invocation failed")
         return web.Response(status=500, text=str(exc))
+    finally:
+        logger.info(
+            "New-hire webhook completed for %s in %.3fs",
+            employee_email,
+            time.perf_counter() - started,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +180,7 @@ def _parse_docusign_json(payload: dict[str, Any]) -> dict[str, str]:
 
 async def handle_docusign_webhook(request: web.Request) -> web.Response:
     """POST /webhook/docusign — DocuSign Connect envelope status callback."""
+    started = time.perf_counter()
     body = await request.read()
     content_type = request.content_type or ""
 
@@ -212,6 +229,12 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.exception("DocuSign webhook graph invocation failed")
         return web.Response(status=500, text=str(exc))
+    finally:
+        logger.info(
+            "DocuSign webhook completed for %s in %.3fs",
+            envelope_id[:8] if envelope_id else "?",
+            time.perf_counter() - started,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +256,8 @@ def _background_clearance_prompt(employee_email: str, employee_name: str) -> str
 
 async def handle_background_clearance_webhook(request: web.Request) -> web.Response:
     """POST /webhook/background-clearance — Power Automate background clearance form callback."""
+    started = time.perf_counter()
+    employee_email = "unknown"
     provided_secret = request.headers.get("X-Webhook-Secret", "")
     if not hmac.compare_digest(provided_secret, settings.webhook_secret):
         logger.warning("Background clearance webhook rejected: invalid secret")
@@ -266,6 +291,12 @@ async def handle_background_clearance_webhook(request: web.Request) -> web.Respo
     except Exception as exc:
         logger.exception("Background clearance webhook graph invocation failed")
         return web.Response(status=500, text=str(exc))
+    finally:
+        logger.info(
+            "Background clearance webhook completed for %s in %.3fs",
+            employee_email or "unknown",
+            time.perf_counter() - started,
+        )
 
 
 # ---------------------------------------------------------------------------

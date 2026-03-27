@@ -100,9 +100,17 @@ class DocuSignClient:
 
     async def check_draft_exists(self, employee_email: str) -> dict[str, Any]:
         """Check whether a draft envelope exists for the given email."""
-        return await asyncio.get_event_loop().run_in_executor(
+        started = time.perf_counter()
+        result = await asyncio.get_event_loop().run_in_executor(
             None, self._check_draft_exists_sync, employee_email
         )
+        logger.info(
+            "DocuSign check_draft_exists completed for %s in %.3fs exists=%s",
+            employee_email,
+            time.perf_counter() - started,
+            result.get("exists", False),
+        )
+        return result
 
     def _check_draft_exists_sync(self, employee_email: str) -> dict[str, Any]:
         try:
@@ -164,7 +172,8 @@ class DocuSignClient:
         department: str,
     ) -> dict[str, Any]:
         """Create a DocuSign envelope draft using the configured template."""
-        return await asyncio.get_event_loop().run_in_executor(
+        started = time.perf_counter()
+        result = await asyncio.get_event_loop().run_in_executor(
             None,
             self._create_envelope_draft_sync,
             employee_name,
@@ -172,6 +181,13 @@ class DocuSignClient:
             start_date,
             department,
         )
+        logger.info(
+            "DocuSign create_envelope_draft completed for %s in %.3fs success=%s",
+            employee_email,
+            time.perf_counter() - started,
+            result.get("success", False),
+        )
+        return result
 
     def _create_envelope_draft_sync(
         self,
@@ -244,9 +260,17 @@ class DocuSignClient:
 
     async def send_envelope(self, envelope_id: str) -> dict[str, Any]:
         """Transition an envelope from draft to sent."""
-        return await asyncio.get_event_loop().run_in_executor(
+        started = time.perf_counter()
+        result = await asyncio.get_event_loop().run_in_executor(
             None, self._send_envelope_sync, envelope_id
         )
+        logger.info(
+            "DocuSign send_envelope completed for %s in %.3fs success=%s",
+            envelope_id[:8],
+            time.perf_counter() - started,
+            result.get("success", False),
+        )
+        return result
 
     def _send_envelope_sync(self, envelope_id: str) -> dict[str, Any]:
         try:

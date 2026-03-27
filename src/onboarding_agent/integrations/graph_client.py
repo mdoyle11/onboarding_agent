@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from time import perf_counter
 from typing import Any, cast
 from urllib.parse import quote
 
@@ -124,6 +125,7 @@ class GraphClient:
         workbook_path: str,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        started = perf_counter()
         token = await self._graph_access_token()
         url = (
             "https://graph.microsoft.com/v1.0"
@@ -140,9 +142,22 @@ class GraphClient:
                 body = await resp.text()
                 raise RuntimeError(f"Graph workbook request failed ({resp.status}): {body}")
             if resp.content_length == 0:
+                logger.info(
+                    "Graph workbook request %s %s completed in %.3fs",
+                    method,
+                    workbook_path,
+                    perf_counter() - started,
+                )
                 return {}
             text = await resp.text()
-            return {} if not text else await resp.json()
+            result = {} if not text else await resp.json()
+            logger.info(
+                "Graph workbook request %s %s completed in %.3fs",
+                method,
+                workbook_path,
+                perf_counter() - started,
+            )
+            return result
 
     # ------------------------------------------------------------------
     # Excel tracker helpers
@@ -344,12 +359,20 @@ class GraphClient:
         self, channel_id: str, message: str, card: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Post a message to a Teams channel via Agents SDK proactive messaging."""
+        started = perf_counter()
         from onboarding_agent.integrations.adaptive_cards import generic_notification_card
         from onboarding_agent.integrations.teams_proactive import send_proactive_message
 
         if card is None:
             card = generic_notification_card(title="Onboarding Agent", message=message)
-        return await send_proactive_message(channel_id, message, card=card)
+        result = await send_proactive_message(channel_id, message, card=card)
+        logger.info(
+            "Teams channel notification to %s completed in %.3fs success=%s",
+            channel_id,
+            perf_counter() - started,
+            result.get("success", False),
+        )
+        return result
 
     async def send_teams_direct_message(self, user_id: str, message: str) -> dict[str, Any]:
         """Create or reuse a 1:1 chat and post a message."""
