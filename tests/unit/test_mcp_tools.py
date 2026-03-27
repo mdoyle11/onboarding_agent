@@ -49,7 +49,12 @@ class TestGetOnboardingStatus:
     async def test_found_with_draft_envelope(self):
         self.tracker.get_employee_stages.return_value = {
             "found": True, "row_id": "3", "name": "Alice",
-            "stages": {"Added to Tracker": "2026-04-01", "Sent Offer Letter": "", "Offer Letter Signed": ""},
+            "stages": {
+                "Added to Tracker": "2026-04-01",
+                "Added to Staff Roster": "",
+                "Sent Offer Letter": "",
+                "Offer Letter Signed": "",
+            },
         }
         self.docusign.check_draft_exists.return_value = {
             "exists": True, "envelope_id": "env-123"
@@ -68,6 +73,7 @@ class TestGetOnboardingStatus:
         assert result["found"] is True
         assert result["docusign_status"] == "created"
         assert "draft has been created but not yet sent" in result["summary"]
+        assert "Added to Staff Roster: pending" in result["summary"]
 
     @pytest.mark.asyncio
     async def test_found_with_completed_envelope(self):
@@ -75,8 +81,9 @@ class TestGetOnboardingStatus:
             "found": True, "row_id": "4", "name": "Bob",
             "stages": {
                 "Added to Tracker": "2026-04-01",
-                "Sent Offer Letter": "2026-04-02",
-                "Offer Letter Signed": "2026-04-03",
+                "Added to Staff Roster": "2026-04-02",
+                "Sent Offer Letter": "2026-04-03",
+                "Offer Letter Signed": "2026-04-04",
             },
         }
         self.docusign.check_draft_exists.return_value = {

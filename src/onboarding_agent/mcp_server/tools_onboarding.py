@@ -84,7 +84,7 @@ def register(mcp: FastMCP) -> None:
         ds_line = _DS_STATUS_LINES.get(docusign_status, f"DocuSign status: {docusign_status}.")
 
         # Build stage breakdown (active stages only for now)
-        active = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
+        active = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
         stage_lines = []
         for s in active:
             val = stages.get(s, "")

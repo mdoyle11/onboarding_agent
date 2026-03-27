@@ -22,9 +22,9 @@ _SCOPES = ["https://graph.microsoft.com/.default"]
 # Column layout (zero-based) — aligned with the Google Sheets tracker
 # ---------------------------------------------------------------------------
 # A     B      C         D          E           F              G                  H
-# Name  Email  Location  StartDate  Department  ManagerEmail   AddedToTracker     SentOfferLetter
-# I                    J                      K                   L          M               N              O
-# OfferLetterSigned    BackgroundSubmission   BackgroundCleared   AddedToADP CompleteInADP   ClearToStart   ProrationsSent
+# Name  Email  Location  StartDate  Department  ManagerEmail   AddedToTracker     AddedToStaffRoster
+# I                  J                    K                      L                 M          N               O              P
+# SentOfferLetter    OfferLetterSigned    BackgroundSubmission   BackgroundCleared AddedToADP CompleteInADP   ClearToStart   ProrationsSent
 
 _COL_NAME = 0
 _COL_EMAIL = 1
@@ -35,18 +35,19 @@ _COL_MANAGER_EMAIL = 5
 
 STAGES: dict[str, int] = {
     "Added to Tracker": 6,
-    "Sent Offer Letter": 7,
-    "Offer Letter Signed": 8,
-    "Background Submission": 9,
-    "Background Cleared": 10,
-    "Added to ADP": 11,
-    "Complete in ADP": 12,
-    "Clear to Start": 13,
-    "Prorations Sent": 14,
+    "Added to Staff Roster": 7,
+    "Sent Offer Letter": 8,
+    "Offer Letter Signed": 9,
+    "Background Submission": 10,
+    "Background Cleared": 11,
+    "Added to ADP": 12,
+    "Complete in ADP": 13,
+    "Clear to Start": 14,
+    "Prorations Sent": 15,
 }
 
 ALL_STAGES = list(STAGES.keys())
-ACTIVE_STAGES = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
+ACTIVE_STAGES = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
 
 HEADER_ROW = [
     "Name",
@@ -56,6 +57,7 @@ HEADER_ROW = [
     "Department",
     "ManagerEmail",
     "Added to Tracker",
+    "Added to Staff Roster",
     "Sent Offer Letter",
     "Offer Letter Signed",
     "Background Submission",
@@ -288,7 +290,7 @@ class GraphClient:
                 row,
             )
 
-            range_address = quote(f"A{next_row}:O{next_row}")
+            range_address = quote(f"A{next_row}:P{next_row}")
             await self._graph_workbook_request(
                 "PATCH",
                 f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",

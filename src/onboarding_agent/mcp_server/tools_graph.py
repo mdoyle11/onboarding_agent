@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 # Stage definitions for the Excel tracker
 _ALL_STAGES = [
     "Added to Tracker",
+    "Added to Staff Roster",
     "Sent Offer Letter",
     "Offer Letter Signed",
     "Background Submission",
@@ -21,7 +22,7 @@ _ALL_STAGES = [
     "Clear to Start",
     "Prorations Sent",
 ]
-_ACTIVE_STAGES = ["Added to Tracker", "Sent Offer Letter", "Offer Letter Signed"]
+_ACTIVE_STAGES = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
 
 
 def _tracker() -> Any:
@@ -89,6 +90,7 @@ def register(mcp: FastMCP) -> None:
 
         Currently active stages (phases 1-3):
           - "Added to Tracker"
+          - "Added to Staff Roster"
           - "Sent Offer Letter"
           - "Offer Letter Signed"
 
@@ -173,7 +175,7 @@ def register(mcp: FastMCP) -> None:
           Leave blank to return all employees regardless of stage.
 
         Valid stage names:
-          "Added to Tracker", "Sent Offer Letter", "Offer Letter Signed",
+          "Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed",
           "Background Submission", "Background Cleared", "Added to ADP",
           "Complete in ADP", "Clear to Start", "Prorations Sent"
 
@@ -258,6 +260,7 @@ def register(mcp: FastMCP) -> None:
             await _tracker().add_employee_to_staff_roster(employee_email, job_category),
         )
         if result.get("success"):
+            await _tracker().update_stage(employee_email, "Added to Staff Roster")
             from onboarding_agent.integrations.card_state import (
                 mark_docusign_roster_complete,
                 refresh_docusign_status_card,
