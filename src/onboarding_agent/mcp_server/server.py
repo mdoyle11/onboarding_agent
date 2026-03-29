@@ -4,13 +4,29 @@ import logging
 
 from fastmcp import FastMCP
 
+from onboarding_agent.config import settings
 from onboarding_agent.mcp_server.tools_docusign import register as register_docusign
 from onboarding_agent.mcp_server.tools_email import register as register_email
 from onboarding_agent.mcp_server.tools_graph import register as register_graph
 from onboarding_agent.mcp_server.tools_onboarding import register as register_onboarding
+from onboarding_agent.runtime import state_store as store_mod
+from onboarding_agent.runtime.state_store import create_state_store
 
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
+
+
+def _initialize_runtime() -> None:
+    """Initialize shared runtime dependencies needed by MCP tools."""
+    if store_mod.store is None:
+        store_mod.store = create_state_store(
+            backend=settings.state_store_backend,
+            state_store_dir=settings.state_store_dir,
+            cosmos_endpoint=settings.cosmos_endpoint,
+            cosmos_key=settings.cosmos_key,
+            cosmos_database_name=settings.cosmos_database_name,
+            cosmos_container_name=settings.cosmos_container_name,
+        )
 
 mcp = FastMCP(
     name="onboarding-tools",
@@ -31,6 +47,7 @@ register_onboarding(mcp)
 
 
 def main() -> None:
+    _initialize_runtime()
     mcp.run(transport="stdio")
 
 

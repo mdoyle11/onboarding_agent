@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from pathlib import Path
+
 from typing import Any
 
 import jwt as pyjwt
@@ -53,7 +53,7 @@ class DocuSignClient:
         if _cache.is_valid():
             return _cache.access_token
 
-        private_key = Path(settings.docusign_private_key_path).read_bytes()
+        private_key = settings.docusign_private_key_bytes()
 
         now = int(time.time())
         payload = {

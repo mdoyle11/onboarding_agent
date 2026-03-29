@@ -39,6 +39,11 @@ devTools/
 .terraform.lock.hcl
 terraform.tfvars
 
+# Local-only Teams package and planning docs
+teamsappPackage/
+ARCHITECTURE.md
+CONTAINER_APP_PLAN.md
+
 # Editor
 .vscode/
 .idea/

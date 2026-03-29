@@ -88,7 +88,7 @@ def register(mcp: FastMCP) -> None:
                 employee_email = recipients[0].get("email", "") or ""
 
             if employee_email:
-                card = mark_new_hire_action_complete(employee_email, "send_docusign")
+                card = await mark_new_hire_action_complete(employee_email, "send_docusign")
                 if card is not None:
                     await refresh_new_hire_card(employee_email)
         return result

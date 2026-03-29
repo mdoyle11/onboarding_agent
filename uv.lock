@@ -218,6 +218,19 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-cosmos"
+version = "4.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/a3/0474e622bf9676e3206d61269461ed16a05958363c254ea3b15af16219b2/azure_cosmos-4.15.0.tar.gz", hash = "sha256:be1cf49837c197d9da880ec47fe020a24d679075b89e0e1e2aca8d376b3a5a24", size = 2100744, upload-time = "2026-02-23T16:01:52.293Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/5f/b6e3d3ae16fa121fdc17e62447800d378b7e716cd6103c3650977a6c4618/azure_cosmos-4.15.0-py3-none-any.whl", hash = "sha256:83c1da7386bcd0df9a15c52116cc35012225d8a72d4f1379938b83ea5eb19fff", size = 424870, upload-time = "2026-02-23T16:01:54.514Z" },
+]
+
+[[package]]
 name = "azure-identity"
 version = "1.25.3"
 source = { registry = "https://pypi.org/simple" }
@@ -231,6 +244,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c5/0e/3a63efb48aa4a5ae2cfca61ee152fbcb668092134d3eb8bfda472dd5c617/azure_identity-1.25.3.tar.gz", hash = "sha256:ab23c0d63015f50b630ef6c6cf395e7262f439ce06e5d07a64e874c724f8d9e6", size = 286304, upload-time = "2026-03-13T01:12:20.892Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/9a/417b3a533e01953a7c618884df2cb05a71e7b68bdbce4fbdb62349d2a2e8/azure_identity-1.25.3-py3-none-any.whl", hash = "sha256:f4d0b956a8146f30333e071374171f3cfa7bdb8073adb8c3814b65567aa7447c", size = 192138, upload-time = "2026-03-13T01:12:22.951Z" },
+]
+
+[[package]]
+name = "azure-storage-queue"
+version = "12.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "cryptography" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/23/e3b46de244a133675c8c20f3ef2be6cbaf22a41f03e04e1cb2acd609bf5f/azure_storage_queue-12.15.0.tar.gz", hash = "sha256:4e01dcae5aefd0c463f7bae5c75c8a91f955c893f14ed7590fc0cd447ac4666d", size = 197521, upload-time = "2026-01-07T00:18:03.616Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/22/5da115105c9fe7e2fc11804018649b394f60a62735e19642acf336e3807a/azure_storage_queue-12.15.0-py3-none-any.whl", hash = "sha256:056cfce0cd60458f0b7653d804f639098b14593f843899c6c0fc65b3ebe61210", size = 187547, upload-time = "2026-01-07T00:18:05.23Z" },
 ]
 
 [[package]]
@@ -1244,6 +1272,22 @@ wheels = [
 ]
 
 [[package]]
+name = "langgraph-checkpoint-cosmos"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "azure-cosmos" },
+    { name = "azure-identity" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f2/d9/09779e14a135ee98942aa773fea3a796df922988834e5906541583f23724/langgraph_checkpoint_cosmos-0.1.1.tar.gz", hash = "sha256:3424f6c93ee3b3b5e2d1c07e80db62f76b1471b9ff90a1c58115eecf362bff8c", size = 43996, upload-time = "2026-02-16T06:01:11.808Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/09/3c1371ff9a0da904b3ad538360f71875b879b1d8249b654a9069ed0db85e/langgraph_checkpoint_cosmos-0.1.1-py3-none-any.whl", hash = "sha256:89edb0418de5c2c2b8b866f8c6b162795ee3b4bcb06cef291e08e3a946affc84", size = 25949, upload-time = "2026-02-16T06:00:19.866Z" },
+]
+
+[[package]]
 name = "langgraph-prebuilt"
 version = "1.0.8"
 source = { registry = "https://pypi.org/simple" }
@@ -1808,7 +1852,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "azure-cosmos" },
     { name = "azure-identity" },
+    { name = "azure-storage-queue" },
     { name = "cryptography" },
     { name = "docusign-esign" },
     { name = "fastmcp" },
@@ -1816,6 +1862,7 @@ dependencies = [
     { name = "langchain-google-genai" },
     { name = "langchain-mcp-adapters" },
     { name = "langgraph" },
+    { name = "langgraph-checkpoint-cosmos" },
     { name = "microsoft-agents-activity" },
     { name = "microsoft-agents-authentication-msal" },
     { name = "microsoft-agents-hosting-aiohttp" },
@@ -1839,7 +1886,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "azure-cosmos", specifier = ">=4.7.0" },
     { name = "azure-identity", specifier = ">=1.17.0" },
+    { name = "azure-storage-queue", specifier = ">=12.10.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "docusign-esign", specifier = ">=3.25.0" },
     { name = "fastmcp", specifier = ">=2.0.0" },
@@ -1847,6 +1896,7 @@ requires-dist = [
     { name = "langchain-google-genai", specifier = ">=2.0.0" },
     { name = "langchain-mcp-adapters", specifier = ">=0.1.0" },
     { name = "langgraph", specifier = ">=0.2.0" },
+    { name = "langgraph-checkpoint-cosmos", specifier = ">=0.1.0" },
     { name = "microsoft-agents-activity", specifier = ">=0.8.0" },
     { name = "microsoft-agents-authentication-msal", specifier = ">=0.8.0" },
     { name = "microsoft-agents-hosting-aiohttp", specifier = ">=0.8.0" },

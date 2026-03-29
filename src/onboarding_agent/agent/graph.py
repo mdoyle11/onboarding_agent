@@ -1,12 +1,12 @@
 """StateGraph wiring — compiles the onboarding agent graph at import time."""
 
 import logging
+import os
 from functools import partial
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from onboarding_agent.agent.nodes import (
@@ -17,6 +17,7 @@ from onboarding_agent.agent.nodes import (
     should_continue,
     tool_executor_node,
 )
+from onboarding_agent.runtime.checkpointing import create_checkpointer
 from onboarding_agent.agent.state import OnboardingState
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,8 @@ async def build_graph() -> Any:
             "onboarding": {
                 "command": _MCP_SERVER_CMD[0],
                 "args": _MCP_SERVER_CMD[1:],
+                "cwd": os.getcwd(),
+                "env": dict(os.environ),
                 "transport": "stdio",
             }
         }
@@ -79,7 +82,7 @@ async def build_graph() -> Any:
 
     builder.add_edge("completion", END)
 
-    compiled = builder.compile(checkpointer=MemorySaver())
+    compiled = builder.compile(checkpointer=await create_checkpointer())
     logger.info("Graph compiled successfully")
     return compiled
 

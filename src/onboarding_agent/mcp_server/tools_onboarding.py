@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from typing import Any, cast
 
 from fastmcp import FastMCP
 
 from onboarding_agent.integrations.docusign_client import DocuSignClient
+from onboarding_agent.integrations.card_state import get_docusign_status_card
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,31 @@ _DS_STATUS_LINES = {
 def _tracker() -> Any:
     from onboarding_agent.integrations.graph_client import GraphClient
     return GraphClient()
+
+
+def _format_stage_date(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    for parser in (
+        lambda text: datetime.strptime(text, "%Y-%m-%d").date(),
+        lambda text: datetime.strptime(text, "%Y-%m-%dT%H:%M:%S").date(),
+        lambda text: datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%f").date(),
+    ):
+        try:
+            parsed = parser(raw)
+            return parsed.strftime("%m/%d/%Y")
+        except ValueError:
+            continue
+
+    try:
+        excel_serial = float(raw)
+        excel_epoch = date(1899, 12, 30)
+        parsed = excel_epoch.fromordinal(excel_epoch.toordinal() + int(excel_serial))
+        return parsed.strftime("%m/%d/%Y")
+    except ValueError:
+        return raw
 
 
 def register(mcp: FastMCP) -> None:
@@ -69,6 +96,7 @@ def register(mcp: FastMCP) -> None:
             }
 
         stages: dict[str, str] = record.get("stages", {})
+        formatted_stages = {stage: _format_stage_date(value) for stage, value in stages.items()}
         name = record.get("name", employee_email)
 
         # DocuSign status
@@ -80,6 +108,17 @@ def register(mcp: FastMCP) -> None:
         if ds_check.get("exists") and envelope_id:
             ds_result = await ds_client.get_envelope_status(envelope_id)
             docusign_status = ds_result.get("status", "")
+        else:
+            stored_card = await get_docusign_status_card(employee_email)
+            if stored_card:
+                envelope_id = str(stored_card.get("envelope_id", "") or "")
+                docusign_status = str(stored_card.get("status", "") or "")
+
+        if not docusign_status:
+            if stages.get("Offer Letter Signed"):
+                docusign_status = "completed"
+            elif stages.get("Sent Offer Letter"):
+                docusign_status = "sent"
 
         ds_line = _DS_STATUS_LINES.get(docusign_status, f"DocuSign status: {docusign_status}.")
 
@@ -87,7 +126,7 @@ def register(mcp: FastMCP) -> None:
         active = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
         stage_lines = []
         for s in active:
-            val = stages.get(s, "")
+            val = formatted_stages.get(s, "")
             icon = "✓" if val else "○"
             stage_lines.append(f"  {icon} {s}: {val or 'pending'}")
 
@@ -101,7 +140,7 @@ def register(mcp: FastMCP) -> None:
             "found": True,
             "employee_email": employee_email,
             "name": name,
-            "stages": stages,
+            "stages": formatted_stages,
             "docusign_envelope_id": envelope_id,
             "docusign_status": docusign_status,
             "summary": summary,

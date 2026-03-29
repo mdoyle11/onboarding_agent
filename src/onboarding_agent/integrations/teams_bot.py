@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from json import JSONDecodeError, loads
 from typing import Any
@@ -17,10 +18,17 @@ from onboarding_agent.integrations.card_state import (
     get_new_hire_card,
     mark_docusign_roster_complete,
     mark_new_hire_action_complete,
+    refresh_docusign_status_card,
+    refresh_new_hire_card,
 )
-from onboarding_agent.integrations.teams_proactive import save_conversation_reference
+from onboarding_agent.integrations.teams_proactive import save_conversation_reference, send_proactive_message
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_mention_text(value: str) -> str:
+    """Normalize Teams mention text/names for reliable comparisons."""
+    return "".join(ch.lower() for ch in value if ch.isalnum())
 
 
 def register_handlers(agent_app: Any) -> None:
@@ -28,20 +36,27 @@ def register_handlers(agent_app: Any) -> None:
 
     @agent_app.conversation_update("membersAdded")  # type: ignore[untyped-decorator]
     async def on_members_added(context: TurnContext, _state: TurnState) -> bool:
-        save_conversation_reference(context.activity)
+        await save_conversation_reference(context.activity)
         return False
 
     @agent_app.activity("installationUpdate")  # type: ignore[untyped-decorator]
     async def on_installation_update(context: TurnContext, _state: TurnState) -> None:
-        save_conversation_reference(context.activity)
+        await save_conversation_reference(context.activity)
         logger.info("Stored conversation reference from installationUpdate event")
 
     @agent_app.activity("message")  # type: ignore[untyped-decorator]
     async def on_message(context: TurnContext, _state: TurnState) -> None:
-        save_conversation_reference(context.activity)
+        await save_conversation_reference(context.activity)
 
         activity = context.activity
         conversation_type = getattr(activity.conversation, "conversation_type", "") or ""
+        logger.info(
+            "Received Teams activity: type=%s conversation_type=%s channel_id=%s text=%r",
+            getattr(activity, "type", ""),
+            conversation_type,
+            getattr(activity, "channel_id", "") or "",
+            (activity.text or "")[:200],
+        )
         card_action = _extract_card_action(activity)
         if card_action and card_action["action"] == "add_to_staff_roster":
             await _handle_staff_roster_card_action(context, card_action)
@@ -50,13 +65,15 @@ def register_handlers(agent_app: Any) -> None:
 
         if card_action_text:
             assert card_action is not None
-            if _card_action_already_completed(card_action):
+            if await _card_action_already_completed(card_action):
                 await _refresh_new_hire_card(context, card_action)
                 await context.send_activity(_already_completed_message(card_action))
                 return
             user_text = card_action_text
         elif conversation_type in ("channel", "groupChat"):
-            if not _is_mentioned(activity):
+            mentioned = _is_mentioned(activity)
+            logger.info("Channel/groupChat message mention_detected=%s", mentioned)
+            if not mentioned:
                 logger.debug("Ignoring non-mentioned message in %s", conversation_type)
                 return
             user_text = _strip_mention(activity)
@@ -78,6 +95,17 @@ def register_handlers(agent_app: Any) -> None:
 
         logger.info("Teams message from %s (%s): %s", user_id, conversation_type, user_text[:80])
 
+        if card_action_text:
+            asyncio.create_task(
+                _run_card_action_in_background(
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    user_text=user_text,
+                    card_action=card_action,
+                )
+            )
+            return
+
         state = default_state()
         state["trigger_source"] = "teams_query"
         state["triggered_by_user_id"] = user_id
@@ -98,6 +126,45 @@ def register_handlers(agent_app: Any) -> None:
 
         if reply_text:
             await context.send_activity(reply_text)
+
+
+async def _run_card_action_in_background(
+    *,
+    user_id: str,
+    channel_id: str,
+    user_text: str,
+    card_action: dict[str, str],
+) -> None:
+    from onboarding_agent.agent import graph as graph_module
+
+    compiled = graph_module.compiled_graph
+    if compiled is None:
+        logger.warning("Skipping Teams card action because graph is not ready")
+        return
+
+    state = default_state()
+    state["trigger_source"] = "teams_query"
+    state["triggered_by_user_id"] = user_id
+    state["teams_channel_id"] = channel_id
+    state["messages"] = [HumanMessage(content=user_text)]
+    config = {"configurable": {"thread_id": user_id or "anon"}}
+
+    try:
+        final_state: dict[str, Any] = await compiled.ainvoke(state, config)
+        updated = await _complete_card_action_without_context(card_action, final_state)
+        if not updated:
+            logger.warning(
+                "Teams card action completed without a card update: action=%s employee=%s",
+                card_action["action"],
+                card_action["employee_email"],
+            )
+    except Exception:
+        logger.exception(
+            "Background Teams card action failed: action=%s employee=%s",
+            card_action["action"],
+            card_action["employee_email"],
+        )
+        await _notify_card_action_failure(card_action)
 
 
 def _extract_card_action(activity: Any) -> dict[str, str] | None:
@@ -135,10 +202,10 @@ def _card_action_to_command(card_action: dict[str, str] | None) -> str:
     return ""
 
 
-def _card_action_already_completed(card_action: dict[str, str] | None) -> bool:
+async def _card_action_already_completed(card_action: dict[str, str] | None) -> bool:
     if not card_action:
         return False
-    card = get_new_hire_card(card_action["employee_email"])
+    card = await get_new_hire_card(card_action["employee_email"])
     if not card:
         return False
     if card_action["action"] == "send_onboarding_email":
@@ -146,7 +213,7 @@ def _card_action_already_completed(card_action: dict[str, str] | None) -> bool:
     if card_action["action"] == "send_docusign":
         return bool(card.get("docusign_sent"))
     if card_action["action"] == "add_to_staff_roster":
-        docusign_card = get_docusign_status_card(card_action["employee_email"])
+        docusign_card = await get_docusign_status_card(card_action["employee_email"])
         return bool(docusign_card and docusign_card.get("roster_added"))
     return False
 
@@ -181,7 +248,7 @@ async def _handle_staff_roster_card_action(context: TurnContext, card_action: di
         result = await client.add_employee_to_staff_roster(employee_email, job_category)
         if result.get("success"):
             await client.update_stage(employee_email, "Added to Staff Roster")
-            docusign_card = mark_docusign_roster_complete(employee_email, job_category)
+            docusign_card = await mark_docusign_roster_complete(employee_email, job_category)
             if docusign_card and await _update_docusign_status_card(context, docusign_card):
                 return
             await context.send_activity(
@@ -233,7 +300,7 @@ async def _complete_card_action(
         return False
 
     if action == "add_to_staff_roster":
-        docusign_card = mark_docusign_roster_complete(
+        docusign_card = await mark_docusign_roster_complete(
             employee_email,
             card_action.get("job_category", "").strip(),
         )
@@ -241,10 +308,58 @@ async def _complete_card_action(
             return False
         return await _update_docusign_status_card(context, docusign_card)
 
-    card = mark_new_hire_action_complete(employee_email, action)
+    card = await mark_new_hire_action_complete(employee_email, action)
     if not card:
         return False
     return await _update_new_hire_card(context, card)
+
+
+async def _complete_card_action_without_context(
+    card_action: dict[str, str],
+    final_state: dict[str, Any],
+) -> bool:
+    action = card_action["action"]
+    employee_email = card_action["employee_email"]
+    if action == "send_onboarding_email":
+        tool_name = "send_onboarding_email"
+    elif action == "send_docusign":
+        tool_name = "send_docusign_envelope"
+    else:
+        tool_name = "add_employee_to_staff_roster"
+
+    if not _tool_named_succeeded(final_state, tool_name):
+        return False
+
+    if action == "add_to_staff_roster":
+        docusign_card = await mark_docusign_roster_complete(
+            employee_email,
+            card_action.get("job_category", "").strip(),
+        )
+        if not docusign_card:
+            return False
+        result = await refresh_docusign_status_card(employee_email)
+        return bool(result.get("success"))
+
+    await mark_new_hire_action_complete(employee_email, action)
+    result = await refresh_new_hire_card(employee_email)
+    return bool(result.get("success"))
+
+
+async def _notify_card_action_failure(card_action: dict[str, str]) -> None:
+    card = await get_new_hire_card(card_action["employee_email"])
+    if not card:
+        return
+
+    action_labels = {
+        "send_onboarding_email": "send the welcome email",
+        "send_docusign": "send the offer letter",
+        "add_to_staff_roster": "add the employee to the staff roster",
+    }
+    action_label = action_labels.get(card_action["action"], "complete the requested action")
+    await send_proactive_message(
+        channel_id=card.get("channel_id", ""),
+        message=f"Failed to {action_label} for {card_action['employee_email']}. Check the agent logs for details.",
+    )
 
 
 def _tool_named_succeeded(state: dict[str, Any], tool_name: str) -> bool:
@@ -256,11 +371,11 @@ def _tool_named_succeeded(state: dict[str, Any], tool_name: str) -> bool:
 
 async def _refresh_new_hire_card(context: TurnContext, card_action: dict[str, str]) -> bool:
     if card_action["action"] == "add_to_staff_roster":
-        card = get_docusign_status_card(card_action["employee_email"])
+        card = await get_docusign_status_card(card_action["employee_email"])
         if not card:
             return False
         return await _update_docusign_status_card(context, card)
-    card = get_new_hire_card(card_action["employee_email"])
+    card = await get_new_hire_card(card_action["employee_email"])
     if not card:
         return False
     return await _update_new_hire_card(context, card)
@@ -341,21 +456,43 @@ def _is_mentioned(activity: Any) -> bool:
     """Check if the incoming message explicitly mentions the bot."""
     bot_id = activity.recipient.id if activity.recipient else ""
     bot_name = (getattr(activity.recipient, "name", "") or "").strip().lower()
+    normalized_bot_name = _normalize_mention_text(bot_name)
+    activity_text = (activity.text or "").strip().lower()
+    mention_debug: list[dict[str, str]] = []
     for mention in activity.get_mentions():
         mentioned = getattr(mention, "mentioned", None)
         mentioned_id = getattr(mentioned, "id", "") if mentioned else ""
         mentioned_name = (getattr(mentioned, "name", "") if mentioned else "").strip().lower()
         mention_text = (getattr(mention, "text", "") or "").strip().lower()
-        activity_text = (activity.text or "").strip().lower()
+        normalized_mentioned_name = _normalize_mention_text(mentioned_name)
+        normalized_mention_text = _normalize_mention_text(mention_text)
+        mention_debug.append(
+            {
+                "mentioned_id": mentioned_id,
+                "mentioned_name": mentioned_name,
+                "mention_text": mention_text,
+            }
+        )
 
         if bot_id and mentioned_id == bot_id:
+            logger.info("Bot mention matched by recipient id: %s", mention_debug)
             return True
-        if bot_name and mentioned_name == bot_name:
+        if normalized_bot_name and normalized_mentioned_name == normalized_bot_name:
+            logger.info("Bot mention matched by recipient name: %s", mention_debug)
             return True
-        if mention_text and bot_name and bot_name in mention_text:
+        if normalized_mention_text and normalized_bot_name and normalized_bot_name in normalized_mention_text:
+            logger.info("Bot mention matched by mention text: %s", mention_debug)
             return True
         if mention_text and mention_text in activity_text:
+            logger.info("Bot mention matched by activity text: %s", mention_debug)
             return True
+    logger.info(
+        "Bot mention not detected: recipient_id=%s recipient_name=%s mentions=%s activity_text=%r",
+        bot_id,
+        bot_name,
+        mention_debug,
+        activity_text[:200],
+    )
     return False
 
 

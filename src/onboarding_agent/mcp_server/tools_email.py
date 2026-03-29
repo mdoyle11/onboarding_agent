@@ -40,12 +40,22 @@ def _email_client() -> Any:
     return OutlookEmailClient()
 
 
+def _resolve_template_path(template_path: str | Path) -> Path:
+    """Resolve a template path in local dev and installed container layouts."""
+    resolved = Path(template_path)
+    if resolved.is_absolute():
+        return resolved
+
+    cwd_candidate = Path.cwd() / resolved
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    return Path(__file__).resolve().parents[2] / resolved
+
+
 def _render_template(employee_name: str) -> tuple[str, str]:
-    """Load and render the email template. Returns (subject, body_html)."""
-    template_path = Path(settings.email_template_path)
-    if not template_path.is_absolute():
-        # Resolve relative to the project root (two levels up from config module)
-        template_path = Path(__file__).resolve().parents[3] / template_path
+    """Load and render the onboarding email template. Returns (subject, body_html)."""
+    template_path = _resolve_template_path(settings.email_template_path)
 
     template_vars = {"employee_name": employee_name}
 
@@ -53,6 +63,47 @@ def _render_template(employee_name: str) -> tuple[str, str]:
     subject = Template(settings.email_subject_template).safe_substitute(template_vars)
 
     return subject, body_html
+
+
+async def send_background_clearance_confirmation_email(
+    employee_email: str,
+    employee_name: str,
+) -> dict[str, Any]:
+    """Send the background-clearance confirmation email directly."""
+    template_path = _resolve_template_path("templates/background_clearance_confirmation.html")
+    try:
+        body_html = Template(template_path.read_text()).safe_substitute(
+            employee_name=employee_name,
+        )
+    except FileNotFoundError:
+        logger.error("Background clearance template not found at %s", template_path)
+        return {
+            "success": False,
+            "error": f"Template not found: {template_path}",
+        }
+
+    subject = f"Background Clearance Form Received — {employee_name}"
+
+    result = await _email_client().send_email(
+        to_email=employee_email.strip(),
+        subject=subject,
+        body_html=body_html,
+    )
+
+    if result.get("success"):
+        logger.info("Background clearance confirmation sent to %s", employee_email)
+        return {
+            "success": True,
+            "employee_email": employee_email,
+            "message": f"Background clearance confirmation email sent to {employee_email}.",
+        }
+
+    logger.warning("Background clearance email failed for %s: %s", employee_email, result.get("error"))
+    return {
+        "success": False,
+        "employee_email": employee_email,
+        "error": result.get("error", "Unknown error"),
+    }
 
 
 def register(mcp: FastMCP) -> None:
@@ -146,7 +197,7 @@ def register(mcp: FastMCP) -> None:
 
             del drafts[key]
             _save_drafts(drafts)
-            card = mark_new_hire_action_complete(employee_email, "send_onboarding_email")
+            card = await mark_new_hire_action_complete(employee_email, "send_onboarding_email")
             if card is not None:
                 await refresh_new_hire_card(employee_email)
             logger.info("Onboarding email sent to %s", employee_email)
@@ -179,37 +230,4 @@ def register(mcp: FastMCP) -> None:
         - employee_email: The employee's email address
         - employee_name: Full name of the employee
         """
-        template_path = Path(__file__).resolve().parents[3] / "templates" / "background_clearance_confirmation.html"
-        try:
-            body_html = Template(template_path.read_text()).safe_substitute(
-                employee_name=employee_name,
-            )
-        except FileNotFoundError:
-            logger.error("Background clearance template not found at %s", template_path)
-            return {
-                "success": False,
-                "error": f"Template not found: {template_path}",
-            }
-
-        subject = f"Background Clearance Form Received — {employee_name}"
-
-        result = await _email_client().send_email(
-            to_email=employee_email.strip(),
-            subject=subject,
-            body_html=body_html,
-        )
-
-        if result.get("success"):
-            logger.info("Background clearance confirmation sent to %s", employee_email)
-            return {
-                "success": True,
-                "employee_email": employee_email,
-                "message": f"Background clearance confirmation email sent to {employee_email}.",
-            }
-
-        logger.warning("Background clearance email failed for %s: %s", employee_email, result.get("error"))
-        return {
-            "success": False,
-            "employee_email": employee_email,
-            "error": result.get("error", "Unknown error"),
-        }
+        return await send_background_clearance_confirmation_email(employee_email, employee_name)

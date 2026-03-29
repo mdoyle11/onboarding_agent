@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 import logging
 from typing import Any, cast
 
@@ -29,6 +30,31 @@ def _tracker() -> Any:
     """Return the Microsoft Graph Excel tracker client."""
     from onboarding_agent.integrations.graph_client import GraphClient
     return GraphClient()
+
+
+def _format_stage_date(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    for parser in (
+        lambda text: datetime.strptime(text, "%Y-%m-%d").date(),
+        lambda text: datetime.strptime(text, "%Y-%m-%dT%H:%M:%S").date(),
+        lambda text: datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%f").date(),
+    ):
+        try:
+            parsed = parser(raw)
+            return parsed.strftime("%m/%d/%Y")
+        except ValueError:
+            continue
+
+    try:
+        excel_serial = float(raw)
+        excel_epoch = date(1899, 12, 30)
+        parsed = excel_epoch.fromordinal(excel_epoch.toordinal() + int(excel_serial))
+        return parsed.strftime("%m/%d/%Y")
+    except ValueError:
+        return raw
 
 
 def register(mcp: FastMCP) -> None:
@@ -139,11 +165,12 @@ def register(mcp: FastMCP) -> None:
             }
 
         stages: dict[str, str] = result.get("stages", {})
+        formatted_stages = {stage: _format_stage_date(value) for stage, value in stages.items()}
         name = result.get("name", employee_email)
 
         # Build human-readable summary
-        completed = [s for s in _ALL_STAGES if stages.get(s)]
-        pending = [s for s in _ALL_STAGES if not stages.get(s)]
+        completed = [s for s in _ALL_STAGES if formatted_stages.get(s)]
+        pending = [s for s in _ALL_STAGES if not formatted_stages.get(s)]
         last_completed = completed[-1] if completed else None
         next_pending = pending[0] if pending else None
 
@@ -155,14 +182,14 @@ def register(mcp: FastMCP) -> None:
             last_completed_stage = last_completed or ""
             summary = (
                 f"**{name}** — last completed stage: *{last_completed_stage}* "
-                f"({stages.get(last_completed_stage, '')}). Next: *{next_pending}*."
+                f"({formatted_stages.get(last_completed_stage, '')}). Next: *{next_pending}*."
             )
 
         # Append detail for active stages
-        lines = [f"  • {s}: {stages.get(s) or 'pending'}" for s in _ACTIVE_STAGES]
+        lines = [f"  • {s}: {formatted_stages.get(s) or 'pending'}" for s in _ACTIVE_STAGES]
         summary += "\n" + "\n".join(lines)
 
-        return {**result, "summary": summary}
+        return {**result, "stages": formatted_stages, "summary": summary}
 
     @mcp.tool()
     async def list_employees(pending_stage: str = "") -> dict[str, Any]:
@@ -266,7 +293,7 @@ def register(mcp: FastMCP) -> None:
                 refresh_docusign_status_card,
             )
 
-            card = mark_docusign_roster_complete(employee_email, job_category)
+            card = await mark_docusign_roster_complete(employee_email, job_category)
             if card is not None:
                 await refresh_docusign_status_card(employee_email)
         return result
@@ -298,9 +325,13 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Post a rich new hire Adaptive Card to a Teams channel."""
         from onboarding_agent.integrations.adaptive_cards import new_hire_card
-        from onboarding_agent.integrations.card_state import save_new_hire_card
+        from onboarding_agent.integrations.card_state import (
+            reset_new_hire_card_actions,
+            save_new_hire_card,
+        )
         from onboarding_agent.integrations.graph_client import GraphClient
 
+        await reset_new_hire_card_actions(employee_email)
         card = new_hire_card(
             employee_name,
             employee_email,
@@ -312,7 +343,7 @@ def register(mcp: FastMCP) -> None:
         )
         result = await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
         if result.get("success") and result.get("message_id"):
-            save_new_hire_card(
+            await save_new_hire_card(
                 employee_email=employee_email,
                 channel_id=channel_id,
                 message_id=result["message_id"],
@@ -341,7 +372,7 @@ def register(mcp: FastMCP) -> None:
         card = docusign_status_card(employee_email, envelope_id, status, summary)
         result = await GraphClient().send_teams_channel_notification(channel_id, summary, card=card)
         if result.get("success") and result.get("message_id") and status.lower() == "completed":
-            save_docusign_status_card(
+            await save_docusign_status_card(
                 employee_email=employee_email,
                 channel_id=channel_id,
                 message_id=result["message_id"],
