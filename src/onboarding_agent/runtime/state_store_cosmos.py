@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Any
 
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
+from onboarding_agent.runtime.state_store import StateStore
+
 logger = logging.getLogger(__name__)
 
 
-class CosmosStateStore:
+class CosmosStateStore(StateStore):
     """Azure Cosmos DB-backed state store with /namespace partition key."""
 
     def __init__(
@@ -39,7 +42,8 @@ class CosmosStateStore:
                 item=self._doc_id(namespace, key),
                 partition_key=namespace,
             )
-            return item.get("payload") or item.get("value")
+            payload = item.get("payload")
+            return payload if isinstance(payload, dict) else None
         except CosmosResourceNotFoundError:
             return None
 
@@ -52,17 +56,15 @@ class CosmosStateStore:
         })
 
     async def delete(self, namespace: str, key: str) -> None:
-        try:
+        with suppress(CosmosResourceNotFoundError):
             self._container.delete_item(
                 item=self._doc_id(namespace, key),
                 partition_key=namespace,
             )
-        except CosmosResourceNotFoundError:
-            pass
 
     async def list_keys(self, namespace: str) -> list[str]:
         query = "SELECT c.key FROM c WHERE c.namespace = @ns"
-        params = [{"name": "@ns", "value": namespace}]
+        params: list[dict[str, object]] = [{"name": "@ns", "value": namespace}]
         items = self._container.query_items(
             query=query,
             parameters=params,
@@ -71,8 +73,8 @@ class CosmosStateStore:
         return [item["key"] for item in items]
 
     async def get_all(self, namespace: str) -> dict[str, dict[str, Any]]:
-        query = 'SELECT c.key, c.payload, c["value"] AS legacy_value FROM c WHERE c.namespace = @ns'
-        params = [{"name": "@ns", "value": namespace}]
+        query = "SELECT c.key, c.payload FROM c WHERE c.namespace = @ns"
+        params: list[dict[str, object]] = [{"name": "@ns", "value": namespace}]
         items = self._container.query_items(
             query=query,
             parameters=params,
@@ -80,7 +82,7 @@ class CosmosStateStore:
         )
         result: dict[str, dict[str, Any]] = {}
         for item in items:
-            payload = item.get("payload") or item.get("legacy_value")
+            payload = item.get("payload")
             if isinstance(payload, dict):
-                result[item["key"]] = payload
+                result[str(item["key"])] = payload
         return result

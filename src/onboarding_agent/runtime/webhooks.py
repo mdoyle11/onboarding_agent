@@ -6,7 +6,7 @@ import hmac
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import web
 
@@ -94,7 +94,7 @@ def _parse_docusign_json(payload: dict[str, Any]) -> dict[str, str]:
 
 
 def _job_queue(request: web.Request) -> JobQueue:
-    return request.app["job_queue"]
+    return cast(JobQueue, request.app["job_queue"])
 
 
 async def handle_new_hire_webhook(request: web.Request) -> web.Response:

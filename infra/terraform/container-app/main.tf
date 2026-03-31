@@ -12,31 +12,29 @@ locals {
 
   # Non-secret environment variables
   env_vars = {
-    LLM_PROVIDER                           = var.llm_provider
-    GEMINI_MODEL                           = var.gemini_model
-    HOST                                   = "0.0.0.0"
-    PORT                                   = "8080"
-    MICROSOFT_APP_ID                       = var.microsoft_app_id
-    AZURE_TENANT_ID                        = var.azure_tenant_id
-    AZURE_CLIENT_ID                        = var.azure_client_id
-    GRAPH_EXCEL_DRIVE_ID                   = var.graph_excel_drive_id
-    GRAPH_EXCEL_ITEM_ID                    = var.graph_excel_item_id
-    DOCUSIGN_ACCOUNT_ID                    = var.docusign_account_id
-    DOCUSIGN_INTEGRATION_KEY               = var.docusign_integration_key
-    DOCUSIGN_USER_ID                       = var.docusign_user_id
-    DOCUSIGN_TEMPLATE_ID                   = var.docusign_template_id
-    DOCUSIGN_CONNECT_URL                   = var.docusign_connect_url
-    TEAMS_CHANNEL_ID                       = var.teams_channel_id
-    OUTLOOK_SENDER_EMAIL                   = var.outlook_sender_email
-    STATE_STORE_BACKEND                    = var.state_store_backend
-    COSMOS_ENDPOINT                        = data.azurerm_cosmosdb_account.existing.endpoint
-    COSMOS_DATABASE_NAME                   = var.cosmos_database_name
-    COSMOS_CONTAINER_NAME                  = var.cosmos_state_container_name
-    JOB_QUEUE_BACKEND                      = "azure"
-    AZURE_STORAGE_QUEUE_NAME               = var.azure_storage_queue_name
-    GRAPH_CHECKPOINT_BACKEND               = var.graph_checkpoint_backend
-    GRAPH_CHECKPOINT_COSMOS_DATABASE_NAME  = var.cosmos_database_name
-    GRAPH_CHECKPOINT_COSMOS_CONTAINER_NAME = var.graph_checkpoint_cosmos_container_name
+    LLM_PROVIDER                               = var.llm_provider
+    GEMINI_MODEL                               = var.gemini_model
+    HOST                                       = "0.0.0.0"
+    PORT                                       = "8080"
+    MICROSOFT_APP_ID                           = var.microsoft_app_id
+    AZURE_TENANT_ID                            = var.azure_tenant_id
+    AZURE_CLIENT_ID                            = var.azure_client_id
+    GRAPH_EXCEL_DRIVE_ID                       = var.graph_excel_drive_id
+    GRAPH_EXCEL_ITEM_ID                        = var.graph_excel_item_id
+    DOCUSIGN_ACCOUNT_ID                        = var.docusign_account_id
+    DOCUSIGN_INTEGRATION_KEY                   = var.docusign_integration_key
+    DOCUSIGN_USER_ID                           = var.docusign_user_id
+    DOCUSIGN_TEMPLATE_ID                       = var.docusign_template_id
+    DOCUSIGN_CONNECT_URL                       = var.docusign_connect_url
+    TEAMS_CHANNEL_ID                           = var.teams_channel_id
+    OUTLOOK_SENDER_EMAIL                       = var.outlook_sender_email
+    STATE_STORE_BACKEND                        = var.state_store_backend
+    COSMOS_ENDPOINT                            = data.azurerm_cosmosdb_account.existing.endpoint
+    COSMOS_DATABASE_NAME                       = var.cosmos_database_name
+    COSMOS_CONTAINER_NAME                      = var.cosmos_state_container_name
+    CONVERSATION_SESSION_COSMOS_CONTAINER_NAME = var.conversation_session_cosmos_container_name
+    JOB_QUEUE_BACKEND                          = "azure"
+    AZURE_STORAGE_QUEUE_NAME                   = var.azure_storage_queue_name
   }
 
   required_secret_env_vars = {
@@ -142,12 +140,13 @@ resource "azurerm_cosmosdb_sql_container" "state_records" {
   partition_key_paths = ["/namespace"]
 }
 
-resource "azurerm_cosmosdb_sql_container" "graph_checkpoints" {
-  name                = var.graph_checkpoint_cosmos_container_name
+resource "azurerm_cosmosdb_sql_container" "conversation_sessions" {
+  name                = var.conversation_session_cosmos_container_name
   resource_group_name = data.azurerm_cosmosdb_account.existing.resource_group_name
   account_name        = data.azurerm_cosmosdb_account.existing.name
   database_name       = azurerm_cosmosdb_sql_database.app.name
-  partition_key_paths = ["/partition_key"]
+  partition_key_paths = ["/namespace"]
+  default_ttl         = var.conversation_session_cosmos_default_ttl
 }
 
 resource "azurerm_container_app_environment" "this" {

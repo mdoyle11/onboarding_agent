@@ -3,29 +3,27 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import cast
 
 from aiohttp import web
-from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.hosting.core import AgentApplication, Authorization, MemoryStorage, TurnState
 
-from onboarding_agent.agent import graph as graph_module
-from onboarding_agent.runtime.checkpointing import close_checkpointer
+from onboarding_agent.agent import runner
+from onboarding_agent.config import settings
+from onboarding_agent.integrations.teams import proactive as teams_proactive
+from onboarding_agent.integrations.teams.bot import register_handlers
+from onboarding_agent.integrations.teams.runtime import load_agents_sdk_config
+from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.job_queue import JobQueue, create_job_queue
 from onboarding_agent.runtime.jobs import process_job
-from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.state_store import create_state_store
 from onboarding_agent.runtime.webhooks import (
     handle_background_clearance_webhook,
     handle_docusign_webhook,
     handle_new_hire_webhook,
 )
-from onboarding_agent.config import settings
-from onboarding_agent.integrations import teams_proactive
-from onboarding_agent.integrations.teams_bot import register_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -38,35 +36,8 @@ _agent_app: AgentApplication[TurnState] | None = None
 _adapter: CloudAdapter | None = None
 
 
-def _ensure_agents_sdk_env() -> None:
-    has_service_connection = bool(
-        settings.microsoft_app_id and settings.microsoft_app_password and settings.azure_tenant_id
-    )
-    if has_service_connection:
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID",
-            settings.microsoft_app_id,
-        )
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET",
-            settings.microsoft_app_password,
-        )
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID",
-            settings.azure_tenant_id,
-        )
-    if settings.microsoft_app_allow_anonymous or not has_service_connection:
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED",
-            "true",
-        )
-    os.environ.setdefault("PORT", str(settings.port))
-
-
 def _setup_teams(app: web.Application) -> None:
-    _ensure_agents_sdk_env()
-
-    config = load_configuration_from_env(os.environ)
+    config = load_agents_sdk_config()
     storage = MemoryStorage()
     connection_manager = MsalConnectionManager(**config)
     adapter = CloudAdapter(connection_manager=connection_manager)
@@ -121,8 +92,16 @@ async def _on_startup(app: web.Application) -> None:
             cosmos_database_name=settings.cosmos_database_name,
             cosmos_container_name=settings.cosmos_container_name,
         )
-        logger.info("Building LangGraph agent…")
-        graph_module.compiled_graph = await graph_module.build_graph()
+        store_mod.session_store = create_state_store(
+            backend=settings.state_store_backend,
+            state_store_dir=settings.state_store_dir,
+            cosmos_endpoint=settings.cosmos_endpoint,
+            cosmos_key=settings.cosmos_key,
+            cosmos_database_name=settings.cosmos_database_name,
+            cosmos_container_name=settings.conversation_session_cosmos_container_name,
+        )
+        logger.info("Initializing agent…")
+        await runner.initialize()
         logger.info("Initializing job queue (%s)…", settings.job_queue_backend)
         app["job_queue"] = create_job_queue(
             backend=settings.job_queue_backend,
@@ -142,7 +121,6 @@ async def _on_cleanup(app: web.Application) -> None:
     job_queue = app.get("job_queue")
     if job_queue is not None:
         await cast(JobQueue, job_queue).close()
-    await close_checkpointer()
 
 
 def create_app() -> web.Application:

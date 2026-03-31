@@ -30,13 +30,13 @@ The current hosted deployment is one Azure Container App running:
 - the Teams bot endpoint
 - the webhook endpoints
 - the Azure Queue-backed background worker
-- the FastMCP subprocess used by the LangGraph agent
+- the FastMCP subprocess used by the LangChain agent runner
 
 Durable external state is stored in:
 
 - Azure Queue Storage
 - Cosmos DB `state-records`
-- Cosmos DB `langgraph-checkpoints`
+- Cosmos DB `conversation-sessions`
 
 At runtime, the main layers are:
 
@@ -44,10 +44,10 @@ At runtime, the main layers are:
   HTTP app entrypoint and startup
 
 - `src/onboarding_agent/runtime/`
-  queueing, webhooks, state store, checkpointing, job handlers
+  queueing, webhooks, state store, job handlers
 
 - `src/onboarding_agent/agent/`
-  LangGraph state machine and prompt/tool orchestration
+  plain async agent runner and chat history persistence
 
 - `src/onboarding_agent/mcp_server/`
   FastMCP tool server launched as a subprocess

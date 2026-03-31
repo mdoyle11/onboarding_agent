@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from time import perf_counter
 from typing import Any, cast
 
@@ -11,14 +10,13 @@ from microsoft_agents.activity import (
     Activity,
     Attachment,
     ConversationReference,
-    load_configuration_from_env,
 )
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.hosting.core import TurnContext
 
+from onboarding_agent.integrations.teams.runtime import load_agents_sdk_config
 from onboarding_agent.runtime import state_store as store_mod
-from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -97,30 +95,8 @@ def _ensure_adapter() -> CloudAdapter | None:
     if adapter is not None:
         return adapter
 
-    has_service_connection = bool(
-        settings.microsoft_app_id and settings.microsoft_app_password and settings.azure_tenant_id
-    )
-    if has_service_connection:
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID",
-            settings.microsoft_app_id,
-        )
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET",
-            settings.microsoft_app_password,
-        )
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID",
-            settings.azure_tenant_id,
-        )
-    if settings.microsoft_app_allow_anonymous or not has_service_connection:
-        os.environ.setdefault(
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED",
-            "true",
-        )
-
     try:
-        config = load_configuration_from_env(os.environ)
+        config = load_agents_sdk_config()
         connection_manager = MsalConnectionManager(**config)
         adapter = CloudAdapter(connection_manager=connection_manager)
         logger.info("Initialised CloudAdapter for proactive Teams messaging")

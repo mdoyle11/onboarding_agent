@@ -1,0 +1,45 @@
+Memory and cost-control changes
+================================
+
+1. LangGraph checkpoint retention
+- Added configurable TTL for the `langgraph-checkpoints` Cosmos container.
+- Default TTL is 7 days (`604800` seconds).
+- Purpose: limit long-term checkpoint growth without affecting durable business state.
+
+2. Separate Teams session container
+- Added a new Cosmos container for ephemeral Teams conversation session metadata:
+  `conversation-sessions`
+- Default TTL is 3 days (`259200` seconds).
+- Purpose: keep session bookkeeping separate from durable app state.
+
+3. Durable state split
+- `state-records` continues to store durable operational state such as:
+  - `conversation_ref`
+  - card state
+  - other app state
+- `conversation_ref` is intentionally not tied to session TTL so proactive channel
+  posts and card updates continue working after old LangGraph sessions expire.
+
+4. Teams session rotation
+- Normal Teams chat now uses rotating internal session IDs instead of one
+  forever-growing thread.
+- Session keys are categorized separately for DM vs channel conversations.
+- A new internal session is created when:
+  - inactivity exceeds 30 minutes, or
+  - turn count reaches 10
+
+5. Bounded LLM context
+- For Teams queries, only the last 5 non-system messages are passed to the LLM.
+- This keeps short conversational continuity while capping token growth.
+
+6. Thread ID strategy
+- Teams chat: conversation-based rotating session thread IDs
+- Teams card actions: per-activity/stateless thread IDs
+- New-hire jobs: per-submission thread IDs
+- DocuSign jobs: per-envelope thread IDs
+
+7. Architectural note
+- LangGraph remains in place for short-lived orchestration and conversational
+  memory.
+- Durable business continuity still lives in external systems and durable app
+  state, not in LangGraph checkpoints.

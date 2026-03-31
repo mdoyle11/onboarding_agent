@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 

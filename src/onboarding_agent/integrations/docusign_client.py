@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-
 from typing import Any
 
 import jwt as pyjwt
@@ -112,6 +111,22 @@ class DocuSignClient:
         )
         return result
 
+    async def find_latest_envelope_for_employee(self, employee_email: str) -> dict[str, Any]:
+        """Find the most recent envelope for an employee across active/completed states."""
+        started = time.perf_counter()
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            self._find_latest_envelope_for_employee_sync,
+            employee_email,
+        )
+        logger.info(
+            "DocuSign find_latest_envelope_for_employee completed for %s in %.3fs found=%s",
+            employee_email,
+            time.perf_counter() - started,
+            result.get("found", False),
+        )
+        return result
+
     def _check_draft_exists_sync(self, employee_email: str) -> dict[str, Any]:
         try:
             api_client = self._get_api_client()
@@ -163,6 +178,55 @@ class DocuSignClient:
         except ApiException as exc:
             logger.exception("check_draft_exists failed")
             return {"exists": False, "envelope_id": "", "error": str(exc)}
+
+    def _find_latest_envelope_for_employee_sync(self, employee_email: str) -> dict[str, Any]:
+        try:
+            api_client = self._get_api_client()
+            envelopes_api = EnvelopesApi(api_client)
+            folders_api = FoldersApi(api_client)
+            result = folders_api.search(
+                account_id=settings.docusign_account_id,
+                search_folder_id="all",
+                include_recipients="true",
+                order="desc",
+                order_by="created",
+                count="50",
+            )
+            items = result.folder_items or []
+            normalized_email = employee_email.lower()
+
+            for item in items:
+                envelope_id = item.envelope_id or ""
+                actual_status = (item.status or "").lower()
+                if not envelope_id:
+                    continue
+
+                try:
+                    recipients_result = envelopes_api.list_recipients(
+                        account_id=settings.docusign_account_id,
+                        envelope_id=envelope_id,
+                    )
+                    recipient_emails = {
+                        (signer.email or "").lower()
+                        for signer in (recipients_result.signers or [])
+                        if signer.email
+                    }
+                    if normalized_email not in recipient_emails:
+                        continue
+                except ApiException:
+                    logger.info("Ignoring stale envelope reference %s", envelope_id)
+                    continue
+
+                return {
+                    "found": True,
+                    "envelope_id": envelope_id,
+                    "status": actual_status,
+                }
+
+            return {"found": False, "envelope_id": "", "status": ""}
+        except ApiException as exc:
+            logger.exception("find_latest_envelope_for_employee failed")
+            return {"found": False, "envelope_id": "", "status": "", "error": str(exc)}
 
     async def create_envelope_draft(
         self,

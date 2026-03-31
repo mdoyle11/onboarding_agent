@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     cosmos_key: str = ""
     cosmos_database_name: str = "onboarding-agent"
     cosmos_container_name: str = "state-records"
+    conversation_session_cosmos_container_name: str = "conversation-sessions"
 
     # ---------------------------------------------------------------------------
     # Job queue — "local" | "azure"
@@ -106,13 +107,6 @@ class Settings(BaseSettings):
     azure_storage_queue_connection_string: str = ""
     azure_storage_queue_name: str = "onboarding-jobs"
     queue_poll_interval_seconds: float = 1.0
-
-    # ---------------------------------------------------------------------------
-    # LangGraph checkpointing — "memory" | "cosmos"
-    # ---------------------------------------------------------------------------
-    graph_checkpoint_backend: str = "memory"
-    graph_checkpoint_cosmos_database_name: str = "onboarding-agent"
-    graph_checkpoint_cosmos_container_name: str = "langgraph-checkpoints"
 
     # ---------------------------------------------------------------------------
     # Convenience helpers

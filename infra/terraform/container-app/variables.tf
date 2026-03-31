@@ -193,7 +193,7 @@ variable "cosmos_key" {
 }
 
 variable "cosmos_database_name" {
-  description = "Cosmos database name for application state and checkpoints."
+  description = "Cosmos database name for application state."
   type        = string
   default     = "onboarding-agent"
 }
@@ -208,6 +208,18 @@ variable "cosmos_state_container_name" {
   description = "Cosmos container name for application state."
   type        = string
   default     = "state-records"
+}
+
+variable "conversation_session_cosmos_container_name" {
+  description = "Cosmos container name for ephemeral Teams conversation session metadata."
+  type        = string
+  default     = "conversation-sessions"
+}
+
+variable "conversation_session_cosmos_default_ttl" {
+  description = "Default TTL in seconds for Teams conversation session metadata. Use -1 to disable automatic expiry."
+  type        = number
+  default     = 259200
 }
 
 variable "azure_storage_queue_name" {
@@ -233,18 +245,6 @@ variable "staff_roster_locations_json" {
   type        = string
   sensitive   = true
   default     = "{}"
-}
-
-variable "graph_checkpoint_backend" {
-  description = "LangGraph checkpoint backend (memory or cosmos)."
-  type        = string
-  default     = "cosmos"
-}
-
-variable "graph_checkpoint_cosmos_container_name" {
-  description = "Cosmos container name for LangGraph checkpoints."
-  type        = string
-  default     = "langgraph-checkpoints"
 }
 
 variable "storage_account_connection_string" {

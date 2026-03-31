@@ -26,7 +26,7 @@ Durable external services:
 
 - Cosmos DB
   - `state-records`
-  - `langgraph-checkpoints`
+  - `conversation-sessions`
 - Azure Queue Storage
   - `onboarding-jobs`
 - Azure Container Registry
@@ -260,7 +260,7 @@ Typical causes:
 
 - bad startup config
 - missing env vars in the MCP subprocess
-- checkpointer misconfiguration
+- session-store misconfiguration
 - queue startup failure
 
 ### 2. Teams bot does not respond
@@ -367,17 +367,18 @@ Useful patterns:
 
 This is business/UI state and should remain durable.
 
-### LangGraph checkpoints
+### Conversation sessions
 
-`langgraph-checkpoints` stores workflow execution checkpoints.
+`conversation-sessions` stores ephemeral Teams session metadata and chat
+history continuity.
 
-This container can grow quickly because checkpoints are written per graph step.
-That is expected behavior, but eventually it may need TTL or cleanup policy.
+This data is intentionally short-lived and should use TTL so conversational
+memory does not grow without bound.
 
 Current guidance:
 
-- leave it as-is while validating behavior
-- add retention once growth becomes operationally meaningful
+- keep this data separate from durable application state
+- use TTL to expire stale sessions automatically
 
 ## CI/CD Considerations
 
@@ -549,7 +550,7 @@ The current operating model is:
 - one hosted Container App
 - durable ingress through Azure Queue
 - durable app state in Cosmos
-- LangGraph + MCP for flexible agent behavior
+- LangChain agent runner + MCP for flexible agent behavior
 - manual but workable deployment flow
 
 That is a good base for continued iteration.

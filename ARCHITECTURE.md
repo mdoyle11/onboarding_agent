@@ -15,8 +15,8 @@ easy to reason about before you change it.
 
 ## Purpose
 
-This project is an AI-assisted HR onboarding system built around a LangGraph
-agent.
+This project is an AI-assisted HR onboarding system built around a LangChain
+tool-calling agent runner.
 
 It handles three main kinds of work:
 
@@ -76,7 +76,7 @@ Flow:
    - a normal user query
    - a card action
    - a channel mention
-5. The bot invokes the LangGraph agent, or for card actions schedules the
+5. The bot invokes the agent runner, or for card actions schedules the
    action in the background
 6. The bot updates the relevant Teams card or sends a reply
 
@@ -114,21 +114,20 @@ It is responsible for:
 - building the aiohttp app
 - wiring the Teams Agents SDK adapter
 - creating the runtime state store
-- compiling the LangGraph graph
+- initializing the agent runner
 - starting the job queue worker
 - registering webhook routes
 
 Startup sequence:
 
 1. Initialize state store
-2. Build the LangGraph graph
+2. Initialize the agent runner
 3. Initialize job queue
 4. Start accepting traffic
 
 Shutdown sequence:
 
 1. Stop the queue worker
-2. Close the LangGraph checkpointer
 
 ## Runtime Layer
 
@@ -157,9 +156,6 @@ Files:
 - `runtime/state_store_cosmos.py`
   Cosmos implementation for state records
 
-- `runtime/checkpointing.py`
-  LangGraph checkpointer factory with memory or Cosmos backends
-
 This package is where deployment-oriented concerns live: durability, queueing,
 and runtime state.
 
@@ -167,42 +163,40 @@ and runtime state.
 
 The agent lives in:
 
-- `src/onboarding_agent/agent/graph.py`
-- `src/onboarding_agent/agent/nodes.py`
-- `src/onboarding_agent/agent/state.py`
+- `src/onboarding_agent/agent/runner.py`
+- `src/onboarding_agent/agent/chat_history.py`
 
-### Graph
+### Runner
 
-The system uses a LangGraph `StateGraph`.
-
-The graph is small:
-
-- `agent`
-- `tool_executor`
-- `error_handler`
-- `completion`
-
-The graph loops:
+The runtime is a plain async agent loop:
 
 1. Ask the model what to do
 2. Execute tool calls
 3. Feed tool results back to the model
 4. Continue until no more tool calls remain
 
-### State
+The runner also:
 
-`agent/state.py` defines the shared onboarding state object. It includes:
+- prepends the system prompt
+- trims Teams message history before invocation
+- retries model failures up to a bounded limit
+- caps tool-loop iterations for safety
 
-- trigger metadata
-- employee information
-- DocuSign fields
-- Teams channel context
-- message history
-- workflow control flags
+### Chat History
+
+`agent/chat_history.py` persists short-lived Teams conversation history through
+the existing state-store abstraction.
+
+That history is:
+
+- keyed by rotating Teams session keys
+- stored separately from durable business state
+- stripped of system messages before persistence
+- used for conversational continuity, not workflow state
 
 ### System Prompt
 
-The main system prompt is in `agent/nodes.py`.
+The main system prompt is in `agent/runner.py`.
 
 It defines:
 
@@ -222,8 +216,8 @@ The tool layer lives in:
 - `src/onboarding_agent/mcp_server/server.py`
 - `src/onboarding_agent/mcp_server/tools_*.py`
 
-The FastMCP server is launched as a subprocess over stdio by the LangGraph
-runtime.
+The FastMCP server is launched as a subprocess over stdio by the agent
+runner.
 
 This means the current architecture is:
 
@@ -359,23 +353,26 @@ This includes:
 
 This data is business-important and intentionally durable.
 
-### 2. LangGraph checkpoints
+### 2. Conversation sessions
 
-Stored in the `langgraph-checkpoints` Cosmos container through:
+Stored in the `conversation-sessions` Cosmos container through:
 
-- `runtime/checkpointing.py`
+- `runtime/state_store.py`
+- `agent/chat_history.py`
+- `integrations/teams_session.py`
 
-These are graph execution checkpoints, not business records. They exist so the
-LangGraph runtime can persist workflow state between steps and recover from
-interruptions.
+This data is ephemeral conversational memory:
+
+- rotating Teams session metadata
+- persisted chat history for short follow-up continuity
 
 Important distinction:
 
-- `state-records` stores business/UI state
-- `langgraph-checkpoints` stores graph execution history
+- `state-records` stores durable business/UI state
+- `conversation-sessions` stores short-lived conversational state
 
 These are different containers because they have different operational value and
-likely different retention needs.
+retention needs.
 
 ## Queueing and Background Work
 
@@ -409,7 +406,7 @@ durable.
 
 Not all jobs are handled the same way:
 
-- new-hire and DocuSign still primarily use the LangGraph agent
+- new-hire and DocuSign still primarily use the agent runner
 - background-clearance is now handled more deterministically in
   `runtime/jobs.py`
 
@@ -438,7 +435,6 @@ Major config groups:
 - webhook secret
 - state store backend
 - job queue backend
-- graph checkpoint backend
 
 The same settings model is used by:
 
@@ -515,7 +511,7 @@ Terraform manages the app-specific layer:
 - Azure Queue Storage queue
 - Cosmos SQL database
 - Cosmos SQL container for app state
-- Cosmos SQL container for LangGraph checkpoints
+- Cosmos SQL container for Teams conversation sessions
 - Container Apps environment
 - Container App
 
@@ -582,7 +578,7 @@ That keeps the repo easy to run without Azure.
 The current design draws the line here:
 
 - durable:
-  webhook handoff, card state, conversation references, graph checkpoints
+  webhook handoff, card state, conversation references
 
 - not independently durable:
   individual in-memory request handling inside one running container
@@ -602,12 +598,11 @@ The system does a lot of network-bound work:
 So latency is mostly external I/O and orchestration overhead, not just container
 CPU.
 
-### Why the checkpoint container grows quickly
+### Why conversation memory stays bounded
 
-LangGraph checkpoints store execution history, not only final outputs. Repeated
-queries and webhook runs can create a lot of checkpoint documents. The system is
-currently correct, but checkpoint retention may eventually need TTL if storage
-growth becomes a problem.
+Teams conversational context is intentionally kept short-lived. Session rotation,
+TTL-backed persistence, and message trimming keep conversational memory from
+growing without bound while leaving durable workflow state in external systems.
 
 ## Current Architectural Direction
 
@@ -621,7 +616,6 @@ If the system grows further, the most likely future splits would be:
 
 - separate queue worker from the web container
 - separate MCP server into its own hosted service
-- add retention policy for checkpoints
 - make more critical side effects deterministic where reliability demands it
 
 For now, the architecture is intentionally optimized for:

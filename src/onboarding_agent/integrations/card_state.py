@@ -78,7 +78,7 @@ async def mark_new_hire_action_complete(employee_email: str, action: str) -> dic
 
 async def refresh_new_hire_card(employee_email: str) -> dict[str, Any]:
     from onboarding_agent.integrations.adaptive_cards import new_hire_card
-    from onboarding_agent.integrations.teams_proactive import update_proactive_card
+    from onboarding_agent.integrations.teams.proactive import update_proactive_card
 
     card = await get_new_hire_card(employee_email)
     if card is None:
@@ -142,7 +142,7 @@ async def mark_docusign_roster_complete(employee_email: str, job_category: str) 
 
 async def refresh_docusign_status_card(employee_email: str) -> dict[str, Any]:
     from onboarding_agent.integrations.adaptive_cards import docusign_status_card
-    from onboarding_agent.integrations.teams_proactive import update_proactive_card
+    from onboarding_agent.integrations.teams.proactive import update_proactive_card
 
     card = await get_docusign_status_card(employee_email)
     if card is None:

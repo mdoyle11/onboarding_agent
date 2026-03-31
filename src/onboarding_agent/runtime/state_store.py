@@ -6,7 +6,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,9 @@ class FileStateStore(StateStore):
         path = self._path(namespace)
         if path.exists():
             try:
-                return json.loads(path.read_text())
+                data = json.loads(path.read_text())
+                if isinstance(data, dict):
+                    return cast(dict[str, dict[str, Any]], data)
             except (json.JSONDecodeError, OSError):
                 logger.warning("Could not read %s, starting fresh", path)
         return {}
@@ -74,6 +76,7 @@ class FileStateStore(StateStore):
 
 # Module-level singleton — set during startup
 store: StateStore | None = None
+session_store: StateStore | None = None
 
 
 def create_state_store(backend: str, **kwargs: Any) -> StateStore:

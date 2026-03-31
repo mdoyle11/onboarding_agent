@@ -7,8 +7,10 @@ from fastmcp import FastMCP
 from onboarding_agent.config import settings
 from onboarding_agent.mcp_server.tools_docusign import register as register_docusign
 from onboarding_agent.mcp_server.tools_email import register as register_email
-from onboarding_agent.mcp_server.tools_graph import register as register_graph
 from onboarding_agent.mcp_server.tools_onboarding import register as register_onboarding
+from onboarding_agent.mcp_server.tools_staff_roster import register as register_staff_roster
+from onboarding_agent.mcp_server.tools_teams import register as register_teams
+from onboarding_agent.mcp_server.tools_tracker import register as register_tracker
 from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.state_store import create_state_store
 
@@ -39,10 +41,12 @@ mcp = FastMCP(
     ),
 )
 
-# Always registered — Excel tracker, Forms, DocuSign, email, composite status
-register_graph(mcp)
+# Always registered — tracker, roster, Forms, DocuSign, email, Teams, composite status
+register_tracker(mcp)
+register_staff_roster(mcp)
 register_docusign(mcp)
 register_email(mcp)
+register_teams(mcp)
 register_onboarding(mcp)
 
 

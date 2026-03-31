@@ -1,6 +1,6 @@
 # Proposal: Remove LangGraph in Favour of a Plain Agent Loop
 
-**Status:** Planned
+**Status:** Implemented
 **Branch:** `refactor/remove-langgraph`
 **Created:** 2026-03-30
 
@@ -24,7 +24,7 @@ The core agent loop is: call LLM → if tool calls, execute them, repeat → if 
 - `agent/state.py` — OnboardingState TypedDict
 - `runtime/checkpointing.py` — AsyncCosmosDBSaver factory
 - `langgraph-checkpoints` Cosmos container (Terraform resource + variable + output)
-- LangGraph, `langgraph-checkpoint-cosmosdb`, and `langchain-core` dependencies (keep `langchain-anthropic` and `langchain-google-genai` for the chat model wrappers, or replace with direct SDK calls)
+- LangGraph and `langgraph-checkpoint-cosmosdb` dependencies
 
 ### Replace with
 - A single `agent/runner.py` module containing an async `run_agent(messages, trigger_context, tools)` function that implements the tool loop directly

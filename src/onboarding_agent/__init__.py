@@ -1,1 +1,1 @@
-"""Onboarding Agent — LangGraph + FastMCP + Teams bot."""
+"""Onboarding Agent — LangChain runner + FastMCP + Teams bot."""

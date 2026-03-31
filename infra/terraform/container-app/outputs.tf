@@ -24,7 +24,7 @@ output "cosmos_account_name" {
 }
 
 output "cosmos_database_name" {
-  description = "Cosmos SQL database created for application state and checkpoints."
+  description = "Cosmos SQL database created for application state."
   value       = azurerm_cosmosdb_sql_database.app.name
 }
 
@@ -33,9 +33,9 @@ output "cosmos_state_container_name" {
   value       = azurerm_cosmosdb_sql_container.state_records.name
 }
 
-output "cosmos_checkpoint_container_name" {
-  description = "Cosmos SQL container used for LangGraph checkpoints."
-  value       = azurerm_cosmosdb_sql_container.graph_checkpoints.name
+output "cosmos_conversation_session_container_name" {
+  description = "Cosmos SQL container used for ephemeral Teams conversation session metadata."
+  value       = azurerm_cosmosdb_sql_container.conversation_sessions.name
 }
 
 output "job_queue_name" {

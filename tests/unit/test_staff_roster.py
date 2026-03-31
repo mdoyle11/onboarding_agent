@@ -6,9 +6,9 @@ import pytest
 from fastmcp import FastMCP
 
 from onboarding_agent.integrations.adaptive_cards import docusign_status_card
-from onboarding_agent.integrations.graph_client import _column_letter, _header_map
-from onboarding_agent.integrations.teams_bot import _card_action_to_command
-from onboarding_agent.mcp_server.tools_graph import register
+from onboarding_agent.integrations.graph_workbook import _column_letter, _header_map
+from onboarding_agent.integrations.teams.card_actions import card_action_to_command
+from onboarding_agent.mcp_server.tools_staff_roster import register
 
 
 def test_column_letter_supports_multi_letter_ranges():
@@ -46,7 +46,7 @@ def test_completed_docusign_card_includes_staff_roster_action():
 
 
 def test_card_action_to_command_uses_exact_job_category():
-    command = _card_action_to_command(
+    command = card_action_to_command(
         {
             "action": "add_to_staff_roster",
             "employee_email": "alice@example.com",
@@ -63,18 +63,22 @@ async def _get_tool_fn(mcp, tool_name: str):
     return tool.fn
 
 
-@patch("onboarding_agent.mcp_server.tools_graph._tracker")
+@patch("onboarding_agent.mcp_server.tools_staff_roster._tracker")
+@patch("onboarding_agent.mcp_server.tools_staff_roster._staff_roster")
 @patch("onboarding_agent.integrations.card_state.refresh_docusign_status_card", new_callable=AsyncMock)
 @patch("onboarding_agent.integrations.card_state.mark_docusign_roster_complete")
 @pytest.mark.asyncio
 async def test_add_employee_to_staff_roster_marks_tracker_stage(
     mock_mark_card,
     mock_refresh_card,
+    mock_staff_roster_factory,
     mock_tracker_factory,
 ):
+    staff_roster = AsyncMock()
+    staff_roster.add_employee_to_staff_roster.return_value = {"success": True}
     tracker = AsyncMock()
-    tracker.add_employee_to_staff_roster.return_value = {"success": True}
     tracker.update_stage.return_value = {"success": True}
+    mock_staff_roster_factory.return_value = staff_roster
     mock_tracker_factory.return_value = tracker
     mock_mark_card.return_value = None
 
@@ -83,5 +87,6 @@ async def test_add_employee_to_staff_roster_marks_tracker_stage(
     tool_fn = await _get_tool_fn(mcp, "add_employee_to_staff_roster")
     await tool_fn(employee_email="alice@example.com", job_category="Teacher")
 
+    staff_roster.add_employee_to_staff_roster.assert_awaited_once_with("alice@example.com", "Teacher")
     tracker.update_stage.assert_awaited_once_with("alice@example.com", "Added to Staff Roster")
     mock_refresh_card.assert_not_awaited()
