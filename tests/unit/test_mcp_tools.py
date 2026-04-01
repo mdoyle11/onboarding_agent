@@ -150,3 +150,153 @@ class TestGetOnboardingStatus:
         self.tracker.update_stage.assert_awaited_once_with("carol@example.com", "Offer Letter Signed")
         assert result["docusign_status"] == "completed"
         assert result["stages"]["Offer Letter Signed"] == "04/04/2026"
+
+
+class TestTrackerTools:
+    @pytest.fixture(autouse=True)
+    def _patch_tracker(self):
+        self.tracker = AsyncMock()
+        with patch("onboarding_agent.mcp_server.tools_tracker._tracker", return_value=self.tracker):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_find_employee_in_tracker_returns_compact_payload(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "row_id": "12",
+            "name": "Alice Example",
+            "email": "alice@example.com",
+            "location": "Bronx",
+            "start_date": "2026-04-01",
+            "position": "HR",
+            "manager_email": "manager@example.com",
+            "status": "Sent Offer Letter",
+            "stages": {
+                "Added to Tracker": "2026-03-01",
+                "Sent Offer Letter": "2026-03-02",
+            },
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "find_employee_in_tracker")
+        result = await tool_fn(employee_email="alice@example.com")
+
+        assert result["found"] is True
+        assert result["email"] == "alice@example.com"
+        assert result["status"] == "Sent Offer Letter"
+        assert "stages" not in result
+        assert "Alice Example" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_list_employees_returns_capped_preview(self):
+        employees = []
+        for index in range(30):
+            employees.append(
+                {
+                    "name": f"Employee {index}",
+                    "email": f"user{index}@example.com",
+                    "location": "Bronx",
+                    "position": "Ops",
+                    "stages": {"Added to Tracker": "2026-04-01"},
+                }
+            )
+        self.tracker.list_all_employees.return_value = {
+            "success": True,
+            "employees": employees,
+            "count": len(employees),
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-list-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "list_employees")
+        result = await tool_fn(recent_days=0)
+
+        assert result["count"] == 30
+        assert result["returned_count"] == 25
+        assert result["truncated"] is True
+        assert len(result["employees"]) == 25
+        assert result["employees"][0]["email"] == "user0@example.com"
+        assert "and 5 more" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_list_employees_defaults_to_recent_30_days(self):
+        self.tracker.list_all_employees.return_value = {
+            "success": True,
+            "employees": [
+                {
+                    "name": "Recent Hire",
+                    "email": "recent@example.com",
+                    "location": "Bronx",
+                    "position": "Ops",
+                    "start_date": "2026-03-20",
+                    "stages": {"Added to Tracker": "2026-03-20"},
+                },
+                {
+                    "name": "Older Hire",
+                    "email": "older@example.com",
+                    "location": "Bronx",
+                    "position": "Ops",
+                    "start_date": "2026-01-15",
+                    "stages": {"Added to Tracker": "2026-01-15"},
+                },
+            ],
+            "count": 2,
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-recent-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "list_employees")
+
+        with patch("onboarding_agent.mcp_server.tools_tracker.date") as mock_date:
+            from datetime import date as real_date
+            mock_date.today.return_value = real_date(2026, 3, 31)
+            mock_date.side_effect = real_date
+            result = await tool_fn()
+
+        assert result["count"] == 1
+        assert result["employees"][0]["email"] == "recent@example.com"
+        assert result["recent_days"] == 30
+
+    @pytest.mark.asyncio
+    async def test_list_employees_supports_optional_filters(self):
+        self.tracker.list_all_employees.return_value = {
+            "success": True,
+            "employees": [
+                {
+                    "name": "Bronx Ops",
+                    "email": "bronx.ops@example.com",
+                    "location": "Bronx",
+                    "position": "Ops",
+                    "start_date": "2026-03-20",
+                    "stages": {"Added to Tracker": "2026-03-20"},
+                },
+                {
+                    "name": "Queens HR",
+                    "email": "queens.hr@example.com",
+                    "location": "Queens",
+                    "position": "HR",
+                    "start_date": "2026-03-21",
+                    "stages": {"Added to Tracker": "2026-03-21"},
+                },
+            ],
+            "count": 2,
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-filter-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "list_employees")
+        result = await tool_fn(location="Bronx", position="Ops", recent_days=0)
+
+        assert result["count"] == 1
+        assert result["employees"][0]["email"] == "bronx.ops@example.com"
+        assert result["location"] == "Bronx"
+        assert result["position"] == "Ops"

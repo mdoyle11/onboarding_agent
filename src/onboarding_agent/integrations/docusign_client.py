@@ -233,7 +233,7 @@ class DocuSignClient:
         employee_name: str,
         employee_email: str,
         start_date: str,
-        department: str,
+        position: str,
     ) -> dict[str, Any]:
         """Create a DocuSign envelope draft using the configured template."""
         started = time.perf_counter()
@@ -243,7 +243,7 @@ class DocuSignClient:
             employee_name,
             employee_email,
             start_date,
-            department,
+            position,
         )
         logger.info(
             "DocuSign create_envelope_draft completed for %s in %.3fs success=%s",
@@ -258,7 +258,7 @@ class DocuSignClient:
         employee_name: str,
         employee_email: str,
         start_date: str,
-        department: str,
+        position: str,
     ) -> dict[str, Any]:
         try:
             api_client = self._get_api_client()
@@ -271,7 +271,8 @@ class DocuSignClient:
                 tabs=Tabs(
                     text_tabs=[
                         Text(tab_label="StartDate", value=start_date),
-                        Text(tab_label="Department", value=department),
+                        # Keep template tab label stable for existing DocuSign template wiring.
+                        Text(tab_label="Department", value=position),
                     ]
                 ),
             )

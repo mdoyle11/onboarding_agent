@@ -7,10 +7,15 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from onboarding_agent.integrations.teams.memory import (
+    _persistable_chat_messages,
     deserialize_messages,
+    extract_context_patch_from_text,
     get_or_create_session_key,
     load_chat_history,
+    load_session_context,
+    merge_session_context,
     save_chat_history,
+    save_session_context,
     serialize_messages,
 )
 
@@ -63,6 +68,28 @@ def test_deserialize_empty_list():
     assert deserialize_messages([]) == []
 
 
+def test_extract_context_patch_from_text_finds_email_and_intent():
+    patch = extract_context_patch_from_text("Check status for alice@example.com")
+    assert patch["employee_email"] == "alice@example.com"
+    assert patch["intent"] == "check_onboarding_status"
+
+
+def test_persistable_chat_messages_excludes_tool_messages_and_empty_ai():
+    messages = [
+        HumanMessage(content="hello"),
+        AIMessage(content="", tool_calls=[{"name": "find_employee", "args": {}, "id": "1"}]),
+        ToolMessage(content='{"success": true}', tool_call_id="1", name="find_employee"),
+        AIMessage(content="done"),
+    ]
+
+    result = _persistable_chat_messages(messages)
+
+    assert len(result) == 2
+    assert isinstance(result[0], HumanMessage)
+    assert isinstance(result[1], AIMessage)
+    assert str(result[1].content) == "done"
+
+
 @pytest.mark.asyncio
 async def test_load_chat_history_returns_empty_for_missing_key():
     mock_store = AsyncMock()
@@ -104,6 +131,58 @@ async def test_save_and_load_round_trip():
     assert len(loaded) == 2
     assert isinstance(loaded[0], HumanMessage)
     assert isinstance(loaded[1], AIMessage)
+
+
+@pytest.mark.asyncio
+async def test_save_chat_history_is_bounded_to_recent_window():
+    storage: dict[str, dict] = {}
+
+    async def mock_put(ns: str, key: str, value: dict) -> None:
+        storage[f"{ns}:{key}"] = value
+
+    async def mock_get(ns: str, key: str) -> dict | None:
+        return storage.get(f"{ns}:{key}")
+
+    mock_store = AsyncMock()
+    mock_store.put = mock_put
+    mock_store.get = mock_get
+
+    messages = [HumanMessage(content=f"msg {i}") for i in range(8)]
+
+    with patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod:
+        mock_mod.session_store = mock_store
+        await save_chat_history("session-1", messages)
+        loaded = await load_chat_history("session-1")
+
+    assert len(loaded) == 4
+    assert str(loaded[0].content) == "msg 4"
+    assert str(loaded[-1].content) == "msg 7"
+
+
+@pytest.mark.asyncio
+async def test_save_and_merge_session_context_round_trip():
+    storage: dict[str, dict] = {}
+
+    async def mock_put(ns: str, key: str, value: dict) -> None:
+        storage[f"{ns}:{key}"] = value
+
+    async def mock_get(ns: str, key: str) -> dict | None:
+        return storage.get(f"{ns}:{key}")
+
+    mock_store = AsyncMock()
+    mock_store.put = mock_put
+    mock_store.get = mock_get
+
+    with patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod:
+        mock_mod.session_store = mock_store
+        await save_session_context("session-1", {"employee_email": "alice@example.com"})
+        merged = await merge_session_context("session-1", {"intent": "check_onboarding_status"})
+        loaded = await load_session_context("session-1")
+
+    assert merged["employee_email"] == "alice@example.com"
+    assert merged["intent"] == "check_onboarding_status"
+    assert loaded["employee_email"] == "alice@example.com"
+    assert loaded["intent"] == "check_onboarding_status"
 
 
 @pytest.mark.asyncio

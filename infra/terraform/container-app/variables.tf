@@ -154,6 +154,12 @@ variable "graph_excel_item_id" {
   type        = string
 }
 
+variable "graph_excel_table_name" {
+  description = "Optional Excel table name for onboarding tracker reads. Falls back to usedRange when empty."
+  type        = string
+  default     = ""
+}
+
 variable "docusign_account_id" {
   description = "DocuSign account ID."
   type        = string

@@ -21,6 +21,7 @@ locals {
     AZURE_CLIENT_ID                            = var.azure_client_id
     GRAPH_EXCEL_DRIVE_ID                       = var.graph_excel_drive_id
     GRAPH_EXCEL_ITEM_ID                        = var.graph_excel_item_id
+    GRAPH_EXCEL_TABLE_NAME                     = var.graph_excel_table_name
     DOCUSIGN_ACCOUNT_ID                        = var.docusign_account_id
     DOCUSIGN_INTEGRATION_KEY                   = var.docusign_integration_key
     DOCUSIGN_USER_ID                           = var.docusign_user_id

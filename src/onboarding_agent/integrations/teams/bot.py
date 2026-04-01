@@ -22,8 +22,10 @@ from onboarding_agent.integrations.teams.card_actions import (
     refresh_card_from_context,
 )
 from onboarding_agent.integrations.teams.memory import (
+    extract_context_patch_from_text,
     get_or_create_session_key,
     load_chat_history,
+    merge_session_context,
     save_chat_history,
 )
 from onboarding_agent.integrations.teams.mentions import is_mentioned, strip_mention
@@ -104,12 +106,24 @@ def register_handlers(agent_app: Any) -> None:
 
         # Load chat history for session continuity
         session_key = await get_or_create_session_key(activity)
+        session_context = await merge_session_context(
+            session_key,
+            extract_context_patch_from_text(user_text),
+        )
         history = await load_chat_history(session_key)
         messages: list[BaseMessage] = history + [HumanMessage(content=user_text)]
 
         try:
-            result_messages = await runner.run_agent(messages, trigger_source="teams_query")
+            result_messages = await runner.run_agent(
+                messages,
+                trigger_source="teams_query",
+                session_context=session_context,
+            )
             await save_chat_history(session_key, result_messages)
+            await merge_session_context(
+                session_key,
+                runner.derive_session_context(result_messages, existing=session_context),
+            )
 
             if card_action and await complete_card_action(context, card_action, result_messages):
                 reply_text = ""
@@ -135,10 +149,21 @@ async def _run_card_action_in_background(
         logger.warning("Skipping Teams card action because agent is not ready")
         return
 
+    session_context = {
+        "employee_email": card_action["employee_email"],
+        "intent": card_action["action"],
+    }
+    if card_action.get("job_category"):
+        session_context["job_category"] = card_action["job_category"]
+
     messages: list[BaseMessage] = [HumanMessage(content=user_text)]
 
     try:
-        result_messages = await runner.run_agent(messages, trigger_source="teams_query")
+        result_messages = await runner.run_agent(
+            messages,
+            trigger_source="teams_query",
+            session_context=session_context,
+        )
         updated = await complete_card_action_without_context(card_action, result_messages)
         if not updated:
             logger.warning(

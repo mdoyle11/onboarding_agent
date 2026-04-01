@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import inspect
+import json
 import logging
 import os
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import SecretStr
@@ -17,18 +19,12 @@ from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
-_TEAMS_RECENT_MESSAGE_LIMIT = 5
+_TEAMS_RECENT_MESSAGE_LIMIT = 4
 _MAX_RETRIES = 3
 _MAX_TOOL_LOOPS = 25
 
-_TRACKER = "Excel"
-_INTERFACE = "Teams"
-_NEW_HIRE_NOTIFICATION_TOOL = "send_new_hire_card"
-_DOCUSIGN_NOTIFICATION_TOOL = "send_docusign_status_card"
-_BACKGROUND_NOTIFICATION_TOOL = "send_background_clearance_card"
-
-_SYSTEM_PROMPT = f"""\
-You are an HR onboarding assistant. Use {_TRACKER} as the tracker of record and DocuSign for offer letters.
+_SYSTEM_PROMPT = """\
+You are an HR onboarding assistant. Use Excel as the tracker of record and DocuSign for offer letters.
 
 Core rules:
 - Be concise.
@@ -44,20 +40,6 @@ Tracked stages:
 - Sent Offer Letter
 - Offer Letter Signed
 - Background Submission
-
-For trigger_source=pa_webhook:
-- Run this order: find_employee_in_tracker, add_employee_to_tracker, check_docusign_draft_exists, create_docusign_envelope_draft, draft_onboarding_email.
-- Create drafts only. Do not send the DocuSign envelope or onboarding email.
-- Finish by sending {_NEW_HIRE_NOTIFICATION_TOOL}. Webhook runs must end with that {_INTERFACE} notification, not plain text only.
-
-For trigger_source=background_clearance_webhook:
-- Call update_tracker_stage with stage="Background Submission".
-- Send {_BACKGROUND_NOTIFICATION_TOOL}.
-- Call send_background_clearance_confirmation.
-
-For trigger_source=docusign_webhook:
-- When the status is completed, call update_tracker_stage with stage="Offer Letter Signed".
-- Finish by sending {_DOCUSIGN_NOTIFICATION_TOOL}, not plain text only.
 
 For trigger_source=teams_query:
 - For employee status questions, call get_onboarding_status.
@@ -75,6 +57,121 @@ _MCP_SERVER_CMD = ["python", "-m", "onboarding_agent.mcp_server.server"]
 _tools: list[BaseTool] = []
 _tool_map: dict[str, BaseTool] = {}
 _mcp_client: MultiServerMCPClient | None = None
+
+
+def _format_session_context(session_context: dict[str, Any] | None) -> SystemMessage | None:
+    """Render compact structured session state as a small system message."""
+    if not session_context:
+        return None
+
+    fields = [
+        ("employee_email", session_context.get("employee_email", "")),
+        ("employee_name", session_context.get("employee_name", "")),
+        ("intent", session_context.get("intent", "")),
+        ("pending_confirmation", session_context.get("pending_confirmation", "")),
+        ("envelope_id", session_context.get("envelope_id", "")),
+        ("job_category", session_context.get("job_category", "")),
+    ]
+    lines = [f"- {name}: {value}" for name, value in fields if value not in ("", None)]
+    if not lines:
+        return None
+
+    return SystemMessage(
+        content=(
+            "Current session context:\n"
+            + "\n".join(lines)
+            + "\nUse this to preserve continuity when the current request is ambiguous."
+        )
+    )
+
+
+def _decode_tool_content(content: Any) -> dict[str, Any]:
+    """Best-effort decode of ToolMessage content into a dict."""
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str):
+        return {}
+
+    raw = content.strip()
+    if not raw:
+        return {}
+
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(raw)
+        except (ValueError, SyntaxError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict):
+            return cast(dict[str, Any], parsed)
+    return {}
+
+
+def derive_session_context(
+    messages: list[BaseMessage],
+    *,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Derive compact reusable session context from recent tool results."""
+    context: dict[str, Any] = dict(existing or {})
+
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+
+        payload = _decode_tool_content(message.content)
+        if not payload:
+            continue
+
+        tool_name = (message.name or "").strip()
+
+        if tool_name in {
+            "find_employee_in_tracker",
+            "get_employee_stages",
+            "get_onboarding_status",
+            "draft_onboarding_email",
+            "send_onboarding_email",
+            "check_docusign_draft_exists",
+            "add_employee_to_staff_roster",
+        }:
+            employee_email = str(
+                payload.get("employee_email")
+                or payload.get("email")
+                or ""
+            ).strip()
+            if employee_email:
+                context["employee_email"] = employee_email
+
+        if tool_name in {"get_employee_stages", "get_onboarding_status"}:
+            employee_name = str(payload.get("name", "")).strip()
+            if employee_name:
+                context["employee_name"] = employee_name
+            context["intent"] = "check_onboarding_status"
+
+        if tool_name in {"draft_onboarding_email", "send_onboarding_email"}:
+            context["intent"] = "send_onboarding_email"
+            if tool_name == "draft_onboarding_email" and payload.get("success"):
+                context["pending_confirmation"] = True
+            if tool_name == "send_onboarding_email" and payload.get("success"):
+                context["pending_confirmation"] = False
+
+        if tool_name in {"check_docusign_draft_exists", "create_docusign_envelope_draft", "send_docusign_envelope"}:
+            envelope_id = str(payload.get("envelope_id", "")).strip()
+            if envelope_id:
+                context["envelope_id"] = envelope_id
+            context["intent"] = "send_docusign_envelope"
+
+        if tool_name == "get_docusign_envelope_status":
+            envelope_id = str(payload.get("envelope_id", "")).strip()
+            if envelope_id:
+                context["envelope_id"] = envelope_id
+
+        if tool_name == "add_employee_to_staff_roster":
+            job_category = str(payload.get("job_category", "")).strip()
+            if job_category:
+                context["job_category"] = job_category
+            context["intent"] = "staff_roster"
+
+    return context
 
 
 async def initialize() -> None:
@@ -127,11 +224,15 @@ def _trim_messages(messages: list[BaseMessage], trigger_source: str) -> list[Bas
     if trigger_source != "teams_query":
         return messages
 
-    system_messages = [msg for msg in messages if isinstance(msg, SystemMessage)]
-    non_system_messages = [msg for msg in messages if not isinstance(msg, SystemMessage)]
-    if len(non_system_messages) <= _TEAMS_RECENT_MESSAGE_LIMIT:
-        return system_messages + non_system_messages
-    return system_messages + non_system_messages[-_TEAMS_RECENT_MESSAGE_LIMIT:]
+    system_messages: list[BaseMessage] = [
+        msg for msg in messages if isinstance(msg, SystemMessage)
+    ]
+    conversational_messages: list[BaseMessage] = [
+        msg for msg in messages if isinstance(msg, (HumanMessage, AIMessage))
+    ]
+    if len(conversational_messages) <= _TEAMS_RECENT_MESSAGE_LIMIT:
+        return system_messages + conversational_messages
+    return system_messages + conversational_messages[-_TEAMS_RECENT_MESSAGE_LIMIT:]
 
 
 async def _execute_tool_calls(
@@ -168,6 +269,7 @@ async def run_agent(
     messages: list[BaseMessage],
     *,
     trigger_source: str = "",
+    session_context: dict[str, Any] | None = None,
     max_retries: int = _MAX_RETRIES,
 ) -> list[BaseMessage]:
     """Run the agent tool loop until the LLM stops calling tools."""
@@ -179,6 +281,10 @@ async def run_agent(
     # Ensure system prompt is first
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=_SYSTEM_PROMPT)] + messages
+
+    context_message = _format_session_context(session_context)
+    if context_message is not None:
+        messages = [messages[0], context_message, *messages[1:]]
 
     # Trim for Teams queries
     messages = _trim_messages(messages, trigger_source)

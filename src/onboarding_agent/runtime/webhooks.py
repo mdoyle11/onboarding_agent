@@ -110,7 +110,7 @@ async def handle_new_hire_webhook(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.Response(status=400, text="Invalid JSON")
 
-    employee_email = str(payload.get("employeeEmail", "unknown"))
+    employee_email = str(payload.get("staffEmail", "unknown"))
     logger.info("New-hire webhook received: %s", employee_email)
     await _job_queue(request).enqueue(JOB_NEW_HIRE, payload)
     logger.info(

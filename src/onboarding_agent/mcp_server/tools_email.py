@@ -106,6 +106,43 @@ async def send_background_clearance_confirmation_email(
     }
 
 
+async def draft_onboarding_email_for_employee(
+    employee_email: str,
+    employee_name: str,
+) -> dict[str, Any]:
+    """Create and persist an onboarding email draft for an employee."""
+    key = employee_email.strip().lower()
+    try:
+        subject, body_html = _render_template(employee_name)
+    except FileNotFoundError:
+        logger.error("Email template not found at %s", settings.email_template_path)
+        return {
+            "success": False,
+            "error": f"Email template not found at {settings.email_template_path}",
+        }
+
+    drafts = _load_drafts()
+    drafts[key] = {
+        "to_email": employee_email.strip(),
+        "subject": subject,
+        "body_html": body_html,
+    }
+    _save_drafts(drafts)
+
+    preview = body_html[:500] + ("…" if len(body_html) > 500 else "")
+    logger.info("Email draft created and persisted for %s", employee_email)
+    return {
+        "success": True,
+        "employee_email": employee_email,
+        "subject": subject,
+        "body_preview": preview,
+        "message": (
+            f"Onboarding email drafted for {employee_name} ({employee_email}). "
+            "Awaiting HR approval to send."
+        ),
+    }
+
+
 def register(mcp: FastMCP) -> None:
     """Register email draft and send tools on the given FastMCP instance."""
 
@@ -125,38 +162,7 @@ def register(mcp: FastMCP) -> None:
 
         Returns the rendered subject and a body preview for HR to review.
         """
-        key = employee_email.strip().lower()
-        try:
-            subject, body_html = _render_template(employee_name)
-        except FileNotFoundError:
-            logger.error("Email template not found at %s", settings.email_template_path)
-            return {
-                "success": False,
-                "error": f"Email template not found at {settings.email_template_path}",
-            }
-
-        drafts = _load_drafts()
-        drafts[key] = {
-            "to_email": employee_email.strip(),
-            "subject": subject,
-            "body_html": body_html,
-        }
-        _save_drafts(drafts)
-
-        # Truncate preview for readability
-        preview = body_html[:500] + ("…" if len(body_html) > 500 else "")
-
-        logger.info("Email draft created and persisted for %s", employee_email)
-        return {
-            "success": True,
-            "employee_email": employee_email,
-            "subject": subject,
-            "body_preview": preview,
-            "message": (
-                f"Onboarding email drafted for {employee_name} ({employee_email}). "
-                "Awaiting HR approval to send."
-            ),
-        }
+        return await draft_onboarding_email_for_employee(employee_email, employee_name)
 
     @mcp.tool()
     async def send_onboarding_email(employee_email: str) -> dict[str, Any]:

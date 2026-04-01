@@ -24,11 +24,14 @@ async def save_new_hire_card(
     channel_id: str,
     message_id: str,
     employee_name: str,
-    start_date: str,
-    department: str,
-    location: str,
-    manager_email: str,
-    summary: str,
+    status_change: str = "",
+    requested_start_date: str = "",
+    job_title: str = "",
+    work_location: str = "",
+    requesting_manager: str = "",
+    summary: str = "",
+    allow_email_action: bool = True,
+    allow_docusign_action: bool = True,
 ) -> None:
     key = employee_email.strip().lower()
     await _store().put(NS_NEW_HIRE, key, {
@@ -36,13 +39,16 @@ async def save_new_hire_card(
         "message_id": message_id,
         "employee_name": employee_name,
         "employee_email": employee_email,
-        "start_date": start_date,
-        "department": department,
-        "location": location,
-        "manager_email": manager_email,
+        "status_change": status_change,
+        "requested_start_date": requested_start_date,
+        "job_title": job_title,
+        "work_location": work_location,
+        "requesting_manager": requesting_manager,
         "summary": summary,
         "email_sent": False,
         "docusign_sent": False,
+        "allow_email_action": allow_email_action,
+        "allow_docusign_action": allow_docusign_action,
     })
 
 
@@ -87,13 +93,16 @@ async def refresh_new_hire_card(employee_email: str) -> dict[str, Any]:
     updated_card = new_hire_card(
         employee_name=card.get("employee_name", ""),
         employee_email=card.get("employee_email", ""),
-        start_date=card.get("start_date", ""),
-        department=card.get("department", ""),
-        location=card.get("location", ""),
-        manager_email=card.get("manager_email", ""),
         summary=card.get("summary", ""),
+        status_change=card.get("status_change", ""),
+        requested_start_date=card.get("requested_start_date", ""),
+        job_title=card.get("job_title", ""),
+        work_location=card.get("work_location", ""),
+        requesting_manager=card.get("requesting_manager", ""),
         email_sent=bool(card.get("email_sent")),
         docusign_sent=bool(card.get("docusign_sent")),
+        allow_email_action=bool(card.get("allow_email_action", True)),
+        allow_docusign_action=bool(card.get("allow_docusign_action", True)),
     )
     return await update_proactive_card(
         channel_id=card.get("channel_id", ""),

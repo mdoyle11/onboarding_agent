@@ -61,6 +61,9 @@ teams_channel_id       = "REPLACE_ME_TEAMS_CHANNEL_ID"
 # Graph Excel tracker settings.
 graph_excel_drive_id = "REPLACE_ME_GRAPH_EXCEL_DRIVE_ID"
 graph_excel_item_id  = "REPLACE_ME_GRAPH_EXCEL_ITEM_ID"
+# Optional: set this after converting tracker data to an Excel Table.
+# Leave empty to keep usedRange behavior.
+graph_excel_table_name = ""
 
 # DocuSign settings.
 # Paste the private key directly between the heredoc markers below.

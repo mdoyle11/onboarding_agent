@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     graph_excel_drive_id: str = ""
     graph_excel_item_id: str = ""
     graph_excel_sheet_name: str = "Onboarding"
+    graph_excel_table_name: str = ""
 
     # Microsoft Graph — Staff Roster workbooks (one workbook per location)
     # JSON shape:

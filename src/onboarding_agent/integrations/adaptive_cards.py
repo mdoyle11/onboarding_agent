@@ -12,51 +12,56 @@ from typing import Any
 def new_hire_card(
     employee_name: str,
     employee_email: str,
-    start_date: str,
-    department: str,
-    location: str,
-    manager_email: str,
     summary: str,
+    status_change: str = "",
+    requested_start_date: str = "",
+    job_title: str = "",
+    work_location: str = "",
+    requesting_manager: str = "",
     email_sent: bool = False,
     docusign_sent: bool = False,
+    allow_email_action: bool = True,
+    allow_docusign_action: bool = True,
 ) -> dict[str, Any]:
     """Card sent when a new hire webhook triggers the pipeline."""
     actions: list[dict[str, Any]] = []
-    if email_sent:
-        actions.append(
-            {
-                "type": "Action.Submit",
-                "title": "\u2713 Welcome Email Sent",
-                "isEnabled": False,
-                "data": {"action": "send_onboarding_email", "employee_email": employee_email},
-            }
-        )
-    else:
-        actions.append(
-            {
-                "type": "Action.Submit",
-                "title": "Send Welcome Email",
-                "data": {"action": "send_onboarding_email", "employee_email": employee_email},
-            }
-        )
+    if allow_email_action:
+        if email_sent:
+            actions.append(
+                {
+                    "type": "Action.Submit",
+                    "title": "\u2713 Welcome Email Sent",
+                    "isEnabled": False,
+                    "data": {"action": "send_onboarding_email", "employee_email": employee_email},
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "type": "Action.Submit",
+                    "title": "Send Welcome Email",
+                    "data": {"action": "send_onboarding_email", "employee_email": employee_email},
+                }
+            )
 
-    if docusign_sent:
-        actions.append(
-            {
-                "type": "Action.Submit",
-                "title": "\u2713 Offer Letter Sent",
-                "isEnabled": False,
-                "data": {"action": "send_docusign", "employee_email": employee_email},
-            }
-        )
-    else:
-        actions.append(
-            {
-                "type": "Action.Submit",
-                "title": "Send Offer Letter",
-                "data": {"action": "send_docusign", "employee_email": employee_email},
-            }
-        )
+    if allow_docusign_action:
+        if docusign_sent:
+            actions.append(
+                {
+                    "type": "Action.Submit",
+                    "title": "\u2713 Offer Letter Sent",
+                    "isEnabled": False,
+                    "data": {"action": "send_docusign", "employee_email": employee_email},
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "type": "Action.Submit",
+                    "title": "Send Offer Letter",
+                    "data": {"action": "send_docusign", "employee_email": employee_email},
+                }
+            )
 
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -81,12 +86,13 @@ def new_hire_card(
             {
                 "type": "FactSet",
                 "facts": [
-                    {"title": "Start Date", "value": start_date or "TBD"},
-                    {"title": "Department", "value": department or "N/A"},
-                    {"title": "Location", "value": location or "N/A"},
-                    {"title": "Manager", "value": manager_email or "N/A"},
-                    {"title": "Welcome Email", "value": "Sent \u2713" if email_sent else "Ready"},
-                    {"title": "Offer Letter", "value": "Sent \u2713" if docusign_sent else "Ready"},
+                    {"title": "Requested Start Date", "value": requested_start_date or "TBD"},
+                    {"title": "Job Title", "value": job_title or "N/A"},
+                    {"title": "Work Location", "value": work_location or "N/A"},
+                    {"title": "Requesting Manager", "value": requesting_manager or "N/A"},
+                    {"title": "Status Change", "value": status_change or "N/A"},
+                    {"title": "Staff Name", "value": employee_name or "N/A"},
+                    {"title": "Staff Email", "value": employee_email or "N/A"},
                 ],
             },
             {"type": "TextBlock", "text": " ", "separator": True},

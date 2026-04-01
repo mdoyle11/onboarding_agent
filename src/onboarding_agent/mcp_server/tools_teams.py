@@ -23,11 +23,12 @@ def register(mcp: FastMCP) -> None:
         channel_id: str,
         employee_name: str,
         employee_email: str,
-        start_date: str,
-        department: str,
-        location: str,
-        manager_email: str,
-        summary: str,
+        summary: str = "",
+        status_change: str = "",
+        requested_start_date: str = "",
+        job_title: str = "",
+        work_location: str = "",
+        requesting_manager: str = "",
     ) -> dict[str, object]:
         from onboarding_agent.integrations.adaptive_cards import new_hire_card
         from onboarding_agent.integrations.card_state import (
@@ -39,11 +40,14 @@ def register(mcp: FastMCP) -> None:
         card = new_hire_card(
             employee_name,
             employee_email,
-            start_date,
-            department,
-            location,
-            manager_email,
             summary,
+            status_change=status_change,
+            requested_start_date=requested_start_date,
+            job_title=job_title,
+            work_location=work_location,
+            requesting_manager=requesting_manager,
+            allow_email_action=True,
+            allow_docusign_action=True,
         )
         result = await _messenger().send_channel_notification(channel_id, summary, card=card)
         if result.get("success") and result.get("message_id"):
@@ -52,11 +56,14 @@ def register(mcp: FastMCP) -> None:
                 channel_id=channel_id,
                 message_id=str(result["message_id"]),
                 employee_name=employee_name,
-                start_date=start_date,
-                department=department,
-                location=location,
-                manager_email=manager_email,
+                status_change=status_change,
+                requested_start_date=requested_start_date,
+                job_title=job_title,
+                work_location=work_location,
+                requesting_manager=requesting_manager,
                 summary=summary,
+                allow_email_action=True,
+                allow_docusign_action=True,
             )
         return result
 

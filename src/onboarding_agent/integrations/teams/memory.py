@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -15,8 +16,12 @@ logger = logging.getLogger(__name__)
 
 NS_CHAT_HISTORY = "chat_history"
 NS_CONVERSATION_SESSION = "conversation_session"
+NS_SESSION_CONTEXT = "session_context"
 _SESSION_INACTIVITY_LIMIT = timedelta(minutes=30)
 _SESSION_MAX_TURNS = 10
+_CHAT_HISTORY_LIMIT = 4
+_EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+SessionContext = dict[str, Any]
 
 
 def _store() -> store_mod.StateStore:
@@ -119,6 +124,17 @@ def serialize_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     return result
 
 
+def _persistable_chat_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Keep only conversational messages that are useful across turns."""
+    persisted: list[BaseMessage] = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            persisted.append(msg)
+        elif isinstance(msg, AIMessage) and msg.content:
+            persisted.append(AIMessage(content=msg.content))
+    return persisted
+
+
 def deserialize_messages(data: list[dict[str, Any]]) -> list[BaseMessage]:
     """Reconstruct BaseMessage objects from serialized dicts."""
     messages: list[BaseMessage] = []
@@ -154,8 +170,76 @@ async def load_chat_history(session_key: str) -> list[BaseMessage]:
 async def save_chat_history(session_key: str, messages: list[BaseMessage]) -> None:
     """Save chat history for a session to the state store."""
     non_system = [msg for msg in messages if not isinstance(msg, SystemMessage)]
+    bounded = _persistable_chat_messages(non_system)[-_CHAT_HISTORY_LIMIT:]
     await _store().put(
         NS_CHAT_HISTORY,
         session_key,
-        {"messages": serialize_messages(non_system)},
+        {"messages": serialize_messages(bounded)},
     )
+
+
+async def load_session_context(session_key: str) -> SessionContext:
+    """Load compact structured session context for a Teams conversation."""
+    record = await _store().get(NS_SESSION_CONTEXT, session_key)
+    if record is None or not isinstance(record, dict):
+        return {}
+
+    allowed_keys = {
+        "employee_email",
+        "employee_name",
+        "intent",
+        "pending_confirmation",
+        "envelope_id",
+        "job_category",
+        "last_updated_at",
+    }
+    return {
+        key: value for key, value in record.items()
+        if key in allowed_keys and value not in (None, "")
+    }
+
+
+async def save_session_context(session_key: str, context: SessionContext) -> None:
+    """Persist compact structured session context for a Teams conversation."""
+    payload: SessionContext = {
+        key: value for key, value in context.items()
+        if value not in (None, "")
+    }
+    if payload:
+        payload["last_updated_at"] = _now_utc().isoformat().replace("+00:00", "Z")
+    await _store().put(NS_SESSION_CONTEXT, session_key, payload)
+
+
+async def merge_session_context(session_key: str, patch: SessionContext) -> SessionContext:
+    """Merge a partial context update into the stored session context."""
+    current = await load_session_context(session_key)
+    merged: SessionContext = dict(current)
+    for key, value in patch.items():
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    await save_session_context(session_key, merged)
+    return merged
+
+
+def extract_context_patch_from_text(text: str) -> SessionContext:
+    """Infer a small context patch from a user message."""
+    lowered = text.strip().lower()
+    patch: SessionContext = {}
+
+    email_match = _EMAIL_PATTERN.search(text)
+    if email_match:
+        patch["employee_email"] = email_match.group(0)
+
+    if "status" in lowered or "where is" in lowered or "signed" in lowered:
+        patch["intent"] = "check_onboarding_status"
+    elif "offer letter" in lowered or "docusign" in lowered:
+        patch["intent"] = "send_docusign_envelope"
+    elif "onboarding email" in lowered or "welcome email" in lowered:
+        patch["intent"] = "send_onboarding_email"
+    elif "staff roster" in lowered:
+        patch["intent"] = "staff_roster"
+    elif "background" in lowered:
+        patch["intent"] = "background_clearance"
+
+    return patch

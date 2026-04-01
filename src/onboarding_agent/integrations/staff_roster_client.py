@@ -167,7 +167,7 @@ class StaffRosterClient(WorkbookGraphClient):
 
             optional_values = {
                 "start_date": str(employee.get("start_date", "") or ""),
-                "department": str(employee.get("department", "") or ""),
+                "position": str(employee.get("position", "") or employee.get("job_title", "") or ""),
                 "manager_email": str(employee.get("manager_email", "") or ""),
                 "location": location,
             }

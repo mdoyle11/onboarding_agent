@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from time import perf_counter
 from typing import Any, cast
@@ -15,38 +16,32 @@ from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
 
+_ADDRESS_ROW_RE = re.compile(r"[A-Z]+(\d+)")
+
 _SCOPES = ["https://graph.microsoft.com/.default"]
 
-_COL_NAME = 0
-_COL_EMAIL = 1
-_COL_LOCATION = 2
-_COL_START_DATE = 3
-_COL_DEPARTMENT = 4
-_COL_MANAGER_EMAIL = 5
-
-STAGES: dict[str, int] = {
-    "Added to Tracker": 6,
-    "Added to Staff Roster": 7,
-    "Sent Offer Letter": 8,
-    "Offer Letter Signed": 9,
-    "Background Submission": 10,
-    "Background Cleared": 11,
-    "Added to ADP": 12,
-    "Complete in ADP": 13,
-    "Clear to Start": 14,
-    "Prorations Sent": 15,
+TRACKER_REQUIRED_ALIASES = {
+    "staff_name": {"staff name", "name", "employee name"},
+    "staff_email": {"staff email", "email", "employee email"},
+    "work_location": {"work location", "location"},
+    "requested_start_date": {"requested start date", "start date", "startdate"},
 }
 
-ALL_STAGES = list(STAGES.keys())
-ACTIVE_STAGES = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
+TRACKER_OPTIONAL_ALIASES = {
+    "requesting_manager": {"requesting manager", "manager", "manager email"},
+    "status_change": {"status change", "status"},
+    "staff_phone": {"staff phone #", "staff phone", "phone"},
+    "job_title": {"job title", "title", "position"},
+    "education_level": {"education level"},
+    "supplements": {"supplements"},
+    "license_number": {"license #", "license"},
+    "uploaded_credentials": {"uploaded credentials", "credentials"},
+    "compensation": {"compensation"},
+    "employment_type": {"employment type"},
+    "contract_term": {"contract term"},
+}
 
-HEADER_ROW = [
-    "Name",
-    "Email",
-    "Location",
-    "StartDate",
-    "Department",
-    "ManagerEmail",
+STAGE_NAMES = [
     "Added to Tracker",
     "Added to Staff Roster",
     "Sent Offer Letter",
@@ -54,10 +49,39 @@ HEADER_ROW = [
     "Background Submission",
     "Background Cleared",
     "Added to ADP",
-    "Complete in ADP",
+    "Employee Complete ADP Profile",
+    "Completed in ADP",
+    "Proration",
     "Clear to Start",
-    "Prorations Sent",
+    "Drug Screening",
 ]
+
+STAGE_ALIASES = {
+    "Complete in ADP": "Completed in ADP",
+    "Prorations Sent": "Proration",
+    "Start Date": "Clear to Start",
+}
+
+ALL_STAGES = list(STAGE_NAMES)
+ACTIVE_STAGES = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
+
+HEADER_ROW = [
+    "Requesting Manager",
+    "Work Location",
+    "Status Change",
+    "Staff Name",
+    "Staff Email",
+    "Staff Phone #",
+    "Job Title",
+    "Requested Start Date",
+    "Education Level",
+    "Supplements",
+    "License #",
+    "Uploaded Credentials",
+    "Compensation",
+    "Employment Type",
+    "Contract Term",
+] + STAGE_NAMES
 
 ROSTER_REQUIRED_ALIASES = {
     "name": {"employee name", "name"},
@@ -67,7 +91,7 @@ ROSTER_REQUIRED_ALIASES = {
 
 ROSTER_OPTIONAL_ALIASES = {
     "start_date": {"start date", "startdate"},
-    "department": {"department"},
+    "position": {"position"},
     "manager_email": {"manager email", "manageremail"},
     "location": {"location"},
 }
@@ -113,10 +137,10 @@ def _cell(row: list[Any], index: int | None) -> str:
     return str(row[index] or "").strip()
 
 
-def _row_to_stages(row: list[Any]) -> dict[str, str]:
+def _row_to_stages(row: list[Any], stage_indices: dict[str, int]) -> dict[str, str]:
     return {
         stage: str(row[col_idx]) if len(row) > col_idx and row[col_idx] is not None else ""
-        for stage, col_idx in STAGES.items()
+        for stage, col_idx in stage_indices.items()
     }
 
 
@@ -128,8 +152,74 @@ def _latest_active_stage(stages: dict[str, str]) -> str:
     return latest
 
 
+def _stage_column_map(header_row: list[Any]) -> dict[str, int]:
+    normalized = {_normalize_header(value): idx for idx, value in enumerate(header_row)}
+    resolved: dict[str, int] = {}
+    for stage in STAGE_NAMES:
+        idx = normalized.get(_normalize_header(stage))
+        if idx is not None:
+            resolved[stage] = idx
+    return resolved
+
+
+def _resolve_stage_name(stage_name: str, stage_indices: dict[str, int]) -> str | None:
+    direct = stage_name.strip()
+    if direct in stage_indices:
+        return direct
+    alias = STAGE_ALIASES.get(direct, "")
+    if alias and alias in stage_indices:
+        return alias
+    return None
+
+
 class WorkbookGraphClient:
     """Shared Graph workbook operations for tracker and roster clients."""
+
+    @staticmethod
+    def _start_row_from_address(address: str) -> int:
+        if not address:
+            return 1
+        match = _ADDRESS_ROW_RE.search(address.split("!", 1)[-1])
+        if match is None:
+            return 1
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return 1
+
+    async def _tracker_rows_with_start_row(self) -> tuple[int, list[list[Any]]]:
+        """Return tracker rows and the worksheet row number of the header row."""
+        table_name = settings.graph_excel_table_name.strip()
+        if table_name:
+            try:
+                table_data = await self._graph_workbook_request(
+                    "GET",
+                    f"/tables/{quote(table_name)}/range",
+                )
+                table_values = table_data.get("values", []) if isinstance(table_data, dict) else []
+                if table_values:
+                    return (
+                        self._start_row_from_address(str(table_data.get("address", "") or "")),
+                        cast(list[list[Any]], table_values),
+                    )
+            except Exception:
+                logger.warning(
+                    "Falling back to usedRange for tracker reads; table '%s' query failed",
+                    table_name,
+                    exc_info=True,
+                )
+
+        used_range_data = await self._graph_workbook_request(
+            "GET",
+            f"/worksheets/{quote(settings.graph_excel_sheet_name)}/usedRange(valuesOnly=true)",
+        )
+        used_range_values = used_range_data.get("values", []) if isinstance(used_range_data, dict) else []
+        if not used_range_values:
+            return 1, []
+        return (
+            self._start_row_from_address(str(used_range_data.get("address", "") or "")),
+            cast(list[list[Any]], used_range_values),
+        )
 
     async def _used_range_rows(
         self,
@@ -138,6 +228,10 @@ class WorkbookGraphClient:
         item_id: str | None = None,
         sheet_name: str | None = None,
     ) -> list[list[Any]]:
+        if drive_id is None and item_id is None and sheet_name is None:
+            _, rows = await self._tracker_rows_with_start_row()
+            return rows
+
         data = await self._graph_workbook_request(
             "GET",
             f"/worksheets/{quote(sheet_name or settings.graph_excel_sheet_name)}/usedRange(valuesOnly=true)",

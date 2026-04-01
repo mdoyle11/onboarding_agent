@@ -35,7 +35,7 @@ def register(mcp: FastMCP) -> None:
         employee_name: str,
         employee_email: str,
         start_date: str,
-        department: str,
+        position: str,
     ) -> dict[str, Any]:
         """
         Create a DocuSign envelope draft using the configured template.
@@ -47,7 +47,7 @@ def register(mcp: FastMCP) -> None:
         - employee_name: Full name of the new hire (used as templateRole name)
         - employee_email: New hire's email (used as templateRole email / signer)
         - start_date: ISO 8601 date string (YYYY-MM-DD)
-        - department: Department name
+        - position: Employee position / job title
 
         Returns a dict with:
         - success (bool)
@@ -55,7 +55,7 @@ def register(mcp: FastMCP) -> None:
         - status (str) — should be "created"
         """
         client = DocuSignClient()
-        return await client.create_envelope_draft(employee_name, employee_email, start_date, department)
+        return await client.create_envelope_draft(employee_name, employee_email, start_date, position)
 
     @mcp.tool()
     async def send_docusign_envelope(envelope_id: str) -> dict[str, Any]:
