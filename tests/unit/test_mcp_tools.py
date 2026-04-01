@@ -183,7 +183,13 @@ class TestGetOnboardingStatus:
             tool_fn = await _get_tool_fn(mcp, "get_onboarding_status")
             result = await tool_fn(employee_email="carol@example.com")
 
-        self.tracker.update_stage.assert_awaited_once_with("carol@example.com", "Offer Letter Signed")
+        self.tracker.update_stage.assert_awaited_once_with(
+            "carol@example.com",
+            "Offer Letter Signed",
+            location="",
+            job_title="",
+            status_change="",
+        )
         assert result["docusign_status"] == "completed"
         assert result["stages"]["Offer Letter Signed"] == "04/04/2026"
 

@@ -97,11 +97,17 @@ class DocuSignClient:
     # Public async methods (sync DocuSign SDK wrapped in executor)
     # ------------------------------------------------------------------
 
-    async def check_draft_exists(self, employee_email: str) -> dict[str, Any]:
+    async def check_draft_exists(
+        self,
+        employee_email: str,
+        work_location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
         """Check whether a draft envelope exists for the given email."""
         started = time.perf_counter()
         result = await asyncio.get_event_loop().run_in_executor(
-            None, self._check_draft_exists_sync, employee_email
+            None, self._check_draft_exists_sync, employee_email, work_location, job_title, status_change
         )
         logger.info(
             "DocuSign check_draft_exists completed for %s in %.3fs exists=%s",
@@ -111,13 +117,22 @@ class DocuSignClient:
         )
         return result
 
-    async def find_latest_envelope_for_employee(self, employee_email: str) -> dict[str, Any]:
+    async def find_latest_envelope_for_employee(
+        self,
+        employee_email: str,
+        work_location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
         """Find the most recent envelope for an employee across active/completed states."""
         started = time.perf_counter()
         result = await asyncio.get_event_loop().run_in_executor(
             None,
             self._find_latest_envelope_for_employee_sync,
             employee_email,
+            work_location,
+            job_title,
+            status_change,
         )
         logger.info(
             "DocuSign find_latest_envelope_for_employee completed for %s in %.3fs found=%s",
@@ -127,7 +142,42 @@ class DocuSignClient:
         )
         return result
 
-    def _check_draft_exists_sync(self, employee_email: str) -> dict[str, Any]:
+    @staticmethod
+    def _custom_field_map(envelope: Any) -> dict[str, str]:
+        fields = getattr(envelope, "custom_fields", None)
+        if fields is None:
+            return {}
+        text_fields = getattr(fields, "text_custom_fields", None) or []
+        return {
+            str(getattr(field, "name", "") or ""): str(getattr(field, "value", "") or "")
+            for field in text_fields
+            if getattr(field, "name", "")
+        }
+
+    def _matches_identity_fields(
+        self,
+        field_map: dict[str, str],
+        *,
+        work_location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> bool:
+        if work_location and field_map.get("work_location", "").strip().lower() != work_location.strip().lower():
+            return False
+        if job_title and field_map.get("job_title", "").strip().lower() != job_title.strip().lower():
+            return False
+        return not (
+            status_change
+            and field_map.get("status_change", "").strip().lower() != status_change.strip().lower()
+        )
+
+    def _check_draft_exists_sync(
+        self,
+        employee_email: str,
+        work_location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
         try:
             api_client = self._get_api_client()
             envelopes_api = EnvelopesApi(api_client)
@@ -165,6 +215,18 @@ class DocuSignClient:
                             sorted(recipient_emails),
                         )
                         continue
+                    if work_location or job_title or status_change:
+                        envelope = envelopes_api.get_envelope(
+                            account_id=settings.docusign_account_id,
+                            envelope_id=envelope_id,
+                        )
+                        if not self._matches_identity_fields(
+                            self._custom_field_map(envelope),
+                            work_location=work_location,
+                            job_title=job_title,
+                            status_change=status_change,
+                        ):
+                            continue
                 except ApiException:
                     logger.info("Ignoring stale draft reference %s", envelope_id)
                     continue
@@ -179,7 +241,13 @@ class DocuSignClient:
             logger.exception("check_draft_exists failed")
             return {"exists": False, "envelope_id": "", "error": str(exc)}
 
-    def _find_latest_envelope_for_employee_sync(self, employee_email: str) -> dict[str, Any]:
+    def _find_latest_envelope_for_employee_sync(
+        self,
+        employee_email: str,
+        work_location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
         try:
             api_client = self._get_api_client()
             envelopes_api = EnvelopesApi(api_client)
@@ -213,6 +281,18 @@ class DocuSignClient:
                     }
                     if normalized_email not in recipient_emails:
                         continue
+                    if work_location or job_title or status_change:
+                        envelope = envelopes_api.get_envelope(
+                            account_id=settings.docusign_account_id,
+                            envelope_id=envelope_id,
+                        )
+                        if not self._matches_identity_fields(
+                            self._custom_field_map(envelope),
+                            work_location=work_location,
+                            job_title=job_title,
+                            status_change=status_change,
+                        ):
+                            continue
                 except ApiException:
                     logger.info("Ignoring stale envelope reference %s", envelope_id)
                     continue
@@ -234,6 +314,8 @@ class DocuSignClient:
         employee_email: str,
         start_date: str,
         position: str,
+        work_location: str = "",
+        status_change: str = "",
     ) -> dict[str, Any]:
         """Create a DocuSign envelope draft using the configured template."""
         started = time.perf_counter()
@@ -244,6 +326,8 @@ class DocuSignClient:
             employee_email,
             start_date,
             position,
+            work_location,
+            status_change,
         )
         logger.info(
             "DocuSign create_envelope_draft completed for %s in %.3fs success=%s",
@@ -259,6 +343,8 @@ class DocuSignClient:
         employee_email: str,
         start_date: str,
         position: str,
+        work_location: str,
+        status_change: str,
     ) -> dict[str, Any]:
         try:
             api_client = self._get_api_client()
@@ -305,7 +391,10 @@ class DocuSignClient:
                 event_notification=event_notification,
                 custom_fields={
                     "textCustomFields": [
-                        {"name": "employee_email", "value": employee_email, "show": "false"}
+                        {"name": "employee_email", "value": employee_email, "show": "false"},
+                        {"name": "job_title", "value": position, "show": "false"},
+                        {"name": "work_location", "value": work_location, "show": "false"},
+                        {"name": "status_change", "value": status_change, "show": "false"},
                     ]
                 },
             )

@@ -34,7 +34,13 @@ def new_hire_card(
                     "type": "Action.Submit",
                     "title": "\u2713 Welcome Email Sent",
                     "isEnabled": False,
-                    "data": {"action": "send_onboarding_email", "employee_email": employee_email},
+                    "data": {
+                        "action": "send_onboarding_email",
+                        "employee_email": employee_email,
+                        "work_location": work_location,
+                        "job_title": job_title,
+                        "status_change": status_change,
+                    },
                 }
             )
         else:
@@ -42,7 +48,13 @@ def new_hire_card(
                 {
                     "type": "Action.Submit",
                     "title": "Send Welcome Email",
-                    "data": {"action": "send_onboarding_email", "employee_email": employee_email},
+                    "data": {
+                        "action": "send_onboarding_email",
+                        "employee_email": employee_email,
+                        "work_location": work_location,
+                        "job_title": job_title,
+                        "status_change": status_change,
+                    },
                 }
             )
 
@@ -53,7 +65,13 @@ def new_hire_card(
                     "type": "Action.Submit",
                     "title": "\u2713 Offer Letter Sent",
                     "isEnabled": False,
-                    "data": {"action": "send_docusign", "employee_email": employee_email},
+                    "data": {
+                        "action": "send_docusign",
+                        "employee_email": employee_email,
+                        "work_location": work_location,
+                        "job_title": job_title,
+                        "status_change": status_change,
+                    },
                 }
             )
         else:
@@ -61,7 +79,13 @@ def new_hire_card(
                 {
                     "type": "Action.Submit",
                     "title": "Send Offer Letter",
-                    "data": {"action": "send_docusign", "employee_email": employee_email},
+                    "data": {
+                        "action": "send_docusign",
+                        "employee_email": employee_email,
+                        "work_location": work_location,
+                        "job_title": job_title,
+                        "status_change": status_change,
+                    },
                 }
             )
 
@@ -111,6 +135,9 @@ def docusign_status_card(
     summary: str,
     roster_added: bool = False,
     job_category: str = "",
+    work_location: str = "",
+    job_title: str = "",
+    status_change: str = "",
 ) -> dict[str, Any]:
     """Card sent when a DocuSign envelope status changes."""
     status_icon = {
@@ -164,7 +191,13 @@ def docusign_status_card(
                     "type": "Action.Submit",
                     "title": "\u2713 Added To Staff Roster",
                     "isEnabled": False,
-                    "data": {"action": "add_to_staff_roster", "employee_email": employee_email},
+                    "data": {
+                        "action": "add_to_staff_roster",
+                        "employee_email": employee_email,
+                        "work_location": work_location,
+                        "job_title": job_title,
+                        "status_change": status_change,
+                    },
                 }
             )
         else:
@@ -172,7 +205,13 @@ def docusign_status_card(
                 {
                     "type": "Action.Submit",
                     "title": "Add To Staff Roster",
-                    "data": {"action": "add_to_staff_roster", "employee_email": employee_email},
+                    "data": {
+                        "action": "add_to_staff_roster",
+                        "employee_email": employee_email,
+                        "work_location": work_location,
+                        "job_title": job_title,
+                        "status_change": status_change,
+                    },
                 }
             )
 

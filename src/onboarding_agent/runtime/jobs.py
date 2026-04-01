@@ -90,7 +90,7 @@ def _uploaded_credentials_value(raw_value: Any) -> str:
         link = str(entry.get("link", "") or "").strip()
         if link:
             links.append(link)
-    return "\n".join(links)
+    return " ".join(links)
 
 
 def _new_hire_fields(payload: dict[str, Any]) -> dict[str, str]:
@@ -163,6 +163,7 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
             employee_email,
             location=fields["work_location"],
             job_title=fields["job_title"],
+            status_change=fields["status_change"],
         )
         tracker_text = ""
         if tracker_result.get("found"):
@@ -180,7 +181,12 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
                 else f"Tracker write failed: {add_result.get('error', 'unknown error')}."
             )
 
-        draft_result = await docusign_client.check_draft_exists(employee_email)
+        draft_result = await docusign_client.check_draft_exists(
+            employee_email,
+            fields["work_location"],
+            fields["job_title"],
+            fields["status_change"],
+        )
         docusign_text = ""
         if draft_result.get("exists"):
             docusign_text = f"DocuSign draft already exists ({draft_result.get('envelope_id', '')[:8]}...)."
@@ -190,6 +196,8 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
                 employee_email=employee_email,
                 start_date=fields["requested_start_date"],
                 position=fields["job_title"],
+                work_location=fields["work_location"],
+                status_change=fields["status_change"],
             )
             docusign_text = (
                 f"DocuSign draft created ({str(create_result.get('envelope_id', ''))[:8]}...)."
@@ -208,7 +216,12 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
         )
 
         summary = " ".join([tracker_text, docusign_text, email_text]).strip()
-        await reset_new_hire_card_actions(employee_email)
+        await reset_new_hire_card_actions(
+            employee_email,
+            fields["work_location"],
+            fields["job_title"],
+            fields["status_change"],
+        )
         card = new_hire_card(
             employee_name=employee_name or employee_email,
             employee_email=employee_email,
@@ -277,6 +290,7 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
             employee_email,
             location=fields["work_location"],
             job_title=fields["job_title"],
+            status_change=fields["status_change"],
         )
         if tracker_result.get("found"):
             tracker_text = "Tracker record already exists."
@@ -305,6 +319,7 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
                     value="N/A",
                     location=fields["work_location"],
                     job_title=fields["job_title"],
+                    status_change=fields["status_change"],
                 )
                 if stage_result.get("success"):
                     stage_results.append(stage_name)
@@ -315,7 +330,12 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
                     + "."
                 )
 
-        draft_result = await docusign_client.check_draft_exists(employee_email)
+        draft_result = await docusign_client.check_draft_exists(
+            employee_email,
+            fields["work_location"],
+            fields["job_title"],
+            fields["status_change"],
+        )
         docusign_text = ""
         if draft_result.get("exists"):
             docusign_text = f" DocuSign draft already exists ({draft_result.get('envelope_id', '')[:8]}...)."
@@ -325,6 +345,8 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
                 employee_email=employee_email,
                 start_date=fields["requested_start_date"],
                 position=fields["job_title"],
+                work_location=fields["work_location"],
+                status_change=fields["status_change"],
             )
             docusign_text = (
                 f" DocuSign draft created ({str(create_result.get('envelope_id', ''))[:8]}...)."
@@ -349,7 +371,12 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
             f"{tracker_text}{policy_text}{docusign_text}{email_text} This workflow is running in deterministic mode."
         )
         allow_email_action = workflow_type in {WORKFLOW_NEW_HIRE, WORKFLOW_REHIRE}
-        await reset_new_hire_card_actions(employee_email)
+        await reset_new_hire_card_actions(
+            employee_email,
+            fields["work_location"],
+            fields["job_title"],
+            fields["status_change"],
+        )
         card = new_hire_card(
             employee_name=employee_name or employee_email,
             employee_email=employee_email,
@@ -411,6 +438,9 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
     envelope_id = str(payload.get("envelope_id", "")).strip()
     status = str(payload.get("status", "")).strip().lower()
     employee_email = str(payload.get("employee_email", "")).strip().lower()
+    work_location = str(payload.get("work_location", "")).strip()
+    job_title = str(payload.get("job_title", "")).strip()
+    status_change = str(payload.get("status_change", "")).strip()
     if not envelope_id:
         raise ValueError("DocuSign payload missing envelope_id")
     if not status:
@@ -425,9 +455,21 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
     try:
         stage_result: dict[str, Any] = {"success": False, "error": "No tracker stage update required"}
         if employee_email and status == "completed":
-            stage_result = await tracker_client.update_stage(employee_email, "Offer Letter Signed")
+            stage_result = await tracker_client.update_stage(
+                employee_email,
+                "Offer Letter Signed",
+                location=work_location,
+                job_title=job_title,
+                status_change=status_change,
+            )
         elif employee_email and status == "sent":
-            stage_result = await tracker_client.update_stage(employee_email, "Sent Offer Letter")
+            stage_result = await tracker_client.update_stage(
+                employee_email,
+                "Sent Offer Letter",
+                location=work_location,
+                job_title=job_title,
+                status_change=status_change,
+            )
 
         stage_text = (
             "Tracker stage updated successfully."
@@ -438,7 +480,15 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
             f"DocuSign envelope {envelope_id[:8]}... changed to {status}. "
             f"Employee: {employee_email or 'unknown'}. {stage_text}"
         )
-        card = docusign_status_card(employee_email, envelope_id, status, summary)
+        card = docusign_status_card(
+            employee_email,
+            envelope_id,
+            status,
+            summary,
+            work_location=work_location,
+            job_title=job_title,
+            status_change=status_change,
+        )
         teams_result = await teams_messenger.send_channel_notification(
             _notification_channel(),
             summary,
@@ -452,6 +502,9 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
                 envelope_id=envelope_id,
                 status=status,
                 summary=summary,
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
             )
         if not teams_result.get("success"):
             raise RuntimeError(f"Teams notification failed: {teams_result.get('error', 'unknown error')}")
@@ -472,6 +525,9 @@ async def process_background_clearance_job(payload: dict[str, Any]) -> None:
 
     employee_email = str(payload.get("employeeEmail", "")).strip()
     employee_name = str(payload.get("employeeName", "")).strip()
+    work_location = str(payload.get("workLocation", "")).strip()
+    job_title = str(payload.get("jobTitle", "")).strip()
+    status_change = str(payload.get("statusChange", "")).strip()
     if not employee_email:
         raise ValueError("Background-clearance payload missing employeeEmail")
 
@@ -480,7 +536,13 @@ async def process_background_clearance_job(payload: dict[str, Any]) -> None:
     teams_messenger = TeamsMessenger()
 
     try:
-        stage_result = await tracker_client.update_stage(employee_email, "Background Submission")
+        stage_result = await tracker_client.update_stage(
+            employee_email,
+            "Background Submission",
+            location=work_location,
+            job_title=job_title,
+            status_change=status_change,
+        )
 
         stage_text = (
             f"Tracker updated: Background Submission on {stage_result.get('value', '')}."

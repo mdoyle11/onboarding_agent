@@ -1,263 +1,292 @@
 # Architecture Guide
 
-This document explains the current shape of the repository as it exists on the
-`feature/container-app-deployment` branch. It covers the application from top
-to bottom:
+This document describes the current repository shape on the
+`refactor/remove-langgraph` branch.
 
-- what the system does
-- how requests move through the agent
-- how state is stored
-- how Teams, Power Automate, Graph, Outlook, and DocuSign fit together
-- how the project is packaged and deployed to Azure
+The project is now a single Azure Container App with a mixed architecture:
 
-The goal is not to describe every line of code. The goal is to make the repo
-easy to reason about before you change it.
+- deterministic workflow execution for business events
+- a plain LangChain tool-calling agent for Teams queries
+- Excel as the workflow source of truth
+- Cosmos-backed app state for continuity, card state, and conversation metadata
+
+LangGraph is no longer part of the runtime.
 
 ## Purpose
 
-This project is an AI-assisted HR onboarding system built around a LangChain
-tool-calling agent runner.
+This system supports HR onboarding and employee-change workflows across:
 
-It handles three main kinds of work:
+- Microsoft Forms / Power Automate intake
+- Teams conversations and adaptive-card actions
+- Excel onboarding tracker updates
+- staff roster updates
+- DocuSign offer-letter drafting and status tracking
+- background-clearance form handling
 
-1. New-hire intake
-   Power Automate posts a form submission. The system updates the onboarding
-   tracker, prepares a DocuSign draft, prepares an onboarding email draft, and
-   posts a Teams card for HR.
+Current deterministic workflow families:
 
-2. Ongoing onboarding actions
-   HR can use Teams messages or Teams card buttons to send the welcome email,
-   send the DocuSign offer letter, check status, and complete follow-up steps.
+1. `New Hire`
+2. `Promotion`
+3. `Pay Increase`
+4. `Transfer In`
+5. `Rehire`
 
-3. Webhook-driven status updates
-   DocuSign status callbacks and background-clearance form submissions update
-   the tracker and notify HR.
+Termination is intentionally deferred for a later dedicated workflow/persona.
 
-## High-Level Shape
+## Core Principle
 
-At runtime, the application is still one deployable service, but internally it
-has four distinct layers:
+Business workflow execution is deterministic.
 
-1. HTTP entrypoints
-   `src/onboarding_agent/server.py`
+The LLM is used for:
 
-2. Workflow runtime
-   `src/onboarding_agent/runtime/`
+- interpreting Teams user requests
+- deciding which high-level tool to call
+- summarizing tool results back to HR
 
-3. Agent and tools
-   `src/onboarding_agent/agent/`
-   `src/onboarding_agent/mcp_server/`
+The LLM is not responsible for:
+
+- webhook routing
+- stage progression logic
+- offer-letter lifecycle transitions
+- tracker writes for workflow automation
+
+## High-Level Runtime Shape
+
+The app is one deployable service with four internal layers:
+
+1. HTTP and bot entrypoints
+   - `src/onboarding_agent/server.py`
+
+2. Runtime orchestration
+   - `src/onboarding_agent/runtime/`
+   - `src/onboarding_agent/domains/onboard/`
+
+3. Agent and MCP tool surface
+   - `src/onboarding_agent/agent/`
+   - `src/onboarding_agent/mcp_server/`
 
 4. External integrations
-   `src/onboarding_agent/integrations/`
-
-In Azure, this runs as a single Container App. The container receives Teams and
-webhook traffic, stores durable state in Cosmos DB, and uses Azure Queue
-Storage for durable webhook handoff.
+   - `src/onboarding_agent/integrations/`
 
 ## Request Flow
 
-### Teams
+### Teams Query Flow
 
-Teams messages hit:
+1. Teams activity hits `POST /api/messages`
+2. Teams bot logic classifies the activity:
+   - normal Teams query
+   - adaptive-card action
+   - mention/reply handling
+3. For normal queries, the app runs the LangChain agent loop
+4. The agent calls MCP tools as needed
+5. The app sends a Teams reply or updates a card
 
-- `GET /api/messages` for health probing
-- `POST /api/messages` for bot traffic
+This is the only LLM-driven path.
 
-The handler is built in `server.py` using the Microsoft 365 Agents SDK.
+### Adaptive Card Action Flow
 
-Flow:
+1. User clicks a Teams card button
+2. Button payload includes workflow identity fields
+   - `employee_email`
+   - `work_location`
+   - `job_title`
+   - `status_change`
+3. The app resolves the correct stored card state
+4. Deterministic action handling updates tracker/card state
 
-1. Teams sends an activity to `/api/messages`
-2. The Agents SDK adapter hands the activity to
-   `integrations/teams_bot.py`
-3. The bot stores or refreshes the Teams conversation reference
-4. The bot decides whether the message is:
-   - a normal user query
-   - a card action
-   - a channel mention
-5. The bot invokes the agent runner, or for card actions schedules the
-   action in the background
-6. The bot updates the relevant Teams card or sends a reply
+### Webhook Flow
 
-### Webhooks
-
-Webhook endpoints are:
+Endpoints:
 
 - `POST /webhook/new-hire`
 - `POST /webhook/docusign`
 - `POST /webhook/background-clearance`
 
-These handlers live in:
-
-- `src/onboarding_agent/runtime/webhooks.py`
-
 Flow:
 
-1. Validate request format and shared secret
-2. Parse the incoming payload
-3. Enqueue a durable job
-4. Return a small `200 OK` JSON response immediately
+1. Validate shared secret or parse payload
+2. Normalize payload
+3. Enqueue durable job
+4. Return immediately
+5. Background worker executes deterministic handler
 
-The HTTP layer does not run the full workflow inline. That was an intentional
-change to avoid fire-and-forget `asyncio.create_task()` request handling in
-production.
+Webhook handlers do not invoke the LLM.
 
-## Application Entrypoint
+## Workflow Runtime
 
-The main application entrypoint is:
-
-- `src/onboarding_agent/server.py`
-
-It is responsible for:
-
-- building the aiohttp app
-- wiring the Teams Agents SDK adapter
-- creating the runtime state store
-- initializing the agent runner
-- starting the job queue worker
-- registering webhook routes
-
-Startup sequence:
-
-1. Initialize state store
-2. Initialize the agent runner
-3. Initialize job queue
-4. Start accepting traffic
-
-Shutdown sequence:
-
-1. Stop the queue worker
-
-## Runtime Layer
-
-The `runtime/` package exists to hold operational plumbing that should not be
-mixed into the HTTP entrypoint or the agent definition.
-
-Files:
+The runtime layer owns durable orchestration concerns:
 
 - `runtime/webhooks.py`
-  Webhook parsing, auth checks, and queue handoff
+  - webhook auth, parsing, queue handoff
 
 - `runtime/job_queue.py`
-  Queue abstraction with:
-  - `LocalJobQueue` for local development
-  - `AzureStorageJobQueue` for Azure
+  - local and Azure queue implementations
 
 - `runtime/jobs.py`
-  Concrete queued job handlers for:
-  - new hire
-  - DocuSign
-  - background clearance
+  - deterministic workflow executors
+  - new-hire submission routing
+  - DocuSign event handling
+  - background-clearance handling
 
-- `runtime/state_store.py`
-  State store abstraction with file-backed and Cosmos-backed variants
+- `domains/onboard/policies.py`
+  - centralized workflow stage exclusion policies
 
-- `runtime/state_store_cosmos.py`
-  Cosmos implementation for state records
+Current stage policies are applied by workflow type, for example:
 
-This package is where deployment-oriented concerns live: durability, queueing,
-and runtime state.
+- `Promotion` marks several onboarding-only stages `N/A`
+- `Pay Increase` omits more onboarding-specific stages
+- `Rehire` still receives offer-letter handling and welcome-email drafting
+
+## State Ownership
+
+There are three kinds of state:
+
+1. Excel tracker state
+   - business workflow truth
+   - stage progression
+   - employee submission records
+
+2. Cosmos/file-backed app state
+   - Teams conversation refs
+   - adaptive card state
+   - short-lived Teams chat/session memory
+
+3. External system state
+   - DocuSign envelopes
+   - Outlook email delivery
+
+The app deliberately avoids duplicating workflow state in an internal graph.
+
+## Identity Model
+
+The repository now uses a composite business identity where available:
+
+- `email + work_location + job_title + status_change`
+
+This identity is used across:
+
+- tracker lookups
+- tracker stage updates
+- adaptive card state keys
+- adaptive card action payloads
+- DocuSign custom fields and webhook resolution
+
+Email-only lookup is still allowed for interactive Teams queries, but it is a
+fallback path. If multiple rows share the email, the system returns
+disambiguation options instead of guessing.
 
 ## Agent Layer
 
-The agent lives in:
+The agent lives in `src/onboarding_agent/agent/runner.py`.
 
-- `src/onboarding_agent/agent/runner.py`
-- `src/onboarding_agent/agent/chat_history.py`
+It is a plain async tool loop:
 
-### Runner
+1. build prompt and compact session context
+2. invoke model
+3. execute tool calls
+4. feed tool results back
+5. stop when no more tool calls remain
 
-The runtime is a plain async agent loop:
+The system prompt is intentionally narrow:
 
-1. Ask the model what to do
-2. Execute tool calls
-3. Feed tool results back to the model
-4. Continue until no more tool calls remain
+- use tools for tracker, roster, email, Teams, and DocuSign data
+- ask short clarification questions when identity or required inputs are missing
+- do not orchestrate webhook workflows
 
-The runner also:
+Session context now persists compact business identifiers such as:
 
-- prepends the system prompt
-- trims Teams message history before invocation
-- retries model failures up to a bounded limit
-- caps tool-loop iterations for safety
+- `employee_email`
+- `employee_name`
+- `work_location`
+- `job_title`
+- `status_change`
+- `intent`
 
-### Chat History
+## MCP Tool Surface
 
-`agent/chat_history.py` persists short-lived Teams conversation history through
-the existing state-store abstraction.
+The FastMCP server is launched as a subprocess over stdio.
 
-That history is:
+Tool groups:
 
-- keyed by rotating Teams session keys
-- stored separately from durable business state
-- stripped of system messages before persistence
-- used for conversational continuity, not workflow state
+- `tools_tracker.py`
+  - tracker lookup, stage updates, listing/filtering
 
-### System Prompt
-
-The main system prompt is in `agent/runner.py`.
-
-It defines:
-
-- which onboarding stages exist
-- how webhook-triggered runs should behave
-- how Teams query runs should behave
-- how to use the tracker, DocuSign, and email tools
-
-The agent remains useful because it handles judgment-heavy flows well, but the
-project now uses deterministic orchestration for some reliability-critical
-pieces such as durable webhook ingestion.
-
-## MCP Tool Server
-
-The tool layer lives in:
-
-- `src/onboarding_agent/mcp_server/server.py`
-- `src/onboarding_agent/mcp_server/tools_*.py`
-
-The FastMCP server is launched as a subprocess over stdio by the agent
-runner.
-
-This means the current architecture is:
-
-- main aiohttp app process
-- spawned FastMCP subprocess
-- stdio transport between them
-
-The MCP server registers four tool groups:
-
-- `tools_graph.py`
-  Excel tracker operations, Teams notifications, staff roster updates
+- `tools_staff_roster.py`
+  - roster capacity and deterministic roster updates
 
 - `tools_docusign.py`
-  Draft/send/check DocuSign envelopes
+  - draft lookup, envelope creation, sending, status retrieval
 
 - `tools_email.py`
-  Draft/send onboarding email and background-clearance confirmation email
+  - welcome-email drafting/sending
+  - background-clearance confirmation email
 
 - `tools_onboarding.py`
-  Composite status lookup across tracker and DocuSign
+  - composite onboarding status across tracker and DocuSign
 
-The MCP subprocess initializes the same runtime state store as the parent app,
-because some tools need shared persisted state such as Teams card state.
+- `tools_teams.py`
+  - Teams notification/card helpers
 
-## External Integrations
+The agent should prefer these higher-level tools instead of reasoning about raw
+Excel or DocuSign primitives itself.
 
-The `integrations/` package contains the actual clients and Teams-specific UX
-logic.
+## Integration Layer
 
-### Microsoft Graph
+Key integration modules:
 
-- `integrations/graph_client.py`
+- `integrations/graph_workbook.py`
+  - shared Excel/Graph workbook utilities
 
-This is the Excel tracker client and also the Teams notification helper.
+- `integrations/tracker_client.py`
+  - tracker record identity, writes, stage updates, listing
 
-It handles:
+- `integrations/staff_roster_client.py`
+  - staff-roster capacity and add flows
 
-- onboarding tracker row lookup
-- onboarding tracker row creation
-- stage updates
+- `integrations/docusign_client.py`
+  - draft creation, envelope sending, composite-aware envelope lookup
+
+- `integrations/outlook_email_client.py`
+  - email send operations
+
+- `integrations/teams/`
+  - Teams runtime, proactive messaging, card actions, replies
+
+## Deployment Shape
+
+In Azure, the app currently runs as one Container App that hosts:
+
+- aiohttp server
+- Teams bot endpoint
+- webhook endpoints
+- queue worker
+- MCP subprocess
+
+Durable dependencies:
+
+- Azure Queue Storage
+- Cosmos DB
+- Azure Container Registry
+- Log Analytics
+
+This monolith deployment is intentional for now. Internal domain boundaries are
+being cleaned up first; service extraction can happen later if roster/Excel
+scope justifies it.
+
+## Current Tradeoffs
+
+1. One container means shared scaling for web, queue, and MCP subprocess work
+2. Excel remains the workflow source of truth, so Graph latency is significant
+3. Some interactive DocuSign/status questions still depend on envelope
+   discovery quality, so composite-aware envelope matching remains an important
+   area of improvement
+
+## Near-Term Direction
+
+1. Continue hardening composite-aware DocuSign and status tooling
+2. Keep business workflows deterministic
+3. Build out roster domain abstractions as staff-roster CRUD expands
+4. Revisit infra split later using `infra/FUTURE_INFRA.md`
 - listing employees
 - staff roster capacity checks
 - staff roster writes

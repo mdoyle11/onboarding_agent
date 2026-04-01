@@ -40,11 +40,20 @@ async def _reconcile_completed_docusign(
     employee_name: str,
     envelope_id: str,
     stages: dict[str, str],
+    location: str = "",
+    job_title: str = "",
+    status_change: str = "",
 ) -> dict[str, str]:
     if stages.get("Offer Letter Signed"):
         return stages
 
-    result = await tracker.update_stage(employee_email, "Offer Letter Signed")
+    result = await tracker.update_stage(
+        employee_email,
+        "Offer Letter Signed",
+        location=location,
+        job_title=job_title,
+        status_change=status_change,
+    )
     if not result.get("success"):
         logger.warning(
             "Failed to reconcile Offer Letter Signed for %s: %s",
@@ -60,7 +69,7 @@ async def _reconcile_completed_docusign(
     if not channel_id:
         return updated_stages
 
-    existing_card = await get_docusign_status_card(employee_email)
+    existing_card = await get_docusign_status_card(employee_email, location, job_title, status_change)
     if existing_card and str(existing_card.get("status", "")).lower() == "completed":
         return updated_stages
 
@@ -71,7 +80,15 @@ async def _reconcile_completed_docusign(
     )
     from onboarding_agent.integrations.adaptive_cards import docusign_status_card
 
-    card = docusign_status_card(employee_email, envelope_id, "completed", summary)
+    card = docusign_status_card(
+        employee_email,
+        envelope_id,
+        "completed",
+        summary,
+        work_location=location,
+        job_title=job_title,
+        status_change=status_change,
+    )
     teams_result = await TeamsMessenger().send_channel_notification(channel_id, summary, card=card)
     if teams_result.get("success") and teams_result.get("message_id"):
         await save_docusign_status_card(
@@ -81,6 +98,9 @@ async def _reconcile_completed_docusign(
             envelope_id=envelope_id,
             status="completed",
             summary=summary,
+            work_location=location,
+            job_title=job_title,
+            status_change=status_change,
         )
     else:
         logger.warning(
@@ -117,7 +137,12 @@ def register(mcp: FastMCP) -> None:
     """Register all composite onboarding tools on the given FastMCP instance."""
 
     @mcp.tool()
-    async def get_onboarding_status(employee_email: str) -> dict[str, Any]:
+    async def get_onboarding_status(
+        employee_email: str,
+        location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
         """
         Get a comprehensive onboarding status for an employee, combining pipeline
         stage tracking and DocuSign envelope status.
@@ -140,7 +165,12 @@ def register(mcp: FastMCP) -> None:
         - summary (str) — full human-readable status with per-stage breakdown
         """
         tracker = _tracker()
-        record = await tracker.get_employee_stages(employee_email)
+        record = await tracker.get_employee_stages(
+            employee_email,
+            location=location,
+            job_title=job_title,
+            status_change=status_change,
+        )
 
         if not record.get("found"):
             matches = record.get("matches", [])
@@ -190,7 +220,7 @@ def register(mcp: FastMCP) -> None:
         envelope_id = ""
         docusign_status = ""
 
-        ds_draft = await ds_client.check_draft_exists(employee_email)
+        ds_draft = await ds_client.check_draft_exists(employee_email, location, job_title, status_change)
         if ds_draft.get("exists"):
             envelope_id = str(ds_draft.get("envelope_id", "") or "")
             if envelope_id:
@@ -198,7 +228,12 @@ def register(mcp: FastMCP) -> None:
                 docusign_status = str(ds_result.get("status", "") or "")
 
         if not envelope_id:
-            ds_latest = await ds_client.find_latest_envelope_for_employee(employee_email)
+            ds_latest = await ds_client.find_latest_envelope_for_employee(
+                employee_email,
+                location,
+                job_title,
+                status_change,
+            )
             if ds_latest.get("found"):
                 envelope_id = str(ds_latest.get("envelope_id", "") or "")
                 docusign_status = str(ds_latest.get("status", "") or docusign_status)
@@ -207,7 +242,7 @@ def register(mcp: FastMCP) -> None:
                     docusign_status = str(ds_result.get("status", "") or docusign_status)
 
         if not envelope_id:
-            stored_card = await get_docusign_status_card(employee_email)
+            stored_card = await get_docusign_status_card(employee_email, location, job_title, status_change)
             if stored_card:
                 envelope_id = str(stored_card.get("envelope_id", "") or "")
                 docusign_status = str(stored_card.get("status", "") or "")
@@ -219,6 +254,9 @@ def register(mcp: FastMCP) -> None:
                 employee_name=name,
                 envelope_id=envelope_id,
                 stages=stages,
+                location=location,
+                job_title=job_title,
+                status_change=status_change,
             )
             formatted_stages = {stage: _format_stage_date(value) for stage, value in stages.items()}
 

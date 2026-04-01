@@ -37,7 +37,7 @@ def register(mcp: FastMCP) -> None:
             save_new_hire_card,
         )
 
-        await reset_new_hire_card_actions(employee_email)
+        await reset_new_hire_card_actions(employee_email, work_location, job_title, status_change)
         card = new_hire_card(
             employee_name,
             employee_email,
@@ -77,11 +77,22 @@ def register(mcp: FastMCP) -> None:
         envelope_id: str,
         status: str,
         summary: str,
+        work_location: str = "",
+        job_title: str = "",
+        status_change: str = "",
     ) -> dict[str, object]:
         from onboarding_agent.integrations.adaptive_cards import docusign_status_card
         from onboarding_agent.integrations.card_state import save_docusign_status_card
 
-        card = docusign_status_card(employee_email, envelope_id, status, summary)
+        card = docusign_status_card(
+            employee_email,
+            envelope_id,
+            status,
+            summary,
+            work_location=work_location,
+            job_title=job_title,
+            status_change=status_change,
+        )
         result = await _messenger().send_channel_notification(channel_id, summary, card=card)
         if result.get("success") and result.get("message_id") and status.lower() == "completed":
             await save_docusign_status_card(
@@ -91,6 +102,9 @@ def register(mcp: FastMCP) -> None:
                 envelope_id=envelope_id,
                 status=status,
                 summary=summary,
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
             )
         return result
 

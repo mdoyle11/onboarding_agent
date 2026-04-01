@@ -67,6 +67,9 @@ def _format_session_context(session_context: dict[str, Any] | None) -> SystemMes
     fields = [
         ("employee_email", session_context.get("employee_email", "")),
         ("employee_name", session_context.get("employee_name", "")),
+        ("work_location", session_context.get("work_location", "")),
+        ("job_title", session_context.get("job_title", "")),
+        ("status_change", session_context.get("status_change", "")),
         ("intent", session_context.get("intent", "")),
         ("pending_confirmation", session_context.get("pending_confirmation", "")),
         ("envelope_id", session_context.get("envelope_id", "")),
@@ -140,6 +143,15 @@ def derive_session_context(
             ).strip()
             if employee_email:
                 context["employee_email"] = employee_email
+            work_location = str(payload.get("work_location") or payload.get("location") or "").strip()
+            if work_location:
+                context["work_location"] = work_location
+            job_title = str(payload.get("job_title") or payload.get("position") or "").strip()
+            if job_title:
+                context["job_title"] = job_title
+            status_change = str(payload.get("status_change") or "").strip()
+            if status_change:
+                context["status_change"] = status_change
 
         if tool_name in {"get_employee_stages", "get_onboarding_status"}:
             employee_name = str(payload.get("name", "")).strip()

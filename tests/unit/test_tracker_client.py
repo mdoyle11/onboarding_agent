@@ -188,6 +188,7 @@ async def test_find_employee_in_tracker_requires_disambiguation_for_duplicate_em
             "Staff Email": "alex@example.com",
             "Work Location": "Bronx",
             "Job Title": "Teacher",
+            "Added to Tracker": "2026-04-01",
         }
     )
     row2 = _build_row(
@@ -196,6 +197,7 @@ async def test_find_employee_in_tracker_requires_disambiguation_for_duplicate_em
             "Staff Email": "alex@example.com",
             "Work Location": "Queens",
             "Job Title": "Teacher",
+            "Added to Tracker": "2026-04-02",
         }
     )
 
@@ -223,5 +225,7 @@ async def test_find_employee_in_tracker_requires_disambiguation_for_duplicate_em
     assert ambiguous["multiple_matches"] is True
     assert len(ambiguous["matches"]) == 2
     assert "added_to_tracker" in ambiguous["matches"][0]
+    assert ambiguous["matches"][0]["added_to_tracker"] == "04/01/2026"
+    assert ambiguous["matches"][1]["added_to_tracker"] == "04/02/2026"
     assert disambiguated["found"] is True
     assert disambiguated["location"] == "Queens"

@@ -98,10 +98,36 @@ class StaffRosterClient(WorkbookGraphClient):
                 "error": str(exc),
             }
 
-    async def add_employee_to_staff_roster(self, employee_email: str, job_category: str) -> dict[str, Any]:
+    async def add_employee_to_staff_roster(
+        self,
+        employee_email: str,
+        job_category: str,
+        *,
+        location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
         try:
-            employee = await TrackerClient().find_employee_in_tracker(employee_email)
+            employee = await TrackerClient().find_employee_in_tracker(
+                employee_email,
+                location=location,
+                job_title=job_title,
+                status_change=status_change,
+            )
             if not employee.get("found"):
+                matches = employee.get("matches", [])
+                if employee.get("multiple_matches") and isinstance(matches, list) and matches:
+                    return {
+                        "success": False,
+                        "employee_email": employee_email,
+                        "job_category": job_category,
+                        "multiple_matches": True,
+                        "matches": matches,
+                        "error": (
+                            f"Multiple onboarding tracker rows matched {employee_email}. "
+                            "Pass location, job_title, and status_change to disambiguate."
+                        ),
+                    }
                 return {
                     "success": False,
                     "employee_email": employee_email,

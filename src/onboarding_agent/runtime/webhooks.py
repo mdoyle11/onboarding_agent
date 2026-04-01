@@ -33,7 +33,7 @@ def parse_json_payload(body: bytes) -> dict[str, Any]:
 
 
 def parse_docusign_payload(body: bytes, content_type: str) -> dict[str, str]:
-    """Extract envelope_id, status, and employee_email from DocuSign payloads."""
+    """Extract envelope_id, status, and identity custom fields from DocuSign payloads."""
     if "xml" in content_type or body.lstrip().startswith(b"<"):
         return _parse_docusign_xml(body)
     return _parse_docusign_json(parse_json_payload(body))
@@ -52,6 +52,9 @@ def _parse_docusign_xml(body: bytes) -> dict[str, str]:
     envelope_id = ""
     status = ""
     employee_email = ""
+    work_location = ""
+    job_title = ""
+    status_change = ""
 
     if env_status_el is not None:
         eid = env_status_el.find("ds:EnvelopeID", ns)
@@ -72,25 +75,58 @@ def _parse_docusign_xml(body: bytes) -> dict[str, str]:
             val_el = field.find("ds:Value", ns)
             if val_el is None:
                 val_el = field.find("Value")
-            if name_el is not None and (name_el.text or "") == "employee_email":
-                employee_email = (val_el.text or "") if val_el is not None else ""
-                break
+            if name_el is None:
+                continue
+            field_name = name_el.text or ""
+            field_value = (val_el.text or "") if val_el is not None else ""
+            if field_name == "employee_email":
+                employee_email = field_value
+            elif field_name == "work_location":
+                work_location = field_value
+            elif field_name == "job_title":
+                job_title = field_value
+            elif field_name == "status_change":
+                status_change = field_value
 
-    return {"envelope_id": envelope_id, "status": status, "employee_email": employee_email}
+    return {
+        "envelope_id": envelope_id,
+        "status": status,
+        "employee_email": employee_email,
+        "work_location": work_location,
+        "job_title": job_title,
+        "status_change": status_change,
+    }
 
 
 def _parse_docusign_json(payload: dict[str, Any]) -> dict[str, str]:
     envelope_id = str(payload.get("envelopeId", ""))
     status = str(payload.get("status", ""))
     employee_email = ""
+    work_location = ""
+    job_title = ""
+    status_change = ""
 
     custom_fields = payload.get("customFields", {})
     for field in custom_fields.get("textCustomFields", []):
-        if field.get("name") == "employee_email":
-            employee_email = str(field.get("value", ""))
-            break
+        field_name = str(field.get("name", ""))
+        field_value = str(field.get("value", ""))
+        if field_name == "employee_email":
+            employee_email = field_value
+        elif field_name == "work_location":
+            work_location = field_value
+        elif field_name == "job_title":
+            job_title = field_value
+        elif field_name == "status_change":
+            status_change = field_value
 
-    return {"envelope_id": envelope_id, "status": status, "employee_email": employee_email}
+    return {
+        "envelope_id": envelope_id,
+        "status": status,
+        "employee_email": employee_email,
+        "work_location": work_location,
+        "job_title": job_title,
+        "status_change": status_change,
+    }
 
 
 def _job_queue(request: web.Request) -> JobQueue:
@@ -138,6 +174,9 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
     envelope_id = parsed["envelope_id"]
     envelope_status = parsed["status"]
     employee_email = parsed["employee_email"]
+    work_location = parsed.get("work_location", "")
+    job_title = parsed.get("job_title", "")
+    status_change = parsed.get("status_change", "")
 
     logger.info(
         "DocuSign webhook: envelope=%s status=%s email=%s",
@@ -156,6 +195,9 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
                 "envelope_id": envelope_id,
                 "status": envelope_status,
                 "employee_email": employee_email,
+                "work_location": work_location,
+                "job_title": job_title,
+                "status_change": status_change,
             },
         )
         return _accepted_response()
@@ -184,10 +226,20 @@ async def handle_background_clearance_webhook(request: web.Request) -> web.Respo
         return web.Response(status=400, text="Invalid JSON")
 
     employee_email = str(payload.get("employeeEmail", ""))
+    work_location = str(payload.get("workLocation", ""))
+    job_title = str(payload.get("jobTitle", ""))
     logger.info("Background clearance webhook received: %s", employee_email or "unknown")
 
     try:
-        await _job_queue(request).enqueue(JOB_BACKGROUND_CLEARANCE, payload)
+        await _job_queue(request).enqueue(
+            JOB_BACKGROUND_CLEARANCE,
+            {
+                **payload,
+                "employeeEmail": employee_email,
+                "workLocation": work_location,
+                "jobTitle": job_title,
+            },
+        )
         return _accepted_response()
     except Exception as exc:
         logger.exception("Background clearance webhook queue enqueue failed")

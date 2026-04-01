@@ -4,7 +4,12 @@ from onboarding_agent.runtime.webhooks import parse_docusign_payload
 
 
 def test_parse_docusign_json_payload_extracts_custom_field() -> None:
-    body = b'{"envelopeId":"env-123","status":"completed","customFields":{"textCustomFields":[{"name":"employee_email","value":"alice@example.com"}]}}'
+    body = (
+        b'{"envelopeId":"env-123","status":"completed","customFields":{"textCustomFields":['
+        b'{"name":"employee_email","value":"alice@example.com"},'
+        b'{"name":"work_location","value":"Bronx"},'
+        b'{"name":"job_title","value":"Teacher"}]}}'
+    )
 
     parsed = parse_docusign_payload(body, "application/json")
 
@@ -12,6 +17,9 @@ def test_parse_docusign_json_payload_extracts_custom_field() -> None:
         "envelope_id": "env-123",
         "status": "completed",
         "employee_email": "alice@example.com",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "",
     }
 
 
@@ -26,6 +34,14 @@ def test_parse_docusign_xml_payload_extracts_custom_field() -> None:
         <Name>employee_email</Name>
         <Value>bob@example.com</Value>
       </CustomField>
+      <CustomField>
+        <Name>work_location</Name>
+        <Value>Queens</Value>
+      </CustomField>
+      <CustomField>
+        <Name>job_title</Name>
+        <Value>Assistant Principal</Value>
+      </CustomField>
     </CustomFields>
   </EnvelopeStatus>
 </DocuSignEnvelopeInformation>
@@ -37,4 +53,7 @@ def test_parse_docusign_xml_payload_extracts_custom_field() -> None:
         "envelope_id": "env-456",
         "status": "sent",
         "employee_email": "bob@example.com",
+        "work_location": "Queens",
+        "job_title": "Assistant Principal",
+        "status_change": "",
     }

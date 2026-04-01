@@ -1,162 +1,146 @@
 LangGraph Removal Migration Summary
 ==================================
 Branch: refactor/remove-langgraph
-Date: 2026-03-31
+Date: 2026-04-01
 
 FINAL STATE
 -----------
 
-LangGraph has been removed from the application runtime. The repo now runs a
-plain LangChain-style agent loop with explicit external state, queue-backed
-webhook handling, and bounded Teams conversation memory.
+LangGraph has been fully removed from the runtime and architecture. The system
+now uses:
 
-The migration is complete from an application, documentation, and Terraform
-cleanup standpoint. Validation is green.
+- a plain LangChain tool-calling loop for Teams queries
+- deterministic queued workflow executors for webhook-driven business actions
+- Excel as the workflow source of truth
+- Cosmos for app state, Teams/session continuity, and adaptive card state
+
+This is no longer a graph-based orchestration system. It is a deterministic
+workflow app with an LLM-assisted Teams query surface.
 
 
 WHAT WAS COMPLETED
 ------------------
 
-1. Replaced LangGraph runtime with `agent/runner.py`
-   - Plain async agent loop: invoke model -> execute tools -> repeat -> stop
-   - Explicit retry handling and loop bounds
-   - MCP initialization moved into the runner
-   - No graph topology, checkpoints, or graph-owned state remain
+1. Removed LangGraph runtime and checkpointing
+   - deleted graph/state/checkpointing code
+   - removed LangGraph dependencies and related config
+   - removed checkpoint-era Terraform variables and resources
 
-2. Removed LangGraph application code
-   - Deleted:
-     - `src/onboarding_agent/agent/graph.py`
-     - `src/onboarding_agent/agent/nodes.py`
-     - `src/onboarding_agent/agent/state.py`
-     - `src/onboarding_agent/runtime/checkpointing.py`
+2. Replaced graph orchestration with a plain runner
+   - `src/onboarding_agent/agent/runner.py` now owns:
+     - prompt construction
+     - tool loop execution
+     - bounded retry/tool-loop behavior
+     - compact session-context continuity
 
-3. Removed LangGraph dependencies and config
-   - Removed LangGraph packages from `pyproject.toml`
-   - Removed graph/checkpoint config from runtime config
-   - Updated package metadata and imports
+3. Moved webhook flows to deterministic execution
+   - new hire, promotion, pay increase, transfer in, rehire, DocuSign, and
+     background-clearance paths now execute in code, not by LLM orchestration
+   - workflow stage policies were centralized under:
+     - `src/onboarding_agent/domains/onboard/policies.py`
 
-4. Reworked Teams runtime around plain session memory
-   - Replaced graph-thread concepts with session-keyed chat history
-   - Consolidated Teams memory/session handling under `integrations/teams/`
-   - Split Teams code into clearer modules:
-     - `bot.py`
-     - `memory.py`
-     - `runtime.py`
-     - `proactive.py`
-     - `messenger.py`
-     - `mentions.py`
-     - `reply.py`
-     - `card_actions.py`
-
-5. Simplified and reorganized integrations
-   - Extracted Forms into `forms_client.py`
-   - Split workbook logic into:
+4. Simplified workbook/integration structure
+   - workbook access split into focused clients:
      - `graph_workbook.py`
      - `tracker_client.py`
      - `staff_roster_client.py`
-   - Removed the compatibility `graph_client.py` facade after callers were migrated
-   - Removed dead `models/` package and unused employee model
+   - Teams logic grouped under `integrations/teams/`
+   - legacy compatibility layers and dead models removed
 
-6. Split MCP tools by domain
-   - Replaced the old catch-all `tools_graph.py` with:
-     - `tools_tracker.py`
-     - `tools_staff_roster.py`
-     - `tools_teams.py`
-   - Kept `tools_onboarding.py`, `tools_docusign.py`, and `tools_email.py`
-     focused on their own domains
+5. Split MCP tools by domain
+   - tracker, roster, Teams, onboarding, email, and DocuSign tools now have
+     clear boundaries
+   - webhook executors call runtime/integration code directly
+   - LLM-facing tools remain for interactive Teams use
 
-7. Cleaned up infra and docs for the LangChain architecture
-   - Removed checkpoint-era Terraform variables/resources/outputs
-   - Updated README, runbook, architecture docs, and proposal status
-   - Current Terraform provisions:
-     - app state container
-     - conversation session container
-     - queue-backed webhook job processing
-     - Container App runtime only
+6. Standardized workflow identity around composite keys
+   - tracker lookups now support:
+     - `email + work_location + job_title + status_change`
+   - adaptive card state, roster actions, background-clearance updates, and
+     DocuSign metadata now propagate the same identity fields
 
-8. Removed legacy Cosmos compatibility code
-   - `state_store_cosmos.py` now reads only canonical `payload` documents
-   - Old `value` / `legacy_value` document handling was removed
+7. Improved DocuSign resiliency
+   - outgoing envelopes include hidden custom fields for workflow identity
+   - webhook parsing carries those fields back into deterministic updates
+   - onboarding status reconciliation still exists as a fallback for missed
+     completion callbacks
 
-9. Added a DocuSign reconciliation fallback
-   - Real DocuSign completion callbacks proved unreliable in testing
-   - Synthetic `/webhook/docusign` posts worked, confirming app-side handling was correct
-   - Added reconciliation on onboarding status lookup:
-     - find the latest envelope for the employee
-     - if DocuSign is `completed` and tracker is missing `Offer Letter Signed`
-     - update the tracker and emit the completion card once
-   - This makes missed DocuSign callbacks non-blocking
+8. Reduced legacy/stale code and payload compatibility branches
+   - old prompt-builder webhook paths removed
+   - stale payload alias handling pruned after Power Automate contract updates
+   - repo structure reduced to the current monolith Container App model
 
-10. Added/update tests for the new architecture
-    - Deleted LangGraph-specific tests
-    - Added runner, Teams memory, and reconciliation coverage
-    - Updated job, MCP, and staff-roster tests for the new structure
+
+CURRENT ARCHITECTURAL POSITION
+------------------------------
+
+The app is intentionally one deployable Container App, but with clear internal
+separation:
+
+- deterministic workflow runtime
+- tool-calling Teams agent
+- typed integration clients
+- persisted app/card/session state
+
+That gives the repo a clean path to future extraction of roster or Excel-heavy
+domains into a separate internal service if needed, without reintroducing
+LangGraph.
 
 
 VALIDATION
 ----------
 
-Validated successfully after the migration and follow-up refactors:
+Validated after the LangGraph removal and follow-up deterministic refactors:
 
-- `uv run pytest tests/unit -q`
+- `uv run ruff check src tests`
 - `uv run mypy src`
-- `uv run ruff check src/ tests/`
+- `uv run pytest tests/unit -q`
 
-Current result at closeout:
+Current result:
 
 - unit tests passing
 - mypy clean
 - ruff clean
 
-Remaining warning:
+Known warning:
 
-- upstream `langchain_core` / Pydantic v1 compatibility warning on Python 3.14
-  - this is dependency-side, not application-side
+- upstream `langchain_core` / Pydantic v1 warning on Python 3.14
+  - dependency-side only
 
 
-BEHAVIORAL NOTES
-----------------
+IMPORTANT BEHAVIORAL NOTES
+--------------------------
 
-1. Workflow state ownership is now explicit
-   - Excel tracker remains the business workflow source of truth
-   - Cosmos holds app state and ephemeral Teams memory
-   - the agent runtime is short-lived and stateless between invocations aside
-     from saved chat history
+1. Workflow ownership
+   - Excel tracker owns workflow/business progression
+   - Cosmos owns app/card/session continuity
+   - the LLM does not own workflow state
 
-2. Teams memory is bounded operationally
-   - inference context is trimmed in the runner
-   - conversation session state is ephemeral and TTL-backed
+2. Agent responsibility
+   - Teams queries: interpret, call tools, summarize
+   - webhook business workflows: deterministic only
 
-3. DocuSign completion is now resilient
-   - webhook remains the fast path
-   - status reconciliation is the safety net for missed completion callbacks
+3. Card and tracker identity
+   - email-only identity is no longer sufficient
+   - status-sensitive flows now rely on composite identity propagation
 
 
 FUTURE CONSIDERATIONS
 ---------------------
 
-1. Infrastructure split
-   - Future direction is documented in `infra/FUTURE_INFRA.md`
-   - Long-term target:
-     - `infra/terraform/foundation/`
-     - `infra/terraform/app/`
-   - Foundation should eventually provision long-lived Azure resources from the
-     ground up
-   - App layer should own the frequently replaced deployable resources
+1. DocuSign and status tooling
+   - continue moving offer-letter/status queries toward composite-aware
+     envelope resolution first, then envelope-status inspection
 
-2. Azure Bot provisioning
-   - Future Terraform implementation should likely use `azapi` for Azure Bot
-     resources
-   - Plan around single-tenant or managed-identity-style bot configuration
-   - Do not assume Entra app registration can be fully Terraform-managed if IT
-     controls Graph permission approval
+2. Roster domain modularization
+   - roster CRUD is the likely next area for a dedicated domain/service
+     boundary if Excel functionality expands materially
 
-3. DocuSign webhook reliability
-   - Account-level Connect / webhook delivery is still worth improving
-   - Even if DocuSign delivery becomes reliable, keep the reconciliation path as
-     a defensive safety net
+3. Infrastructure split
+   - long-term direction remains documented in `infra/FUTURE_INFRA.md`
+   - foundation/app Terraform separation is still the preferred future model
 
-4. Excel scaling work
-   - Tracker access still reads worksheet `usedRange` and scans in Python
-   - If tracker size grows materially, refactor toward more selective lookups
-     and smaller tool responses
+4. Excel scaling
+   - tracker now benefits from table-based access and identity-aware lookups,
+     but large tracker growth still warrants further narrowing of reads and tool
+     outputs

@@ -196,16 +196,8 @@ def register(mcp: FastMCP) -> None:
         )
 
         if result.get("success"):
-            from onboarding_agent.integrations.card_state import (
-                mark_new_hire_action_complete,
-                refresh_new_hire_card,
-            )
-
             del drafts[key]
             _save_drafts(drafts)
-            card = await mark_new_hire_action_complete(employee_email, "send_onboarding_email")
-            if card is not None:
-                await refresh_new_hire_card(employee_email)
             logger.info("Onboarding email sent to %s", employee_email)
             return {
                 "success": True,

@@ -75,6 +75,7 @@ def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
         "location": location,
         "start_date": start_date,
         "job_title": str(result.get("job_title", "") or ""),
+        "status_change": str(result.get("status_change", "") or ""),
         "position": str(result.get("position", "") or result.get("job_title", "") or ""),
         "identity_key": str(result.get("identity_key", "") or ""),
         "manager_email": str(result.get("manager_email", "") or ""),
@@ -187,11 +188,13 @@ def register(mcp: FastMCP) -> None:
         employee_email: str,
         location: str = "",
         job_title: str = "",
+        status_change: str = "",
     ) -> dict[str, Any]:
         result = await _tracker().find_employee_in_tracker(
             employee_email,
             location=location,
             job_title=job_title,
+            status_change=status_change,
         )
         return _compact_employee_lookup(result)
 
@@ -232,19 +235,33 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
-    async def update_tracker_stage(employee_email: str, stage_name: str) -> dict[str, Any]:
-        return await _tracker().update_stage(employee_email, stage_name)
+    async def update_tracker_stage(
+        employee_email: str,
+        stage_name: str,
+        location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
+        return await _tracker().update_stage(
+            employee_email,
+            stage_name,
+            location=location,
+            job_title=job_title,
+            status_change=status_change,
+        )
 
     @mcp.tool()
     async def get_employee_stages(
         employee_email: str,
         location: str = "",
         job_title: str = "",
+        status_change: str = "",
     ) -> dict[str, Any]:
         result = await _tracker().find_employee_in_tracker(
             employee_email,
             location=location,
             job_title=job_title,
+            status_change=status_change,
         )
 
         if not result.get("found"):
