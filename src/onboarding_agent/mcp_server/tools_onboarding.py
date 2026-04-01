@@ -143,6 +143,32 @@ def register(mcp: FastMCP) -> None:
         record = await tracker.get_employee_stages(employee_email)
 
         if not record.get("found"):
+            matches = record.get("matches", [])
+            if record.get("multiple_matches") and isinstance(matches, list) and matches:
+                lines = []
+                for match in matches:
+                    if not isinstance(match, dict):
+                        continue
+                    lines.append(
+                        "  • "
+                        f"location={match.get('location', '') or 'unknown'}, "
+                        f"job_title={match.get('job_title', '') or 'unknown'}, "
+                        f"added_to_tracker={match.get('added_to_tracker', '') or 'unknown'}"
+                    )
+                return {
+                    "found": False,
+                    "employee_email": employee_email,
+                    "stages": {},
+                    "docusign_envelope_id": "",
+                    "docusign_status": "",
+                    "multiple_matches": True,
+                    "matches": matches,
+                    "summary": (
+                        f"Multiple onboarding records matched **{employee_email}**. "
+                        "Provide location and/or job title to disambiguate.\n"
+                        + "\n".join(lines)
+                    ),
+                }
             return {
                 "found": False,
                 "employee_email": employee_email,

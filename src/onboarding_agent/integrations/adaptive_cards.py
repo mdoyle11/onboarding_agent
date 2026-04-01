@@ -13,6 +13,7 @@ def new_hire_card(
     employee_name: str,
     employee_email: str,
     summary: str,
+    title: str = "",
     status_change: str = "",
     requested_start_date: str = "",
     job_title: str = "",
@@ -24,6 +25,7 @@ def new_hire_card(
     allow_docusign_action: bool = True,
 ) -> dict[str, Any]:
     """Card sent when a new hire webhook triggers the pipeline."""
+    card_title = title or f"{status_change or 'Submission'} Requested"
     actions: list[dict[str, Any]] = []
     if allow_email_action:
         if email_sent:
@@ -76,7 +78,7 @@ def new_hire_card(
                         "type": "Column",
                         "width": "stretch",
                         "items": [
-                            {"type": "TextBlock", "text": "New Hire Added", "weight": "Bolder", "size": "Medium", "wrap": True},
+                            {"type": "TextBlock", "text": card_title, "weight": "Bolder", "size": "Medium", "wrap": True},
                             {"type": "TextBlock", "text": f"{employee_name} ({employee_email})", "spacing": "None", "isSubtle": True, "wrap": True},
                         ],
                     },

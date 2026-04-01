@@ -240,6 +240,7 @@ async def _update_new_hire_card(context: TurnContext, card: dict[str, Any]) -> b
     updated_card = new_hire_card(
         employee_name=card.get("employee_name", ""),
         employee_email=card.get("employee_email", ""),
+        title=card.get("title", ""),
         status_change=card.get("status_change", ""),
         requested_start_date=card.get("requested_start_date", ""),
         job_title=card.get("job_title", ""),

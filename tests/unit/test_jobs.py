@@ -45,7 +45,7 @@ async def test_process_new_hire_job_normalizes_uploaded_credentials_links() -> N
         await process_new_hire_job(payload)
 
     kwargs = tracker.add_employee_to_tracker.await_args.kwargs
-    assert kwargs["uploaded_credentials"] == "Credential.pdf: https://example.com/doc.pdf"
+    assert kwargs["uploaded_credentials"] == "https://example.com/doc.pdf"
 
 
 @pytest.mark.asyncio
@@ -295,18 +295,25 @@ async def test_promotion_workflow_does_not_draft_welcome_email() -> None:
     teams = AsyncMock()
     teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
     draft_email = AsyncMock(return_value={"success": True})
+    save_card = AsyncMock()
 
     with (
         patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
         patch("onboarding_agent.runtime.jobs.DocuSignClient", return_value=docusign),
         patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
         patch("onboarding_agent.runtime.jobs.draft_onboarding_email_for_employee", new=draft_email),
+        patch("onboarding_agent.runtime.jobs.reset_new_hire_card_actions", new=AsyncMock()),
+        patch("onboarding_agent.runtime.jobs.save_new_hire_card", new=save_card),
     ):
         from onboarding_agent.runtime.jobs import process_new_hire_job
 
         await process_new_hire_job(payload)
 
     draft_email.assert_not_awaited()
+    save_kwargs = save_card.await_args.kwargs
+    assert save_kwargs["allow_email_action"] is False
+    assert save_kwargs["allow_docusign_action"] is True
+    assert save_kwargs["title"] == "Promotion Requested"
 
 
 @pytest.mark.asyncio
@@ -344,6 +351,7 @@ async def test_rehire_workflow_drafts_welcome_email_and_keeps_docusign_action() 
     save_kwargs = save_card.await_args.kwargs
     assert save_kwargs["allow_email_action"] is True
     assert save_kwargs["allow_docusign_action"] is True
+    assert save_kwargs["title"] == "Rehire Requested"
 
 
 @pytest.mark.asyncio
@@ -368,6 +376,8 @@ async def test_promotion_workflow_creates_docusign_draft_when_missing() -> None:
         patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
         patch("onboarding_agent.runtime.jobs.DocuSignClient", return_value=docusign),
         patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
+        patch("onboarding_agent.runtime.jobs.reset_new_hire_card_actions", new=AsyncMock()),
+        patch("onboarding_agent.runtime.jobs.save_new_hire_card", new=AsyncMock()),
     ):
         from onboarding_agent.runtime.jobs import process_new_hire_job
 

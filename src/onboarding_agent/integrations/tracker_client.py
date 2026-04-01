@@ -483,7 +483,14 @@ class TrackerClient(WorkbookGraphClient):
             job_title=job_title,
         )
         if not result.get("found"):
-            return {"found": False, "employee_email": employee_email, "stages": {}}
+            return {
+                "found": False,
+                "employee_email": employee_email,
+                "stages": {},
+                "multiple_matches": bool(result.get("multiple_matches", False)),
+                "matches": result.get("matches", []),
+                "error": result.get("error", ""),
+            }
         return {
             "found": True,
             "employee_email": employee_email,

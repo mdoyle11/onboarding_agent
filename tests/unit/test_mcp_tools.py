@@ -51,6 +51,42 @@ class TestGetOnboardingStatus:
         assert "No onboarding record found" in result["summary"]
 
     @pytest.mark.asyncio
+    async def test_duplicate_email_returns_disambiguation_summary(self):
+        self.tracker.get_employee_stages.return_value = {
+            "found": False,
+            "multiple_matches": True,
+            "matches": [
+                {
+                    "row_id": "12",
+                    "email": "mdoyle@bridgeprepacademy.com",
+                    "location": "Bronx",
+                    "job_title": "Teacher",
+                    "added_to_tracker": "2026-04-01",
+                },
+                {
+                    "row_id": "15",
+                    "email": "mdoyle@bridgeprepacademy.com",
+                    "location": "Queens",
+                    "job_title": "Assistant Principal",
+                    "added_to_tracker": "2026-04-02",
+                },
+            ],
+        }
+
+        from onboarding_agent.mcp_server.tools_onboarding import register
+        mcp = FastMCP(name="test-duplicate-status")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "get_onboarding_status")
+        result = await tool_fn(employee_email="mdoyle@bridgeprepacademy.com")
+
+        assert result["found"] is False
+        assert result["multiple_matches"] is True
+        assert "Multiple onboarding records matched" in result["summary"]
+        assert "location=Bronx" in result["summary"]
+        assert "job_title=Assistant Principal" in result["summary"]
+
+    @pytest.mark.asyncio
     async def test_found_with_draft_envelope(self):
         self.tracker.get_employee_stages.return_value = {
             "found": True, "row_id": "3", "name": "Alice",

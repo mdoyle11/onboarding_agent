@@ -36,6 +36,11 @@ def _notification_channel() -> str:
     return settings.notification_channel()
 
 
+def _submission_card_title(status_change: str) -> str:
+    label = str(status_change or "").strip()
+    return f"{label or 'Submission'} Requested"
+
+
 def _payload_value(payload: dict[str, Any], *keys: str) -> str:
     for key in keys:
         if key not in payload:
@@ -83,14 +88,9 @@ def _uploaded_credentials_value(raw_value: Any) -> str:
         if not isinstance(entry, dict):
             continue
         link = str(entry.get("link", "") or "").strip()
-        name = str(entry.get("name", "") or "").strip()
-        if link and name:
-            links.append(f"{name}: {link}")
-        elif link:
+        if link:
             links.append(link)
-        elif name:
-            links.append(name)
-    return " | ".join(links)
+    return "\n".join(links)
 
 
 def _new_hire_fields(payload: dict[str, Any]) -> dict[str, str]:
@@ -213,6 +213,7 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
             employee_name=employee_name or employee_email,
             employee_email=employee_email,
             summary=summary,
+            title=_submission_card_title(fields["status_change"]),
             status_change=fields["status_change"],
             requested_start_date=fields["requested_start_date"],
             job_title=fields["job_title"],
@@ -232,6 +233,7 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
                 channel_id=_notification_channel(),
                 message_id=str(teams_result["message_id"]),
                 employee_name=employee_name or employee_email,
+                title=_submission_card_title(fields["status_change"]),
                 status_change=fields["status_change"],
                 requested_start_date=fields["requested_start_date"],
                 job_title=fields["job_title"],
@@ -346,44 +348,44 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
             f"{workflow_label} submission received for {employee_name or employee_email} ({employee_email}). "
             f"{tracker_text}{policy_text}{docusign_text}{email_text} This workflow is running in deterministic mode."
         )
-        if workflow_type == WORKFLOW_REHIRE:
-            await reset_new_hire_card_actions(employee_email)
-            card = new_hire_card(
-                employee_name=employee_name or employee_email,
+        allow_email_action = workflow_type in {WORKFLOW_NEW_HIRE, WORKFLOW_REHIRE}
+        await reset_new_hire_card_actions(employee_email)
+        card = new_hire_card(
+            employee_name=employee_name or employee_email,
+            employee_email=employee_email,
+            summary=summary,
+            title=_submission_card_title(fields["status_change"]),
+            status_change=fields["status_change"],
+            requested_start_date=fields["requested_start_date"],
+            job_title=fields["job_title"],
+            work_location=fields["work_location"],
+            requesting_manager=fields["requesting_manager"],
+            email_sent=False,
+            docusign_sent=False,
+            allow_email_action=allow_email_action,
+            allow_docusign_action=True,
+        )
+        teams_result = await teams_messenger.send_channel_notification(
+            _notification_channel(),
+            summary,
+            card=card,
+        )
+        if teams_result.get("success") and teams_result.get("message_id"):
+            await save_new_hire_card(
                 employee_email=employee_email,
-                summary=summary,
+                channel_id=_notification_channel(),
+                message_id=str(teams_result["message_id"]),
+                employee_name=employee_name or employee_email,
+                title=_submission_card_title(fields["status_change"]),
                 status_change=fields["status_change"],
                 requested_start_date=fields["requested_start_date"],
                 job_title=fields["job_title"],
                 work_location=fields["work_location"],
                 requesting_manager=fields["requesting_manager"],
-                email_sent=False,
-                docusign_sent=False,
-                allow_email_action=True,
+                summary=summary,
+                allow_email_action=allow_email_action,
                 allow_docusign_action=True,
             )
-            teams_result = await teams_messenger.send_channel_notification(
-                _notification_channel(),
-                summary,
-                card=card,
-            )
-            if teams_result.get("success") and teams_result.get("message_id"):
-                await save_new_hire_card(
-                    employee_email=employee_email,
-                    channel_id=_notification_channel(),
-                    message_id=str(teams_result["message_id"]),
-                    employee_name=employee_name or employee_email,
-                    status_change=fields["status_change"],
-                    requested_start_date=fields["requested_start_date"],
-                    job_title=fields["job_title"],
-                    work_location=fields["work_location"],
-                    requesting_manager=fields["requesting_manager"],
-                    summary=summary,
-                    allow_email_action=True,
-                    allow_docusign_action=True,
-                )
-        else:
-            teams_result = await teams_messenger.send_channel_notification(_notification_channel(), summary)
         if not teams_result.get("success"):
             raise RuntimeError(f"Teams notification failed: {teams_result.get('error', 'unknown error')}")
         logger.info(
