@@ -425,3 +425,127 @@ class TestTrackerTools:
         assert result["employees"][0]["email"] == "bronx.ops@example.com"
         assert result["location"] == "Bronx"
         assert result["position"] == "Ops"
+
+    @pytest.mark.asyncio
+    async def test_update_tracker_stage_passes_explicit_stage_value(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "email": "alice@example.com",
+            "stages": {"Background Cleared": ""},
+        }
+        self.tracker.update_stage.return_value = {"success": True, "value": "2026-04-02"}
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-update-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            stage_name="Background Cleared",
+            stage_value="2026-04-02",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+        assert result["success"] is True
+        self.tracker.update_stage.assert_awaited_once_with(
+            "alice@example.com",
+            "Background Cleared",
+            value="2026-04-02",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    @pytest.mark.asyncio
+    async def test_clear_tracker_stage_clears_value(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "email": "alice@example.com",
+            "stages": {"Background Submission": ""},
+        }
+        self.tracker.update_stage.return_value = {"success": True, "value": ""}
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-clear-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "clear_tracker_stage")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            stage_name="Background Submission",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+        assert result["success"] is True
+        self.tracker.update_stage.assert_awaited_once_with(
+            "alice@example.com",
+            "Background Submission",
+            value="",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_employee_stages_summary_includes_all_tracker_stages(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "row_id": "12",
+            "name": "Alice Example",
+            "email": "alice@example.com",
+            "stages": {
+                "Added to Tracker": "2026-04-01",
+                "Background Submission": "2026-04-02",
+                "Background Cleared": "",
+                "Added to ADP": "",
+                "Employee Complete ADP Profile": "",
+                "Complete in ADP": "",
+                "Proration": "",
+                "Clear to Start": "",
+                "Drug Screening": "",
+            },
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-stages-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "get_employee_stages")
+        result = await tool_fn(employee_email="alice@example.com")
+
+        assert result["found"] is True
+        assert "Background Submission: 04/02/2026" in result["summary"]
+        assert "Background Cleared: pending" in result["summary"]
+        assert "Clear to Start: pending" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_update_tracker_stage_rejects_inactive_na_stage(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "row_id": "12",
+            "name": "Matt",
+            "email": "mdoyle@bridgeprepacademy.com",
+            "stages": {
+                "Drug Screening": "N/A",
+            },
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-inactive-stage-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
+        result = await tool_fn(
+            employee_email="mdoyle@bridgeprepacademy.com",
+            stage_name="Drug Screening",
+        )
+
+        assert result["success"] is False
+        assert result["inactive"] is True
+        assert "inactive/non-applicable" in result["error"]
+        self.tracker.update_stage.assert_not_awaited()

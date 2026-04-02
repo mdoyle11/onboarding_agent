@@ -12,10 +12,12 @@ if TYPE_CHECKING:
 
 from onboarding_agent.config import settings
 from onboarding_agent.domain.formatting import format_date
+from onboarding_agent.domain.identity import EmployeeIdentity
 from onboarding_agent.integrations.card_state import (
     get_docusign_status_card,
     save_docusign_status_card,
 )
+from onboarding_agent.integrations.workbook.schema import ALL_STAGES
 from onboarding_agent.mcp_server.clients import docusign as _docusign
 from onboarding_agent.mcp_server.clients import messenger as _messenger
 from onboarding_agent.mcp_server.clients import tracker as _tracker
@@ -68,7 +70,7 @@ async def _reconcile_completed_docusign(
     if not channel_id:
         return updated_stages
 
-    existing_card = await get_docusign_status_card(employee_email, location, job_title, status_change)
+    existing_card = await get_docusign_status_card(EmployeeIdentity(employee_email, location, job_title, status_change))
     if existing_card and str(existing_card.get("status", "")).lower() == "completed":
         return updated_stages
 
@@ -220,7 +222,7 @@ def register(mcp: FastMCP) -> None:
                     docusign_status = str(ds_result.get("status", "") or docusign_status)
 
         if not envelope_id:
-            stored_card = await get_docusign_status_card(employee_email, location, job_title, status_change)
+            stored_card = await get_docusign_status_card(EmployeeIdentity(employee_email, location, job_title, status_change))
             if stored_card:
                 envelope_id = str(stored_card.get("envelope_id", "") or "")
                 docusign_status = str(stored_card.get("status", "") or "")
@@ -246,10 +248,8 @@ def register(mcp: FastMCP) -> None:
 
         ds_line = _DS_STATUS_LINES.get(docusign_status, f"DocuSign status: {docusign_status}.")
 
-        # Build stage breakdown (active stages only for now)
-        active = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
         stage_lines = []
-        for s in active:
+        for s in ALL_STAGES:
             val = formatted_stages.get(s, "")
             icon = "✓" if val else "○"
             stage_lines.append(f"  {icon} {s}: {val or 'pending'}")

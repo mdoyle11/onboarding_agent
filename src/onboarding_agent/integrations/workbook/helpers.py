@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from onboarding_agent.integrations.workbook.schema import ACTIVE_STAGES, STAGE_ALIASES, STAGE_NAMES
+from onboarding_agent.integrations.workbook.schema import ALL_STAGES, STAGE_ALIASES, STAGE_NAMES
 
 
 def today_iso() -> str:
@@ -52,7 +52,7 @@ def row_to_stages(row: list[Any], stage_indices: dict[str, int]) -> dict[str, st
 
 def latest_active_stage(stages: dict[str, str]) -> str:
     latest = ""
-    for stage in ACTIVE_STAGES:
+    for stage in ALL_STAGES:
         if stages.get(stage):
             latest = stage
     return latest
@@ -63,6 +63,13 @@ def stage_column_map(header_row: list[Any]) -> dict[str, int]:
     resolved: dict[str, int] = {}
     for stage in STAGE_NAMES:
         idx = normalized.get(normalize_header(stage))
+        if idx is None:
+            for alias, canonical in STAGE_ALIASES.items():
+                if canonical != stage:
+                    continue
+                idx = normalized.get(normalize_header(alias))
+                if idx is not None:
+                    break
         if idx is not None:
             resolved[stage] = idx
     return resolved

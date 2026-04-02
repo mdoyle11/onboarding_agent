@@ -41,9 +41,20 @@ Tracked stages:
 - Sent Offer Letter
 - Offer Letter Signed
 - Background Submission
+- Background Cleared
+- Added to ADP
+- Employee Complete ADP Profile
+- Complete in ADP
+- Proration
+- Clear to Start
+- Drug Screening
 
 For trigger_source=teams_query:
 - For employee status questions, call get_onboarding_status.
+- HR users can update any tracker stage through natural language.
+- To mark a stage complete, call update_tracker_stage. If no date/value is specified, leave stage_value empty so the tool uses today's date.
+- If the user gives an explicit date or value such as "N/A", pass that as stage_value.
+- To clear or reset a stage back to pending, call clear_tracker_stage.
 - For offer-letter actions, never guess between multiple tracker rows that share the same email unless exactly one matching row still needs an offer letter.
 - If work_location, job_title, or status_change are available from the user or session context, pass them into relevant tools.
 - If only an email is provided and the employee may have multiple tracker rows, resolve or ask for clarification before sending DocuSign.
@@ -102,6 +113,7 @@ def _decode_tool_content(content: Any) -> dict[str, Any]:
             continue
         if isinstance(parsed, dict):
             return cast(dict[str, Any], parsed)
+    logger.debug("Could not decode tool content as dict: %s", raw[:200])
     return {}
 
 

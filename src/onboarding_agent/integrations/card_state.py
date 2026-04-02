@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from onboarding_agent.domain.identity import EmployeeIdentity, normalize_identity_part
 from onboarding_agent.domain.identity import identity_key as _card_key
-from onboarding_agent.domain.identity import normalize_identity_part
 from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.state_store import TTL_SECONDS_FIELD
 
@@ -31,16 +31,13 @@ def _card_record(payload: dict[str, Any]) -> dict[str, Any]:
 
 async def _resolve_card_key(
     namespace: str,
-    employee_email: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
+    identity: EmployeeIdentity,
 ) -> str | None:
-    if work_location or job_title or status_change:
-        return _card_key(employee_email, work_location, job_title, status_change)
+    if identity.work_location or identity.job_title or identity.status_change:
+        return identity.key()
 
-    email_key = normalize_identity_part(employee_email)
-    exact_key = _card_key(employee_email)
+    email_key = normalize_identity_part(identity.email)
+    exact_key = _card_key(identity.email)
     exact_card = await _store().get(namespace, exact_key)
     if exact_card is not None:
         return exact_key
@@ -90,14 +87,9 @@ async def save_new_hire_card(
     }))
 
 
-async def reset_new_hire_card_actions(
-    employee_email: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
-) -> None:
+async def reset_new_hire_card_actions(identity: EmployeeIdentity) -> None:
     """Clear any prior action-complete flags for a fresh test/run."""
-    key = await _resolve_card_key(NS_NEW_HIRE, employee_email, work_location, job_title, status_change)
+    key = await _resolve_card_key(NS_NEW_HIRE, identity)
     if key is None:
         return
     card = await _store().get(NS_NEW_HIRE, key)
@@ -108,26 +100,18 @@ async def reset_new_hire_card_actions(
     await _store().put(NS_NEW_HIRE, key, _card_record(card))
 
 
-async def get_new_hire_card(
-    employee_email: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
-) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_NEW_HIRE, employee_email, work_location, job_title, status_change)
+async def get_new_hire_card(identity: EmployeeIdentity) -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_NEW_HIRE, identity)
     if key is None:
         return None
     return await _store().get(NS_NEW_HIRE, key)
 
 
 async def mark_new_hire_action_complete(
-    employee_email: str,
+    identity: EmployeeIdentity,
     action: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
 ) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_NEW_HIRE, employee_email, work_location, job_title, status_change)
+    key = await _resolve_card_key(NS_NEW_HIRE, identity)
     if key is None:
         return None
     card = await _store().get(NS_NEW_HIRE, key)
@@ -143,18 +127,13 @@ async def mark_new_hire_action_complete(
     return card
 
 
-async def refresh_new_hire_card(
-    employee_email: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
-) -> dict[str, Any]:
+async def refresh_new_hire_card(identity: EmployeeIdentity) -> dict[str, Any]:
     from onboarding_agent.integrations.adaptive_cards import new_hire_card
     from onboarding_agent.integrations.teams.proactive import update_proactive_card
 
-    card = await get_new_hire_card(employee_email, work_location, job_title, status_change)
+    card = await get_new_hire_card(identity)
     if card is None:
-        return {"success": False, "error": f"No stored card state for {employee_email}"}
+        return {"success": False, "error": f"No stored card state for {identity.email}"}
 
     updated_card = new_hire_card(
         employee_name=card.get("employee_name", ""),
@@ -189,6 +168,8 @@ async def save_docusign_status_card(
     work_location: str = "",
     job_title: str = "",
     status_change: str = "",
+    roster_added: bool = False,
+    job_category: str = "",
 ) -> None:
     key = _card_key(employee_email, work_location, job_title, status_change)
     await _store().put(NS_DOCUSIGN, key, _card_record({
@@ -201,31 +182,23 @@ async def save_docusign_status_card(
         "work_location": work_location,
         "job_title": job_title,
         "status_change": status_change,
-        "roster_added": False,
-        "job_category": "",
+        "roster_added": roster_added,
+        "job_category": job_category,
     }))
 
 
-async def get_docusign_status_card(
-    employee_email: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
-) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_DOCUSIGN, employee_email, work_location, job_title, status_change)
+async def get_docusign_status_card(identity: EmployeeIdentity) -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_DOCUSIGN, identity)
     if key is None:
         return None
     return await _store().get(NS_DOCUSIGN, key)
 
 
 async def mark_docusign_roster_complete(
-    employee_email: str,
+    identity: EmployeeIdentity,
     job_category: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
 ) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_DOCUSIGN, employee_email, work_location, job_title, status_change)
+    key = await _resolve_card_key(NS_DOCUSIGN, identity)
     if key is None:
         return None
     card = await _store().get(NS_DOCUSIGN, key)
@@ -238,18 +211,13 @@ async def mark_docusign_roster_complete(
     return card
 
 
-async def refresh_docusign_status_card(
-    employee_email: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
-) -> dict[str, Any]:
+async def refresh_docusign_status_card(identity: EmployeeIdentity) -> dict[str, Any]:
     from onboarding_agent.integrations.adaptive_cards import docusign_status_card
     from onboarding_agent.integrations.teams.proactive import update_proactive_card
 
-    card = await get_docusign_status_card(employee_email, work_location, job_title, status_change)
+    card = await get_docusign_status_card(identity)
     if card is None:
-        return {"success": False, "error": f"No stored DocuSign card state for {employee_email}"}
+        return {"success": False, "error": f"No stored DocuSign card state for {identity.email}"}
 
     updated_card = docusign_status_card(
         employee_email=card.get("employee_email", ""),

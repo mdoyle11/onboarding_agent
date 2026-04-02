@@ -35,13 +35,6 @@ def should_suppress_reply(messages: list[BaseMessage]) -> bool:
     return False
 
 
-def tool_named_succeeded(messages: list[BaseMessage], tool_name: str) -> bool:
-    for msg in reversed(messages):
-        if isinstance(msg, ToolMessage) and msg.name == tool_name:
-            return tool_message_succeeded(msg)
-    return False
-
-
 def tool_message_succeeded(message: ToolMessage) -> bool:
     """Best-effort parser for MCP tool results embedded in ToolMessage content."""
     content = message.content

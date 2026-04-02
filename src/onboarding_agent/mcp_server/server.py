@@ -33,7 +33,7 @@ def _initialize_runtime() -> None:
 mcp = FastMCP(
     name="onboarding-tools",
     instructions=(
-        "Tools for HR onboarding: Microsoft Graph (Excel tracker, Forms), "
+        "Tools for HR onboarding: Microsoft Graph Excel tracker, "
         "staff roster capacity and roster updates, "
         "DocuSign (draft, send, status), Outlook email (draft, send), and "
         "Teams notifications. "
@@ -41,7 +41,7 @@ mcp = FastMCP(
     ),
 )
 
-# Always registered — tracker, roster, Forms, DocuSign, email, Teams, composite status
+# Always registered — tracker, roster, DocuSign, email, Teams, composite status
 register_tracker(mcp)
 register_staff_roster(mcp)
 register_docusign(mcp)

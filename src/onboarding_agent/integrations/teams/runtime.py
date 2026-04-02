@@ -40,3 +40,8 @@ def load_agents_sdk_config() -> dict[str, Any]:
     """Load Teams Agents SDK configuration after ensuring env variables are populated."""
     ensure_agents_sdk_env()
     return cast(dict[str, Any], load_configuration_from_env(os.environ))
+
+
+def normalize_channel_conversation_id(value: str) -> str:
+    """Strip Teams thread message suffixes from stored channel conversation IDs."""
+    return value.split(";messageid=", 1)[0]

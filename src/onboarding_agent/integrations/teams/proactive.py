@@ -15,7 +15,10 @@ from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.hosting.core import TurnContext
 
-from onboarding_agent.integrations.teams.runtime import load_agents_sdk_config
+from onboarding_agent.integrations.teams.runtime import (
+    load_agents_sdk_config,
+    normalize_channel_conversation_id,
+)
 from onboarding_agent.runtime import state_store as store_mod
 
 logger = logging.getLogger(__name__)
@@ -39,16 +42,11 @@ def _deserialize_ref(data: dict[str, Any]) -> ConversationReference:
     return ConversationReference.model_validate(data)
 
 
-def _normalize_channel_conversation_id(value: str) -> str:
-    """Strip Teams thread message suffixes from stored channel conversation IDs."""
-    return value.split(";messageid=", 1)[0]
-
-
 async def save_conversation_reference(activity: Activity) -> None:
     """Extract and store the conversation reference from an incoming activity."""
     ref = activity.get_conversation_reference()
     if ref.conversation and ref.conversation.id:
-        ref.conversation.id = _normalize_channel_conversation_id(ref.conversation.id)
+        ref.conversation.id = normalize_channel_conversation_id(ref.conversation.id)
     channel_key = ref.conversation.id if ref.conversation else ""
     if not channel_key:
         return

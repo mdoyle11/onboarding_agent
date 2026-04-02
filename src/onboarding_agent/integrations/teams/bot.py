@@ -122,6 +122,8 @@ def register_handlers(agent_app: Any) -> None:
 
         if reply_text:
             await context.send_activity(reply_text)
+
+
 async def _run_deterministic_card_action_in_background(
     *,
     card_action: dict[str, str],

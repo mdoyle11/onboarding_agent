@@ -2,37 +2,26 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from string import Template
-from typing import Any, cast
+from typing import Any
 
 from fastmcp import FastMCP
 
 from onboarding_agent.config import settings
 from onboarding_agent.mcp_server.clients import email_client as _email_client
+from onboarding_agent.runtime import state_store as store_mod
+from onboarding_agent.runtime.state_store import TTL_SECONDS_FIELD
 
 logger = logging.getLogger(__name__)
 
-# Persistent draft store — keyed by normalised (lowercased) employee_email.
-# Stored as a JSON file so drafts survive server restarts.
-_DRAFTS_PATH = Path(__file__).resolve().parents[3] / "data" / "email_drafts.json"
+NS_EMAIL_DRAFTS = "email_drafts"
+_EMAIL_DRAFT_TTL_SECONDS = 30 * 24 * 60 * 60
 
-
-def _load_drafts() -> dict[str, dict[str, str]]:
-    if _DRAFTS_PATH.exists():
-        try:
-            loaded = json.loads(_DRAFTS_PATH.read_text())
-            return cast(dict[str, dict[str, str]], loaded)
-        except (json.JSONDecodeError, OSError):
-            logger.warning("Could not read drafts file, starting fresh")
-    return {}
-
-
-def _save_drafts(drafts: dict[str, dict[str, str]]) -> None:
-    _DRAFTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _DRAFTS_PATH.write_text(json.dumps(drafts, indent=2))
+def _store() -> Any:
+    assert store_mod.store is not None, "State store not initialized"
+    return store_mod.store
 
 
 def _resolve_template_path(template_path: str | Path) -> Path:
@@ -116,13 +105,12 @@ async def draft_onboarding_email_for_employee(
             "error": f"Email template not found at {settings.email_template_path}",
         }
 
-    drafts = _load_drafts()
-    drafts[key] = {
+    await _store().put(NS_EMAIL_DRAFTS, key, {
         "to_email": employee_email.strip(),
         "subject": subject,
         "body_html": body_html,
-    }
-    _save_drafts(drafts)
+        TTL_SECONDS_FIELD: _EMAIL_DRAFT_TTL_SECONDS,
+    })
 
     preview = body_html[:500] + ("…" if len(body_html) > 500 else "")
     logger.info("Email draft created and persisted for %s", employee_email)
@@ -141,10 +129,7 @@ async def draft_onboarding_email_for_employee(
 async def send_onboarding_email_to_employee(employee_email: str) -> dict[str, Any]:
     """Send a previously drafted onboarding email for an employee."""
     key = employee_email.strip().lower()
-    drafts = _load_drafts()
-    logger.info("send_onboarding_email called for %s (key=%s), drafts=%s", employee_email, key, list(drafts.keys()))
-
-    draft = drafts.get(key)
+    draft = await _store().get(NS_EMAIL_DRAFTS, key)
     if not draft:
         return {
             "success": False,
@@ -161,8 +146,7 @@ async def send_onboarding_email_to_employee(employee_email: str) -> dict[str, An
     )
 
     if result.get("success"):
-        del drafts[key]
-        _save_drafts(drafts)
+        await _store().delete(NS_EMAIL_DRAFTS, key)
         logger.info("Onboarding email sent to %s", employee_email)
         return {
             "success": True,

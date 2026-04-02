@@ -12,6 +12,7 @@ from urllib.parse import unquote
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 from onboarding_agent.agent.session_context import SESSION_CONTEXT_FIELDS
+from onboarding_agent.integrations.teams.runtime import normalize_channel_conversation_id
 from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.state_store import TTL_SECONDS_FIELD
 
@@ -59,12 +60,8 @@ def _conversation_category(activity: Any) -> str:
     return "dm"
 
 
-def _normalize_channel_conversation_id(value: str) -> str:
-    return value.split(";messageid=", 1)[0]
-
-
 def _normalize_stored_channel_id(value: str) -> str:
-    return _normalize_channel_conversation_id(unquote(str(value or "").strip()))
+    return normalize_channel_conversation_id(unquote(str(value or "").strip()))
 
 
 def _channel_thread_root_id(activity: Any) -> str:
@@ -92,7 +89,7 @@ def _conversation_key(activity: Any) -> str:
     if conversation_id:
         category = _conversation_category(activity)
         if _is_channel_thread_activity(activity):
-            conversation_id = _normalize_channel_conversation_id(conversation_id)
+            conversation_id = normalize_channel_conversation_id(conversation_id)
             thread_root_id = _channel_thread_root_id(activity)
             if thread_root_id:
                 return f"{category}:{conversation_id}:thread:{thread_root_id}"
@@ -133,12 +130,16 @@ def _channel_thread_store_key(channel_id: str, message_id: str) -> str:
     return f"channel:{conversation_id}:thread:{root_message_id}"
 
 
-async def get_or_create_session_key(activity: Any) -> str:
-    """Return the current Teams session key, rotating when needed."""
+async def _ensure_session(
+    key: str,
+    *,
+    category: str,
+    is_channel_thread: bool,
+    increment_turns: bool = False,
+) -> tuple[str, str]:
+    """Resolve or rotate a session for *key*. Returns ``(session_id, session_key)``."""
     now = _now_utc()
-    key = _conversation_key(activity)
     session = await _store().get(NS_CONVERSATION_SESSION, key)
-    is_channel_thread = _is_channel_thread_activity(activity)
 
     if session is None or _should_rotate(session, now):
         if session is not None:
@@ -149,24 +150,33 @@ async def get_or_create_session_key(activity: Any) -> str:
         turn_count = 1
     else:
         session_id = str(session.get("session_id", "")).strip() or _session_id()
-        turn_count = int(session.get("turn_count", 0) or 0) + 1
+        turn_count = int(session.get("turn_count", 0) or 0) + (1 if increment_turns else 0)
 
     payload: dict[str, Any] = {
         "session_id": session_id,
         "last_activity_at": now.isoformat().replace("+00:00", "Z"),
-        "category": _conversation_category(activity),
+        "category": category,
     }
     if is_channel_thread:
         payload["expires_at"] = (now + _CHANNEL_THREAD_TTL).isoformat().replace("+00:00", "Z")
     else:
         payload["turn_count"] = turn_count
 
-    await _store().put(
-        NS_CONVERSATION_SESSION,
+    await _store().put(NS_CONVERSATION_SESSION, key, payload)
+    return session_id, f"teams:{key}:{session_id}"
+
+
+async def get_or_create_session_key(activity: Any) -> str:
+    """Return the current Teams session key, rotating when needed."""
+    key = _conversation_key(activity)
+    is_channel_thread = _is_channel_thread_activity(activity)
+
+    _sid, session_key = await _ensure_session(
         key,
-        payload,
+        category=_conversation_category(activity),
+        is_channel_thread=is_channel_thread,
+        increment_turns=True,
     )
-    session_key = f"teams:{key}:{session_id}"
     if is_channel_thread:
         seeded_context = await _load_thread_seed_context(key)
         if seeded_context:
@@ -184,29 +194,11 @@ async def seed_channel_thread_context(
     if not key:
         return ""
 
-    now = _now_utc()
-    session = await _store().get(NS_CONVERSATION_SESSION, key)
-
-    if session is None or _should_rotate(session, now):
-        if session is not None:
-            previous_session_id = str(session.get("session_id", "")).strip()
-            if previous_session_id:
-                await _delete_session_artifacts(key, previous_session_id)
-        session_id = _session_id()
-    else:
-        session_id = str(session.get("session_id", "")).strip() or _session_id()
-
-    await _store().put(
-        NS_CONVERSATION_SESSION,
+    _sid, session_key = await _ensure_session(
         key,
-        {
-            "session_id": session_id,
-            "last_activity_at": now.isoformat().replace("+00:00", "Z"),
-            "category": "channel",
-            "expires_at": (now + _CHANNEL_THREAD_TTL).isoformat().replace("+00:00", "Z"),
-        },
+        category="channel",
+        is_channel_thread=True,
     )
-    session_key = f"teams:{key}:{session_id}"
     if context:
         await _store().put(NS_THREAD_SEED_CONTEXT, key, {
             **_sanitize_session_context(context),

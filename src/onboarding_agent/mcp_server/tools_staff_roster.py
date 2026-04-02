@@ -41,18 +41,30 @@ def register(mcp: FastMCP) -> None:
                 status_change=status_change,
             )
 
+            from onboarding_agent.domain.identity import EmployeeIdentity
             from onboarding_agent.integrations.card_state import (
                 mark_docusign_roster_complete,
                 refresh_docusign_status_card,
             )
 
-            card = await mark_docusign_roster_complete(
-                employee_email,
-                job_category,
-                location,
-                job_title,
-                status_change,
-            )
+            identity = EmployeeIdentity(employee_email, location, job_title, status_change)
+            card = await mark_docusign_roster_complete(identity, job_category)
             if card is not None:
-                await refresh_docusign_status_card(employee_email, location, job_title, status_change)
-        return result
+                await refresh_docusign_status_card(identity)
+            detail = "already existed" if result.get("already_exists") else "was added"
+            return {
+                **result,
+                "action": "already_exists" if result.get("already_exists") else "added",
+                "summary": (
+                    f"Staff roster update succeeded: {employee_email} {detail} "
+                    f"in {location or result.get('location', '') or 'the selected location'} as {job_category}."
+                ),
+            }
+        return {
+            **result,
+            "action": "failed",
+            "summary": (
+                f"Staff roster update failed for {employee_email} as {job_category}. "
+                f"{result.get('error', 'Unknown error')}"
+            ),
+        }

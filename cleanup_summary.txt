@@ -1,0 +1,186 @@
+Codebase Cleanup Summary
+========================
+Branch: refactor/remove-langgraph
+Date: 2026-04-02
+
+CHANGES MADE
+------------
+
+1. Extracted shared session-creation helper in memory.py
+
+   `get_or_create_session_key()` and `seed_channel_thread_context()` shared
+   nearly identical session lifecycle logic. That logic is now centralized so
+   channel-thread memory, expiry, and rehydration behavior are easier to keep
+   consistent.
+
+   Key file:
+   - src/onboarding_agent/integrations/teams/memory.py
+
+
+2. Introduced EmployeeIdentity value object
+
+   The composite identity fields:
+   - email
+   - work_location
+   - job_title
+   - status_change
+
+   are now grouped behind `EmployeeIdentity` in `domain/identity.py` and are
+   passed through the card-state/card-action paths more cleanly.
+
+   Key files:
+   - src/onboarding_agent/domain/identity.py
+   - src/onboarding_agent/integrations/card_state.py
+   - src/onboarding_agent/integrations/teams/card_actions.py
+   - src/onboarding_agent/runtime/jobs.py
+   - src/onboarding_agent/mcp_server/tools_teams.py
+   - src/onboarding_agent/mcp_server/tools_staff_roster.py
+   - src/onboarding_agent/mcp_server/tools_onboarding.py
+
+
+3. Consolidated `domain/` vs `domains/` naming
+
+   Onboarding policy code now follows the singular `domain/` convention:
+
+   - src/onboarding_agent/domain/onboard/policies.py
+
+   instead of the prior mixed `domains/` layout.
+
+
+4. Removed dead Forms integration
+
+   The unused Forms lookup path was removed:
+
+   - deleted `src/onboarding_agent/integrations/forms_client.py`
+   - removed the `get_form_submission_by_id` MCP tool
+   - removed the unused `graph_forms_form_id` config setting
+   - updated MCP server tool instructions accordingly
+
+
+5. Removed dead and noisy Teams tool surface
+
+   The following MCP wrappers were removed because they added tool noise
+   without meaningful runtime value:
+
+   - `send_teams_direct_message`
+   - `send_teams_reply`
+
+   The underlying Teams messenger methods remain available as plumbing.
+
+
+6. Removed dead helper
+
+   Deleted the unused `tool_named_succeeded()` helper from:
+
+   - src/onboarding_agent/integrations/teams/reply.py
+
+
+7. Deduplicated Teams channel conversation ID normalization
+
+   `normalize_channel_conversation_id()` now lives once in:
+
+   - src/onboarding_agent/integrations/teams/runtime.py
+
+   and is shared by both proactive messaging and Teams memory code.
+
+
+8. Moved onboarding email drafts into the shared state store
+
+   Email drafts no longer live in `data/email_drafts.json`.
+
+   They now use the shared state store namespace:
+
+   - `email_drafts`
+
+   Benefits:
+   - survive container restarts
+   - use the same persistence model as other app state
+   - receive TTL support
+
+   Current email-draft retention:
+   - 30-day TTL
+
+   Key file:
+   - src/onboarding_agent/mcp_server/tools_email.py
+
+
+9. Quick fixes
+
+   - `runner.py`
+     Added debug logging when `_decode_tool_content()` cannot parse tool output.
+
+   - `jobs.py`
+     Removed duplicated background-clearance completion timing log.
+
+   - `bot.py`
+     Fixed formatting/spacing around deterministic card-action background helper.
+
+   - `tools_tracker.py`
+     Removed stale wording that still described Forms tool registration.
+
+
+VALIDATION
+----------
+Representative validation after the cleanup changes:
+
+- uv run ruff check src tests
+- uv run mypy src
+- uv run pytest tests/unit/test_email_tools.py tests/unit/test_mcp_tools.py tests/unit/test_chat_history.py -q
+
+Targeted cleanup/runtime checks passed with the expected external warning only.
+
+
+CURRENT STATUS
+--------------
+
+The originally identified low-risk cleanup items are now complete:
+
+- dead Forms integration: removed
+- dead `tool_named_succeeded` helper: removed
+- unused Teams MCP wrappers: removed
+- duplicate Teams channel ID normalizer: deduped
+- email drafts on local JSON: moved to shared state store
+
+There are no tracked `__pycache__` or `.pyc` files in git.
+
+
+FUTURE CONSIDERATIONS
+---------------------
+Ordered by impact. None are blockers.
+
+1. Keep `cleanup_summary.txt` synchronized with actual repo state
+
+   This summary became stale quickly while the cleanup work was being applied.
+   If it remains in the repo, it should be treated as a living note and updated
+   alongside the changes it describes.
+
+2. Sweep docs/infra for removed config references
+
+   The app-level Forms lookup setting is gone. Any remaining mention of Forms
+   should be intentional intake/webhook documentation, not obsolete config/tool
+   behavior.
+
+3. Consider whether email drafts should have a dedicated helper/service module
+
+   `tools_email.py` is still doing both:
+   - MCP tool registration
+   - draft persistence orchestration
+
+   This is acceptable now, but if email functionality grows further, draft
+   persistence could move behind a narrower helper without changing behavior.
+
+4. Not recommended at this time
+
+   - Splitting `runner.py`
+     still a coherent single-purpose module
+
+   - Splitting `jobs.py`
+     still benefits from keeping the deterministic handlers and shared helpers
+     together
+
+   - Splitting `docusign_client.py`
+     still a single integration with tightly related responsibilities
+
+   - Genericizing card-state helpers
+     new-hire and DocuSign card states are similar but not identical enough to
+     justify a generic abstraction

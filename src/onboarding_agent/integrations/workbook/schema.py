@@ -32,20 +32,19 @@ STAGE_NAMES = [
     "Background Cleared",
     "Added to ADP",
     "Employee Complete ADP Profile",
-    "Completed in ADP",
+    "Complete in ADP",
     "Proration",
     "Clear to Start",
     "Drug Screening",
 ]
 
 STAGE_ALIASES = {
-    "Complete in ADP": "Completed in ADP",
+    "Completed in ADP": "Complete in ADP",
     "Prorations Sent": "Proration",
     "Start Date": "Clear to Start",
 }
 
 ALL_STAGES = list(STAGE_NAMES)
-ACTIVE_STAGES = ["Added to Tracker", "Added to Staff Roster", "Sent Offer Letter", "Offer Letter Signed"]
 
 HEADER_ROW = [
     "Requesting Manager",
@@ -74,6 +73,7 @@ ROSTER_REQUIRED_ALIASES = {
 ROSTER_OPTIONAL_ALIASES = {
     "start_date": {"start date", "startdate"},
     "position": {"position"},
+    "personal_email": {"personal email", "personalemail", "personal e-mail"},
     "manager_email": {"manager email", "manageremail"},
     "location": {"location"},
 }

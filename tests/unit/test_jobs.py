@@ -145,6 +145,61 @@ async def test_process_docusign_job_uses_composite_identity_for_stage_updates() 
 
 
 @pytest.mark.asyncio
+async def test_process_docusign_job_preserves_existing_staff_roster_state_on_completed_card() -> None:
+    payload = {
+        "envelope_id": "env-123",
+        "status": "completed",
+        "employee_email": "alice@example.com",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+    }
+    tracker = AsyncMock()
+    tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
+    tracker.find_employee_in_tracker.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
+    teams = AsyncMock()
+    teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
+    docusign = AsyncMock()
+    staff_roster = AsyncMock()
+    staff_roster.find_employee_in_staff_roster.return_value = {
+        "found": True,
+        "job_category": "Teacher",
+    }
+
+    with (
+        patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
+        patch("onboarding_agent.runtime.jobs.DocuSignClient", return_value=docusign),
+        patch("onboarding_agent.runtime.jobs.StaffRosterClient", return_value=staff_roster),
+        patch("onboarding_agent.runtime.jobs.save_docusign_status_card", new=AsyncMock()) as save_card,
+    ):
+        from onboarding_agent.runtime.jobs import process_docusign_job
+
+        await process_docusign_job(payload)
+
+    staff_roster.find_employee_in_staff_roster.assert_awaited_once_with(
+        "alice@example.com",
+        location="Bronx",
+        personal_email="alice@example.com",
+        employee_name="Alice Example",
+        position="Teacher",
+    )
+    sent_card = teams.send_channel_notification.await_args.kwargs["card"]
+    add_action = next(action for action in sent_card["actions"] if action.get("title") == "\u2713 Added To Staff Roster")
+    assert add_action["isEnabled"] is False
+    job_category_input = next(block for block in sent_card["body"] if block.get("id") == "job_category")
+    assert job_category_input["value"] == "Teacher"
+    save_kwargs = save_card.await_args.kwargs
+    assert save_kwargs["roster_added"] is True
+    assert save_kwargs["job_category"] == "Teacher"
+
+
+@pytest.mark.asyncio
 async def test_process_background_clearance_job_uses_composite_identity_for_stage_updates() -> None:
     payload = {
         "staffEmail": "alice@example.com",

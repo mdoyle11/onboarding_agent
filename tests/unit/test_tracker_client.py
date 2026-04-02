@@ -266,3 +266,38 @@ async def test_update_stage_refreshes_stage_columns_before_validation():
 
     assert result["success"] is True
     assert mock_request.await_args_list[2].args[0] == "PATCH"
+
+
+@pytest.mark.asyncio
+async def test_update_stage_accepts_legacy_completed_in_adp_header_alias():
+    client = TrackerClient()
+    legacy_header = [header if header != "Complete in ADP" else "Completed in ADP" for header in HEADER_ROW]
+    row = [""] * len(legacy_header)
+    row[legacy_header.index("Staff Name")] = "Alice Example"
+    row[legacy_header.index("Staff Email")] = "alice@example.com"
+    row[legacy_header.index("Work Location")] = "Bronx"
+    row[legacy_header.index("Job Title")] = "Teacher"
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(
+                side_effect=[
+                    {"address": "Onboarding!A1:AA2", "values": [legacy_header, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [legacy_header, row]},
+                    {},
+                ]
+            ),
+        ) as mock_request,
+    ):
+        result = await client.update_stage(
+            "alice@example.com",
+            "Complete in ADP",
+            location="Bronx",
+            job_title="Teacher",
+        )
+
+    assert result["success"] is True
+    assert mock_request.await_args_list[2].args[0] == "PATCH"

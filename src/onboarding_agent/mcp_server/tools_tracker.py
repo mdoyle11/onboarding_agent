@@ -1,4 +1,4 @@
-"""Onboarding tracker and Forms tools."""
+"""Onboarding tracker tools."""
 
 from __future__ import annotations
 
@@ -9,14 +9,74 @@ from typing import Any
 from fastmcp import FastMCP
 
 from onboarding_agent.domain.formatting import format_date
-from onboarding_agent.integrations.forms_client import FormsClient
-from onboarding_agent.integrations.workbook.schema import ACTIVE_STAGES, ALL_STAGES
+from onboarding_agent.domain.identity import EmployeeIdentity
+from onboarding_agent.integrations.workbook.schema import ALL_STAGES, STAGE_ALIASES
 from onboarding_agent.mcp_server.clients import tracker as _tracker
 
 logger = logging.getLogger(__name__)
 
 _LIST_EMPLOYEE_PREVIEW_LIMIT = 25
 _DEFAULT_RECENT_DAYS = 30
+
+
+def _resolve_requested_stage_name(stage_name: str) -> str:
+    direct = stage_name.strip()
+    if direct in ALL_STAGES:
+        return direct
+    return STAGE_ALIASES.get(direct, direct)
+
+
+async def _guard_inactive_stage_update(
+    *,
+    identity: EmployeeIdentity,
+    stage_name: str,
+) -> dict[str, Any] | None:
+    result = await _tracker().find_employee_in_tracker(
+        identity.email,
+        location=identity.work_location,
+        job_title=identity.job_title,
+        status_change=identity.status_change,
+    )
+    if not result.get("found"):
+        matches = result.get("matches", [])
+        if result.get("multiple_matches") and isinstance(matches, list) and matches:
+            lines = [
+                f"  • location={m.get('location', '') or 'unknown'}, "
+                f"job_title={m.get('job_title', '') or 'unknown'}, "
+                f"added_to_tracker={m.get('added_to_tracker', '') or 'unknown'}"
+                for m in matches
+                if isinstance(m, dict)
+            ]
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "multiple_matches": True,
+                "matches": matches,
+                "error": (
+                    "Multiple tracker entries matched this email. "
+                    "Provide location and/or job_title to disambiguate.\n"
+                    + "\n".join(lines)
+                ),
+            }
+        return None
+
+    stages = result.get("stages", {})
+    if not isinstance(stages, dict):
+        return None
+
+    resolved_stage = _resolve_requested_stage_name(stage_name)
+    current_value = str(stages.get(resolved_stage, "") or "").strip()
+    if current_value.upper() == "N/A":
+        return {
+            "success": False,
+            "employee_email": identity.email,
+            "stage": resolved_stage,
+            "inactive": True,
+            "error": (
+                f"{resolved_stage} is inactive/non-applicable for this workflow and is currently marked N/A."
+            ),
+        }
+    return None
 
 
 def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
@@ -84,7 +144,7 @@ def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
 def _employee_preview(employee: dict[str, Any]) -> dict[str, str]:
     stages = employee.get("stages", {}) if isinstance(employee.get("stages"), dict) else {}
     active_stage = ""
-    for stage in ACTIVE_STAGES:
+    for stage in ALL_STAGES:
         if stages.get(stage):
             active_stage = stage
 
@@ -157,7 +217,7 @@ def _employee_matches_filters(
 
 
 def register(mcp: FastMCP) -> None:
-    """Register tracker and Forms tools on the given FastMCP instance."""
+    """Register tracker tools on the given FastMCP instance."""
 
     @mcp.tool()
     async def find_employee_in_tracker(
@@ -214,16 +274,49 @@ def register(mcp: FastMCP) -> None:
     async def update_tracker_stage(
         employee_email: str,
         stage_name: str,
+        stage_value: str = "",
         location: str = "",
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
+        identity = EmployeeIdentity(employee_email, location, job_title, status_change)
+        guarded = await _guard_inactive_stage_update(
+            identity=identity,
+            stage_name=stage_name,
+        )
+        if guarded is not None:
+            return guarded
         return await _tracker().update_stage(
-            employee_email,
+            identity.email,
             stage_name,
-            location=location,
-            job_title=job_title,
-            status_change=status_change,
+            value=stage_value or None,
+            location=identity.work_location,
+            job_title=identity.job_title,
+            status_change=identity.status_change,
+        )
+
+    @mcp.tool()
+    async def clear_tracker_stage(
+        employee_email: str,
+        stage_name: str,
+        location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
+        identity = EmployeeIdentity(employee_email, location, job_title, status_change)
+        guarded = await _guard_inactive_stage_update(
+            identity=identity,
+            stage_name=stage_name,
+        )
+        if guarded is not None:
+            return guarded
+        return await _tracker().update_stage(
+            identity.email,
+            stage_name,
+            value="",
+            location=identity.work_location,
+            job_title=identity.job_title,
+            status_change=identity.status_change,
         )
 
     @mcp.tool()
@@ -268,7 +361,7 @@ def register(mcp: FastMCP) -> None:
                 f"({formatted_stages.get(last_completed_stage, '')}). Next: *{next_pending}*."
             )
 
-        lines = [f"  • {stage}: {formatted_stages.get(stage) or 'pending'}" for stage in ACTIVE_STAGES]
+        lines = [f"  • {stage}: {formatted_stages.get(stage) or 'pending'}" for stage in ALL_STAGES]
         summary += "\n" + "\n".join(lines)
 
         return {**result, "stages": formatted_stages, "summary": summary}
@@ -364,7 +457,3 @@ def register(mcp: FastMCP) -> None:
             "returned_count": len(preview),
             "summary": summary,
         }
-
-    @mcp.tool()
-    async def get_form_submission_by_id(submission_id: str) -> dict[str, Any]:
-        return await FormsClient().get_submission_by_id(submission_id)

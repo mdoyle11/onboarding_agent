@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from onboarding_agent.domain.identity import EmployeeIdentity
 from onboarding_agent.integrations.card_state import (
     get_new_hire_card,
     mark_new_hire_action_complete,
@@ -37,9 +38,9 @@ async def test_new_hire_card_state_is_composite_keyed(tmp_path) -> None:
             title="Pay Increase Requested",
         )
 
-        ambiguous = await get_new_hire_card("mdoyle@bridgeprepacademy.com")
-        bronx = await get_new_hire_card("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher")
-        queens = await get_new_hire_card("mdoyle@bridgeprepacademy.com", "Queens", "Teacher")
+        ambiguous = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com"))
+        bronx = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher"))
+        queens = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Queens", "Teacher"))
 
         assert ambiguous is None
         assert bronx is not None
@@ -75,14 +76,12 @@ async def test_mark_new_hire_action_complete_only_updates_matching_composite_car
         )
 
         result = await mark_new_hire_action_complete(
-            "mdoyle@bridgeprepacademy.com",
+            EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Queens", "Teacher"),
             "send_docusign",
-            "Queens",
-            "Teacher",
         )
 
-        bronx = await get_new_hire_card("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher")
-        queens = await get_new_hire_card("mdoyle@bridgeprepacademy.com", "Queens", "Teacher")
+        bronx = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher"))
+        queens = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Queens", "Teacher"))
 
         assert result is not None
         assert bronx is not None

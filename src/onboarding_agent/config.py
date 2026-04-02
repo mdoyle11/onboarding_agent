@@ -59,9 +59,6 @@ class Settings(BaseSettings):
     staff_roster_default_sheet_name: str = "Roster_Data"
     staff_roster_default_capacity_sheet_name: str = "Capacity"
 
-    # Microsoft Graph — Forms (optional)
-    graph_forms_form_id: str = ""
-
     # ---------------------------------------------------------------------------
     # DocuSign (JWT Grant — server-to-server)
     # ---------------------------------------------------------------------------

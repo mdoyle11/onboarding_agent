@@ -29,6 +29,39 @@ logger = logging.getLogger(__name__)
 class StaffRosterClient(WorkbookGraphClient):
     """Workbook-backed staff roster and capacity operations."""
 
+    @staticmethod
+    def _row_matches_roster_identity(
+        row: list[Any],
+        roster_header: dict[str, int],
+        *,
+        employee_email: str,
+        job_category: str,
+        personal_email: str = "",
+        employee_name: str = "",
+        position: str = "",
+        location: str = "",
+    ) -> bool:
+        row_email = _cell(row, roster_header.get("email")).lower()
+        row_personal_email = _cell(row, roster_header.get("personal_email")).lower()
+        row_name = _cell(row, roster_header.get("name")).lower()
+        row_position = _cell(row, roster_header.get("position")).lower()
+        personal_email_matches = bool(personal_email.strip()) and row_personal_email == personal_email.strip().lower()
+        email_matches = bool(employee_email.strip()) and row_email == employee_email.strip().lower()
+        name_position_matches = (
+            bool(employee_name.strip())
+            and bool(position.strip())
+            and row_name == employee_name.strip().lower()
+            and row_position == position.strip().lower()
+        )
+        if not (personal_email_matches or email_matches or name_position_matches):
+            return False
+        if _cell(row, roster_header.get("group")).lower() != job_category.strip().lower():
+            return False
+        location_idx = roster_header.get("location")
+        return not (
+            location and location_idx is not None and _cell(row, location_idx).lower() != location.strip().lower()
+        )
+
     async def check_staff_roster_capacity(self, location: str, job_category: str) -> dict[str, Any]:
         try:
             workbook = self._staff_roster_workbook(location)
@@ -104,6 +137,90 @@ class StaffRosterClient(WorkbookGraphClient):
                 "error": str(exc),
             }
 
+    async def find_employee_in_staff_roster(
+        self,
+        employee_email: str,
+        *,
+        location: str,
+        job_category: str = "",
+        personal_email: str = "",
+        employee_name: str = "",
+        position: str = "",
+    ) -> dict[str, Any]:
+        try:
+            workbook = self._staff_roster_workbook(location)
+            roster_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["roster_sheet_name"],
+            )
+            if not roster_rows:
+                return {"found": False, "employee_email": employee_email, "location": location, "error": "Roster sheet is empty"}
+
+            roster_aliases = {**ROSTER_REQUIRED_ALIASES, **ROSTER_OPTIONAL_ALIASES}
+            roster_header = _header_map(roster_rows[0], roster_aliases)
+            missing = [key for key in ROSTER_REQUIRED_ALIASES if key not in roster_header]
+            if missing:
+                missing_list = ", ".join(missing)
+                return {
+                    "found": False,
+                    "employee_email": employee_email,
+                    "location": location,
+                    "error": f"Roster sheet is missing required columns: {missing_list}",
+                }
+
+            matches: list[dict[str, Any]] = []
+            for index, row in enumerate(roster_rows[1:], start=2):
+                row_email = _cell(row, roster_header.get("email"))
+                row_personal_email = _cell(row, roster_header.get("personal_email"))
+                found_group = _cell(row, roster_header.get("group"))
+                found_name = _cell(row, roster_header.get("name"))
+                found_position = _cell(row, roster_header.get("position"))
+                personal_email_matches = row_personal_email.lower() == personal_email.strip().lower() if personal_email.strip() else False
+                email_matches = row_email.lower() == employee_email.strip().lower()
+                name_position_matches = (
+                    bool(employee_name.strip())
+                    and bool(position.strip())
+                    and found_name.lower() == employee_name.strip().lower()
+                    and found_position.lower() == position.strip().lower()
+                )
+                if not (personal_email_matches or email_matches or name_position_matches):
+                    continue
+                if job_category and found_group.lower() != job_category.strip().lower():
+                    continue
+                matches.append(
+                    {
+                        "row_id": str(index),
+                        "employee_email": row_email or employee_email,
+                        "personal_email": row_personal_email or personal_email,
+                        "location": location,
+                        "employee_name": found_name,
+                        "job_category": found_group,
+                        "position": found_position,
+                    }
+                )
+
+            if not matches:
+                return {"found": False, "employee_email": employee_email, "location": location}
+            if len(matches) > 1:
+                return {
+                    "found": False,
+                    "employee_email": employee_email,
+                    "location": location,
+                    "multiple_matches": True,
+                    "matches": matches,
+                    "error": "Multiple staff roster rows matched this employee.",
+                }
+            return {"found": True, **matches[0]}
+        except Exception as exc:
+            logger.exception("find_employee_in_staff_roster failed")
+            return {
+                "found": False,
+                "employee_email": employee_email,
+                "location": location,
+                "error": str(exc),
+            }
+
     async def add_employee_to_staff_roster(
         self,
         employee_email: str,
@@ -158,9 +275,17 @@ class StaffRosterClient(WorkbookGraphClient):
                 missing_list = ", ".join(missing)
                 return {"success": False, "error": f"Roster sheet is missing required columns: {missing_list}"}
 
-            normalized_email = employee_email.strip().lower()
             for index, row in enumerate(roster_rows[1:], start=2):
-                if _cell(row, roster_header.get("email")).lower() == normalized_email:
+                if self._row_matches_roster_identity(
+                    row,
+                    roster_header,
+                    employee_email=employee_email,
+                    job_category=job_category,
+                    personal_email=employee_email,
+                    employee_name=str(employee.get("name", "") or ""),
+                    position=str(employee.get("position", "") or employee.get("job_title", "") or ""),
+                    location=location,
+                ):
                     return {
                         "success": True,
                         "employee_email": employee_email,
@@ -200,6 +325,7 @@ class StaffRosterClient(WorkbookGraphClient):
             optional_values = {
                 "start_date": str(employee.get("start_date", "") or ""),
                 "position": str(employee.get("position", "") or employee.get("job_title", "") or ""),
+                "personal_email": employee_email,
                 "manager_email": str(employee.get("manager_email", "") or ""),
                 "location": location,
             }
@@ -223,14 +349,52 @@ class StaffRosterClient(WorkbookGraphClient):
                 drive_id=workbook["drive_id"],
                 item_id=workbook["item_id"],
             )
+
+            refreshed_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["roster_sheet_name"],
+            )
+            if not refreshed_rows:
+                return {
+                    "success": False,
+                    "employee_email": employee_email,
+                    "job_category": job_category,
+                    "location": location,
+                    "error": "Roster verification failed after write",
+                }
+
+            refreshed_header = _header_map(refreshed_rows[0], roster_aliases)
+            for index, row in enumerate(refreshed_rows[1:], start=2):
+                if self._row_matches_roster_identity(
+                    row,
+                    refreshed_header,
+                    employee_email=employee_email,
+                    job_category=job_category,
+                    personal_email=employee_email,
+                    employee_name=str(employee.get("name", "") or ""),
+                    position=str(employee.get("position", "") or employee.get("job_title", "") or ""),
+                    location=location,
+                ):
+                    return {
+                        "success": True,
+                        "employee_email": employee_email,
+                        "job_category": job_category,
+                        "location": location,
+                        "row_id": str(index),
+                        "already_exists": False,
+                        "remaining_capacity": int(capacity.get("remaining_capacity", 0)) - 1,
+                    }
+
             return {
-                "success": True,
+                "success": False,
                 "employee_email": employee_email,
                 "job_category": job_category,
                 "location": location,
-                "row_id": str(next_row),
-                "already_exists": False,
-                "remaining_capacity": int(capacity.get("remaining_capacity", 0)) - 1,
+                "error": (
+                    f"Roster write for {employee_email} at {location} in group '{job_category}' "
+                    "did not verify after the workbook update."
+                ),
             }
         except Exception as exc:
             logger.exception("add_employee_to_staff_roster failed")

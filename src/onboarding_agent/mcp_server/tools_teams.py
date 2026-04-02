@@ -27,13 +27,14 @@ def register(mcp: FastMCP) -> None:
         work_location: str = "",
         requesting_manager: str = "",
     ) -> dict[str, object]:
+        from onboarding_agent.domain.identity import EmployeeIdentity
         from onboarding_agent.integrations.adaptive_cards import new_hire_card
         from onboarding_agent.integrations.card_state import (
             reset_new_hire_card_actions,
             save_new_hire_card,
         )
 
-        await reset_new_hire_card_actions(employee_email, work_location, job_title, status_change)
+        await reset_new_hire_card_actions(EmployeeIdentity(employee_email, work_location, job_title, status_change))
         card = new_hire_card(
             employee_name,
             employee_email,
@@ -148,11 +149,3 @@ def register(mcp: FastMCP) -> None:
                 "intent": "background_clearance",
             },
         )
-
-    @mcp.tool()
-    async def send_teams_direct_message(user_id: str, message: str) -> dict[str, object]:
-        return await _messenger().send_direct_message(user_id, message)
-
-    @mcp.tool()
-    async def send_teams_reply(activity_id: str, message: str) -> dict[str, object]:
-        return await _messenger().send_reply(activity_id, message)

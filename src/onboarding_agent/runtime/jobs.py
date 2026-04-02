@@ -8,7 +8,8 @@ import time
 from typing import Any
 
 from onboarding_agent.config import settings
-from onboarding_agent.domains.onboard.policies import (
+from onboarding_agent.domain.identity import EmployeeIdentity
+from onboarding_agent.domain.onboard.policies import (
     WORKFLOW_NEW_HIRE,
     WORKFLOW_REHIRE,
     excluded_stages_for,
@@ -21,6 +22,7 @@ from onboarding_agent.integrations.card_state import (
 )
 from onboarding_agent.integrations.docusign_client import DocuSignClient
 from onboarding_agent.integrations.teams.messenger import TeamsMessenger
+from onboarding_agent.integrations.workbook.staff_roster_client import StaffRosterClient
 from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 from onboarding_agent.mcp_server.tools_email import draft_onboarding_email_for_employee
 from onboarding_agent.runtime.job_queue import QueueJob
@@ -155,12 +157,12 @@ async def _send_submission_notification(
 ) -> None:
     from onboarding_agent.integrations.adaptive_cards import new_hire_card
 
-    await reset_new_hire_card_actions(
-        employee_email,
-        fields["work_location"],
-        fields["job_title"],
-        fields["status_change"],
-    )
+    await reset_new_hire_card_actions(EmployeeIdentity(
+        email=employee_email,
+        work_location=fields["work_location"],
+        job_title=fields["job_title"],
+        status_change=fields["status_change"],
+    ))
     card = new_hire_card(
         employee_name=employee_name or employee_email,
         employee_email=employee_email,
@@ -413,6 +415,7 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
     tracker_client = TrackerClient()
     teams_messenger = TeamsMessenger()
     docusign_client = DocuSignClient()
+    staff_roster_client = StaffRosterClient()
 
     envelope_id = str(payload.get("envelope_id", "")).strip()
     status = str(payload.get("status", "")).strip().lower()
@@ -459,11 +462,31 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
             f"DocuSign envelope {envelope_id[:8]}... changed to {status}. "
             f"Employee: {employee_email or 'unknown'}. {stage_text}"
         )
+        roster_added = False
+        roster_job_category = ""
+        if status == "completed" and employee_email:
+            tracker_record = await tracker_client.find_employee_in_tracker(
+                employee_email,
+                location=work_location,
+                job_title=job_title,
+                status_change=status_change,
+            )
+            roster_state = await staff_roster_client.find_employee_in_staff_roster(
+                employee_email,
+                location=work_location,
+                personal_email=employee_email,
+                employee_name=str(tracker_record.get("name", "") or ""),
+                position=str(tracker_record.get("position", "") or tracker_record.get("job_title", "") or job_title),
+            )
+            roster_added = bool(roster_state.get("found"))
+            roster_job_category = str(roster_state.get("job_category", "") or "")
         card = docusign_status_card(
             employee_email,
             envelope_id,
             status,
             summary,
+            roster_added=roster_added,
+            job_category=roster_job_category,
             work_location=work_location,
             job_title=job_title,
             status_change=status_change,
@@ -492,6 +515,8 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
                 work_location=work_location,
                 job_title=job_title,
                 status_change=status_change,
+                roster_added=roster_added,
+                job_category=roster_job_category,
             )
         logger.info(
             "Processed queued DocuSign job for %s in %.3fs",
@@ -554,15 +579,6 @@ async def process_background_clearance_job(payload: dict[str, Any]) -> None:
         )
         email_result = await send_background_clearance_confirmation_email(employee_email, employee_name or employee_email)
 
-        logger.info(
-            "Processed background-clearance job for %s stage_success=%s teams_success=%s email_success=%s in %.3fs",
-            employee_email or "unknown",
-            stage_result.get("success", False),
-            teams_result.get("success", False),
-            email_result.get("success", False),
-            time.perf_counter() - started,
-        )
-
         if not email_result.get("success"):
             logger.warning(
                 "Background-clearance confirmation email failed for %s: %s",
@@ -570,8 +586,11 @@ async def process_background_clearance_job(payload: dict[str, Any]) -> None:
                 email_result.get("error", "unknown error"),
             )
         logger.info(
-            "Processed queued background-clearance job for %s in %.3fs",
+            "Processed background-clearance job for %s stage_success=%s teams_success=%s email_success=%s in %.3fs",
             employee_email or "unknown",
+            stage_result.get("success", False),
+            teams_result.get("success", False),
+            email_result.get("success", False),
             time.perf_counter() - started,
         )
     except Exception:
