@@ -1,150 +1,189 @@
 Codebase Simplification Summary
-================================
+===============================
 Branch: refactor/remove-langgraph
 Date: 2026-04-01
 
 OVERVIEW
 --------
-A series of refactors to reduce code duplication, consolidate shared logic,
-and remove obsolete files. All changes are behavior-preserving -- no
-functionality was added, removed, or altered. All 68 unit tests pass with
-linter (ruff) and type checker (mypy) clean after each change.
+The repository has been simplified around a single-container LangChain-based
+runtime with deterministic workflow execution for operational paths. The
+cleanup removed legacy LangGraph-era indirection, narrowed module ownership,
+and reduced duplicated logic across Teams memory, workbook access, payload
+normalization, and state persistence.
+
+This was not purely cosmetic refactoring. The resulting codebase is simpler,
+but it also includes targeted behavior improvements:
+
+- deterministic adaptive-card actions for send-email and send-DocuSign paths
+- thread-scoped Teams memory for channel reply chains
+- rehydration of expired channel threads from durable seed context
+- bounded retention for card state and thread seed context in Cosmos
+- clearer separation between domain logic, workbook integrations, and Graph auth
 
 
-CHANGES
--------
+MAJOR STRUCTURAL CHANGES
+------------------------
 
-1. Consolidated triplicated date formatting function
+1. Replaced the old workbook utility hub with narrower modules
 
-   An identical ~18-line date formatting function existed in three places:
-   - integrations/tracker_client.py  (_format_tracker_date)
-   - mcp_server/tools_tracker.py     (_format_stage_date)
-   - mcp_server/tools_onboarding.py  (_format_stage_date)
+   The prior graph_workbook.py file had become a mixed utility module holding:
+   - Graph auth
+   - workbook/table helpers
+   - tracker/roster schema data
+   - identity helpers
+   - formatting helpers
 
-   Extracted a single `format_date()` into integrations/graph_workbook.py.
-   All three call sites now import from there.
+   It has now been split into clearer boundaries:
 
-   Files changed:
-   - src/onboarding_agent/integrations/graph_workbook.py
-   - src/onboarding_agent/integrations/tracker_client.py
-   - src/onboarding_agent/mcp_server/tools_tracker.py
-   - src/onboarding_agent/mcp_server/tools_onboarding.py
+   - src/onboarding_agent/integrations/graph/auth.py
+   - src/onboarding_agent/integrations/workbook/client.py
+   - src/onboarding_agent/integrations/workbook/helpers.py
+   - src/onboarding_agent/integrations/workbook/schema.py
+   - src/onboarding_agent/integrations/workbook/tracker_client.py
+   - src/onboarding_agent/integrations/workbook/staff_roster_client.py
+   - src/onboarding_agent/domain/identity.py
+   - src/onboarding_agent/domain/formatting.py
 
-
-2. Centralized MCP client factory functions
-
-   Six one-liner factory functions (e.g. `def _tracker() -> TrackerClient`)
-   were scattered across mcp_server/tools_*.py modules. Created a single
-   mcp_server/clients.py module with all client factories. Each tool module
-   now imports from there.
-
-   Files changed:
-   - src/onboarding_agent/mcp_server/clients.py  (new)
-   - src/onboarding_agent/mcp_server/tools_tracker.py
-   - src/onboarding_agent/mcp_server/tools_staff_roster.py
-   - src/onboarding_agent/mcp_server/tools_onboarding.py
-   - src/onboarding_agent/mcp_server/tools_teams.py
-   - src/onboarding_agent/mcp_server/tools_email.py
-   - src/onboarding_agent/mcp_server/tools_docusign.py
-   - tests/unit/test_mcp_tools.py  (updated patch target)
+   This makes external-system code live under integrations/* and shared
+   business primitives live under domain/*.
 
 
-3. Deleted obsolete migration artifacts
+2. Centralized shared MCP client factories
 
-   Two files documented the completed LangGraph removal. The commit history
-   and ARCHITECTURE.md serve as the living record.
+   Thin client factories were consolidated into:
 
-   Files removed:
-   - langgraph_removal_summary.txt
-   - docs/proposals/remove-langgraph.md
-   - docs/proposals/  (empty directory)
-   - docs/  (empty directory)
+   - src/onboarding_agent/mcp_server/clients.py
+
+   This reduced repeated client-construction helpers across the MCP tool files.
 
 
-4. Consolidated identity key normalization
+3. Centralized session-context fields
 
-   Identical `_normalize_identity_part()` and composite key-building
-   functions existed in both card_state.py and tracker_client.py. Extracted
-   `normalize_identity_part()` and `identity_key()` into graph_workbook.py.
-   Both modules now import from there.
+   Session-context allowlisting previously lived in more than one place and
+   could drift. It is now defined in:
 
-   Files changed:
-   - src/onboarding_agent/integrations/graph_workbook.py
-   - src/onboarding_agent/integrations/card_state.py
-   - src/onboarding_agent/integrations/tracker_client.py
+   - src/onboarding_agent/agent/session_context.py
+
+   Both the Teams memory layer and the agent runner use the same field list.
 
 
-5. Consolidated DocuSign envelope search logic
+4. Centralized payload extraction helpers
 
-   _check_draft_exists_sync() and _find_latest_envelope_for_employee_sync()
-   in docusign_client.py were ~65% identical -- same API call pattern, same
-   recipient matching, same identity field validation. Extracted a shared
-   _search_envelopes_sync() helper. The two public methods are now thin
-   wrappers (~10 lines each) that call the shared helper with different
-   folder/count/status parameters and shape the return dict. Removed ~60
-   lines of duplicated iteration logic.
+   Repeated payload-key normalization logic was moved into:
 
-   Files changed:
-   - src/onboarding_agent/integrations/docusign_client.py
+   - src/onboarding_agent/runtime/payloads.py
+
+   This reduces duplication between runtime/webhooks.py and runtime/jobs.py
+   and makes future webhook payload changes safer.
 
 
-6. Adaptive card action builder helper
+BEHAVIORAL SIMPLIFICATIONS
+--------------------------
 
-   Three action button constructions in adaptive_cards.py (email, docusign,
-   roster) each had ~15 lines of near-identical if/else logic to build
-   enabled vs disabled Action.Submit dicts. Extracted a single
-   `_action_button()` helper. Collapsed ~60 lines into three one-liner calls.
+5. Adaptive-card button actions are now deterministic
 
-   Files changed:
-   - src/onboarding_agent/integrations/adaptive_cards.py
+   The old hybrid path that translated card clicks into plain-text prompts and
+   sent them back through the LLM has been removed for the supported button set.
 
+   Card actions such as:
+   - send welcome email
+   - send offer letter
+   - add to staff roster
 
-7. Extracted shared job helpers in jobs.py
+   now use deterministic handlers directly in the app. Natural-language Teams
+   requests still use the LangChain agent.
 
-   _process_new_hire_submission() and _process_non_new_hire_submission()
-   duplicated tracker lookup/add logic (~20 lines each) and DocuSign draft
-   check/create logic (~22 lines each). Extracted:
-   - _ensure_tracker_record()  -- lookup or create tracker row
-   - _ensure_docusign_draft()  -- check for draft or create one
-   Both submission handlers now call these shared helpers.
-
-   Files changed:
-   - src/onboarding_agent/runtime/jobs.py
-
-
-8. Shared Graph API token utility
-
-   The pattern of creating a ClientSecretCredential, acquiring a token for
-   https://graph.microsoft.com/.default, and closing the credential was
-   repeated in four places. Extracted graph_access_token() as a module-level
-   async function in graph_workbook.py. Updated three client modules to use
-   it, removing their duplicate credential lifecycle management.
-
-   Files changed:
-   - src/onboarding_agent/integrations/graph_workbook.py
-   - src/onboarding_agent/integrations/outlook_email_client.py
-   - src/onboarding_agent/integrations/forms_client.py
-   - src/onboarding_agent/integrations/teams/messenger.py
-
-
-9. Consolidated card update logic in card_actions.py
-
-   _update_new_hire_card() and _update_docusign_status_card() had identical
-   Activity/Attachment creation and context.update_activity() logic (~20
-   lines each). Extracted _update_card_via_context() as a shared helper.
-   Both are now thin wrappers that build the card dict and delegate.
-
-   Also extracted _ACTION_TO_TOOL mapping dict, replacing duplicated
-   if/elif chains in complete_card_action() and
-   complete_card_action_without_context().
-
-   Files changed:
+   Key files:
+   - src/onboarding_agent/integrations/teams/bot.py
    - src/onboarding_agent/integrations/teams/card_actions.py
+   - src/onboarding_agent/mcp_server/tools_email.py
+
+
+6. Teams channel context is now thread-scoped
+
+   Channel conversations previously risked context bleed because memory was too
+   conversation-centric. The current implementation scopes memory to:
+
+   - channel:<conversation_id>:thread:<root_message_id>
+
+   The first proactive post seeds structured context for that root thread, and
+   replies in that thread reuse it.
+
+   Additional refinement:
+   - if the 7-day thread memory expires, the app creates a new session and
+     rehydrates it from durable thread seed context tied to the same root post
+
+   Key file:
+   - src/onboarding_agent/integrations/teams/memory.py
+
+
+7. Runtime state is now bounded by explicit lifecycles
+
+   The repo previously had some durable state with no retention policy.
+   Current lifecycle behavior:
+
+   - channel thread/session memory: 7 days
+   - thread seed context: 30 days
+   - adaptive card state: 30 days
+   - channel conversation reference: indefinite
+
+   TTL support is implemented in code through the state-store layer and mapped
+   to Cosmos per-document TTL.
+
+   Key files:
+   - src/onboarding_agent/runtime/state_store.py
+   - src/onboarding_agent/runtime/state_store_cosmos.py
+   - src/onboarding_agent/integrations/card_state.py
+   - src/onboarding_agent/integrations/teams/memory.py
+
+
+8. Workflow policies remain centralized
+
+   Non-new-hire workflow stage exclusions live in one place instead of being
+   scattered through handlers:
+
+   - src/onboarding_agent/domains/onboard/policies.py
+
+   This keeps deterministic workflow behavior explicit and easier to extend.
+
+
+REMOVED OR REDUCED LEGACY SURFACE
+---------------------------------
+
+9. Removed obsolete LangGraph removal artifacts
+
+   The migration rationale now lives in the architecture documentation and in
+   commit history. Old one-off migration summaries were removed.
+
+
+10. Removed dead card-action LLM fallback path
+
+   The card-click-to-text-command path no longer exists for supported
+   adaptive-card actions. This reduced branching in Teams message handling and
+   removed a class of ambiguity bugs.
+
+
+11. Removed the old top-level workbook client locations
+
+   The old module locations:
+   - src/onboarding_agent/integrations/tracker_client.py
+   - src/onboarding_agent/integrations/staff_roster_client.py
+
+   were moved into integrations/workbook/ to reflect actual ownership.
 
 
 VALIDATION
 ----------
-After all changes:
-- ruff check src/          All checks passed
-- mypy src/                Success: no issues found in 40 source files
-- pytest tests/ -q         68 passed, 1 warning
+Representative validation run after the current cleanup:
+
+- uv run ruff check src tests
+- uv run mypy src
+- uv run pytest tests/unit -q
+
+The focused lifecycle/thread-state updates also passed:
+
+- uv run pytest tests/unit/test_chat_history.py -q
+- uv run pytest tests/unit/test_card_state.py tests/unit/test_chat_history.py -q
+
+Known warning remains external:
+- LangChain/Pydantic v1 warning under Python 3.14

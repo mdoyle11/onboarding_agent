@@ -8,9 +8,10 @@ It answers:
 - how to validate a release
 - how to rollback
 - what to monitor
-- how CI/CD should evolve as the agent changes
+- how to test changes safely once the app is in regular use
 
 It is intentionally practical rather than exhaustive.
+
 
 ## What Is Running
 
@@ -19,30 +20,112 @@ The production deployment is one Azure Container App running:
 - the aiohttp web app
 - the Teams bot endpoint
 - the webhook endpoints
-- the in-process Azure Queue worker
+- the in-process queue worker
 - the FastMCP subprocess for tools
 
 Durable external services:
 
 - Cosmos DB
-  - `state-records`
-  - `conversation-sessions`
+  - state store container for business/UI state
+  - conversation-session container for Teams memory/session state
 - Azure Queue Storage
-  - `onboarding-jobs`
+  - onboarding job queue
 - Azure Container Registry
 - Log Analytics
 
+
+## Current Runtime Model
+
+The system uses a mixed execution model:
+
+- deterministic runtime for webhooks and adaptive-card button actions
+- LangChain agent for interactive Teams queries
+
+Operational consequences:
+
+- new-hire, DocuSign, and background-clearance webhook flows should not depend
+  on LLM tool orchestration
+- card buttons such as send-email and send-offer-letter should behave
+  deterministically
+- Teams query behavior still depends on prompt + tool quality
+
+
+## State and Retention
+
+Current retention model:
+
+- `conversation_ref`
+  - indefinite
+  - required for proactive posting back into the Teams channel
+
+- channel thread/session memory
+  - 7-day lifecycle
+
+- `thread_seed_context`
+  - 30-day TTL
+  - used to rehydrate expired channel threads when users reply to an older post
+
+- adaptive card state
+  - 30-day TTL
+  - includes `new_hire_card` and `docusign_card`
+
+TTL is implemented by the application at write time through the state-store
+layer, not by Terraform.
+
+
 ## Environments
 
-Current expectation:
+### Recommended long-term shape
 
-- one shared Azure resource group
-- one shared Cosmos account
-- one shared Storage account
-- one shared ACR
-- one app-specific Container App deployment
+Once the main app is in active daily use, new feature testing should happen in
+a separate deployed environment.
 
-Terraform only manages the app-specific layer and child resources.
+Recommended setup:
+
+- `dev` environment
+- `prod` environment
+
+With environment-specific variables such as:
+
+- `terraform.dev.tfvars`
+- `terraform.prod.tfvars`
+
+Use one Terraform configuration, not separate `main.tf` files.
+
+### Why this matters
+
+Testing new features directly in the live production app is risky because this
+system has shared operational state:
+
+- webhook queues
+- Cosmos state
+- Teams proactive cards and reply threads
+- Excel tracker and staff roster writes
+
+Separate environments reduce:
+
+- accidental production state mutation
+- queue pollution
+- false HR notifications
+- adaptive-card collisions
+- ambiguity when debugging live issues
+
+### Minimum dev/prod separation
+
+The safer baseline is:
+
+- separate Container App
+- separate queue
+- separate webhook base URL and secret
+- separate Teams test channel
+- separate Cosmos database/containers or clearly separated namespaces
+
+Prefer separate downstream non-prod integrations as well where possible:
+
+- DocuSign sandbox
+- non-prod test workbook
+- non-prod email/test recipients
+
 
 ## Deployment Inputs
 
@@ -74,6 +157,7 @@ Sensitive local-only files:
 - `teamsappPackage/`
 - `terraform.tfvars`
 
+
 ## Deployment Workflow
 
 ### 1. Sync staff roster config if needed
@@ -90,10 +174,10 @@ scripts/sync_staff_rosters_to_tfvars.sh infra/terraform/container-app/terraform.
 Default helper:
 
 ```bash
-scripts/build_and_push_container_app.sh <acr-name> <image-tag>
+scripts/build_and_push_container_app.sh
 ```
 
-If `az acr login` is flaky, manual fallback:
+Manual fallback:
 
 ```bash
 docker build --progress=plain -t <acr-login-server>/onboarding-agent:<image-tag> .
@@ -143,6 +227,7 @@ Important outputs:
 - `teams_bot_endpoint`
 - `webhook_base_url`
 
+
 ## Teams Setup
 
 ### Bot endpoint
@@ -177,7 +262,8 @@ After installation:
 1. Send one real message in the target channel
 2. Mention the bot once
 
-That seeds the conversation reference in Cosmos.
+That seeds the durable channel conversation reference in Cosmos.
+
 
 ## Smoke Test Checklist
 
@@ -209,6 +295,17 @@ Expected:
 - channel mention works
 - status summary includes tracker stages and DocuSign status
 
+### Channel thread continuity
+
+1. Trigger a proactive/adaptive-card post in the channel
+2. Reply under that post
+3. Ask a follow-up that relies on seeded context
+
+Expected:
+
+- the reply thread reuses the employee/workflow context from the root post
+- channel memory is thread-scoped, not channel-scoped
+
 ### New-hire flow
 
 Trigger one Power Automate submission.
@@ -219,7 +316,7 @@ Expected:
 2. employee is added to tracker
 3. DocuSign draft exists
 4. onboarding email draft exists
-5. Teams new-hire card posts
+5. Teams submission card posts
 
 ### Card buttons
 
@@ -232,7 +329,8 @@ Expected:
 
 - action succeeds
 - original card updates
-- no duplicate send state
+- no duplicate-send state
+- tracker/card state reflects the deterministic action
 
 ### Background clearance flow
 
@@ -241,9 +339,10 @@ Trigger one background-clearance submission.
 Expected:
 
 1. webhook returns `200`
-2. tracker attempts `Background Submission`
+2. tracker updates `Background Submission`
 3. Teams background-clearance notification posts
-4. confirmation email sends
+4. confirmation email sends or fails without poisoning the queue
+
 
 ## Common Operational Issues
 
@@ -258,306 +357,82 @@ az containerapp logs show --resource-group OnboardingAgent --name onboarding-age
 
 Typical causes:
 
-- bad startup config
-- missing env vars in the MCP subprocess
-- session-store misconfiguration
-- queue startup failure
+- bad secret/env-var value
+- Teams/Graph credential issue
+- startup failure in queue or Cosmos initialization
 
-### 2. Teams bot does not respond
+### 2. Channel proactive posts fail
 
 Check:
 
-- bot messaging endpoint
-- Teams app package host
-- manifest bot ID
-- current container logs
+- bot endpoint is correct
+- app is installed in the target team/channel
+- at least one real inbound channel activity has occurred since install
 
-### 3. Webhooks reach the app but the flow hangs
+Remember:
 
-If the server logs show:
+- proactive posting depends on a stored channel conversation reference
+- that reference is intentionally long-lived
 
-```text
-POST /webhook/... HTTP/1.1" 200
-```
+### 3. Repeated background-clearance notifications
 
-then the app is not the thing keeping the Power Automate run open.
+Likely causes:
 
-Use the regular `HTTP` action in Power Automate, not the webhook-style action.
+- poisoned queue message being retried
+- downstream confirmation-email failure after Teams notification
 
-### 4. Teams card actions say “something went wrong”
+Current behavior:
 
-If backend logs show the tool succeeded, the common issue is client timeout on
-the click path. The current implementation now acknowledges card actions
-quickly and performs the actual work in the background.
+- queue messages over the retry threshold are deleted
+- background-clearance email failure should not keep re-poisoning the message
 
-### 5. Stale card state or wrong conversation behavior
+### 4. Card actions update the wrong employee/workflow
 
-Reset runtime state if needed:
+Check:
 
-```bash
-.venv/bin/python scripts/reset_runtime_state.py \
-  --cosmos-endpoint "<endpoint>" \
-  --cosmos-key "<key>" \
-  --database "onboarding-agent" \
-  --container "state-records" \
-  --employee-email "user@example.com" \
-  --all-conversation-refs
-```
+- card payload includes `employee_email`, `work_location`, `job_title`,
+  and `status_change`
+- tracker row identity is unique on the composite identity
+- DocuSign draft was created with current custom-field metadata
 
-Then reseed the channel by sending a new message to the bot.
+### 5. Old channel thread reply has no context
 
-### 6. ACR login is flaky
+Check:
 
-If `az acr login` hangs or times out but direct registry access works, use
-manual `docker login` and `docker push` as a fallback.
+- reply is actually under the original post
+- thread seed context has not expired yet
+- card state or seed context still exists in Cosmos
+
+Current behavior:
+
+- thread memory expires after 7 days
+- thread seed context persists for 30 days and should rehydrate the thread
+
 
 ## Rollback
 
-The simplest rollback is image-based.
+Use an older image tag that is already in ACR and re-apply Terraform with that
+tag.
 
-1. Identify the last good image tag
-2. Put that tag back into `terraform.tfvars`
-3. Apply Terraform again
+Typical rollback flow:
 
-Because the state lives outside the container, rollback is normally low-risk.
-
-Rollback command sequence:
+1. set `image_tag` in the chosen tfvars file to the prior known-good tag
+2. run:
 
 ```bash
 scripts/deploy_container_app.sh infra/terraform/container-app/terraform.tfvars apply
 ```
 
-after restoring the prior `image_tag`.
+Rollback should not require rebuilding an image if the prior tag still exists
+in ACR.
 
-## Logs and Diagnostics
 
-Primary production diagnostics:
+## Operational Direction
 
-```bash
-az containerapp logs show --resource-group OnboardingAgent --name onboarding-agent --tail 200
-az containerapp revision list --resource-group OnboardingAgent --name onboarding-agent --output table
-```
+Current recommended direction:
 
-Important log families:
-
-- aiohttp access logs
-- Teams bot logs
-- queue job logs
-- Graph request timing logs
-- DocuSign client logs
-
-Useful patterns:
-
-- `Processed queued new-hire job`
-- `Processed queued background-clearance job`
-- `Tool ... result=`
-- `Updated new-hire card`
-- `Graph invocation failed`
-- `Application startup failed`
-
-## Data and Retention
-
-### State records
-
-`state-records` contains:
-
-- conversation references
-- card state
-- other application-level durable state
-
-This is business/UI state and should remain durable.
-
-### Conversation sessions
-
-`conversation-sessions` stores ephemeral Teams session metadata and chat
-history continuity.
-
-This data is intentionally short-lived and should use TTL so conversational
-memory does not grow without bound.
-
-Current guidance:
-
-- keep this data separate from durable application state
-- use TTL to expire stale sessions automatically
-
-## CI/CD Considerations
-
-This project can be deployed manually today, but if you want to keep improving
-the agent safely, CI/CD needs to protect two different concerns:
-
-1. normal application correctness
-2. agent behavior drift
-
-Those are not the same problem.
-
-### Recommended pipeline stages
-
-#### Stage 1: Static validation
-
-Run on every PR:
-
-- Python syntax validation
-- dependency install
-- unit tests
-- Terraform formatting
-- shell script linting if added later
-
-Minimum useful checks:
-
-```bash
-uv sync
-python3 -m py_compile src/onboarding_agent/**/*.py
-uv run python -m pytest tests/unit -q
-terraform fmt -check infra/terraform/container-app
-```
-
-#### Stage 2: Build validation
-
-Run on every PR that changes runtime or deployment code:
-
-- Docker build
-- package install inside image
-
-This catches:
-
-- broken Docker context
-- missing files
-- wrong template paths
-- missing runtime dependencies
-
-#### Stage 3: Non-prod deploy
-
-On merge to a deployment branch:
-
-- build image
-- push immutable tag
-- deploy to a non-prod Container App
-
-Use the same Terraform module with different tfvars.
-
-#### Stage 4: Smoke tests
-
-Run lightweight hosted checks after deploy:
-
-- `/api/messages` probe
-- Teams bot DM
-- one synthetic webhook
-- one status query
-
-This is the first stage that actually validates the hosted integration chain.
-
-### What CI can verify well
-
-CI is good at validating:
-
-- syntax
-- imports
-- unit logic
-- Docker build integrity
-- Terraform validity
-- scripted deployment steps
-
-### What CI cannot verify well by itself
-
-CI cannot fully guarantee:
-
-- LLM chooses the ideal tools every time
-- Teams client behavior is perfect
-- Graph workbook schemas remain stable
-- DocuSign callbacks are behaving correctly
-- Power Automate semantics remain unchanged
-
-That means CI/CD must be paired with targeted operational smoke tests.
-
-## Continuous Improvement Strategy For The Agent
-
-The safest way to improve this system is to separate changes into three buckets.
-
-### 1. Deterministic platform changes
-
-Examples:
-
-- queue handling
-- webhook auth
-- Cosmos storage
-- deployment scripts
-- Terraform
-
-These should be improved aggressively because they do not depend on model
-judgment.
-
-### 2. Agent behavior changes
-
-Examples:
-
-- system prompt changes
-- tool descriptions
-- tool naming
-- status summarization behavior
-
-These need regression awareness, because small prompt changes can alter tool
-selection in surprising ways.
-
-Recommended practice:
-
-- keep prompt changes small
-- test them against a fixed set of representative onboarding scenarios
-- document why the prompt changed
-
-### 3. Critical side effects
-
-Examples:
-
-- tracker row creation
-- stage updates
-- card state updates
-- webhook acknowledgment
-
-These are the places where pure agentic behavior should be treated carefully.
-Not everything needs to be deterministic, but correctness-critical writes should
-not be left ambiguous if they repeatedly prove flaky.
-
-### Practical rule for future work
-
-When adding a new step or tool, ask:
-
-1. Is this step optional or judgment-heavy?
-   If yes, it can stay agent-driven.
-
-2. Is this step the system-of-record write that defines success?
-   If yes, it may eventually deserve deterministic orchestration.
-
-This prevents overcorrecting into a rigid workflow engine while still keeping
-the backbone reliable.
-
-## Suggested Future CI/CD Improvements
-
-When the manual workflow becomes repetitive, add these in order:
-
-1. GitHub Actions for unit tests and Docker build
-2. Automatic image tagging from commit SHA
-3. Staging deploy workflow
-4. Post-deploy smoke test job
-5. Optional production promotion workflow
-
-Do not start with a fully automated production release pipeline. The repo is
-still evolving quickly enough that manual approval and inspection remain useful.
-
-## Summary
-
-The current operating model is:
-
-- one hosted Container App
-- durable ingress through Azure Queue
-- durable app state in Cosmos
-- LangChain agent runner + MCP for flexible agent behavior
-- manual but workable deployment flow
-
-That is a good base for continued iteration.
-
-The next maturity step is not a rewrite. It is:
-
-- lightweight CI
-- repeatable staging deploys
-- smoke tests around the highest-value workflows
-- careful changes to prompts and critical side-effect paths
+- keep production workflow execution deterministic
+- keep the LLM focused on interactive Teams queries
+- use a separate deployed dev environment for feature validation
+- keep retention explicit for every durable state category except the channel
+  conversation reference needed for proactive posting
