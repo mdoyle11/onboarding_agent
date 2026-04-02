@@ -68,6 +68,11 @@ The app is one deployable service with four internal layers:
 4. External integrations
    - `src/onboarding_agent/integrations/`
 
+There is also a small cross-domain business-primitive layer:
+
+- `src/onboarding_agent/domain/`
+  - shared identity and formatting helpers used across workflow domains
+
 ## Request Flow
 
 ### Teams Query Flow
@@ -234,13 +239,21 @@ Excel or DocuSign primitives itself.
 
 Key integration modules:
 
-- `integrations/graph_workbook.py`
-  - shared Excel/Graph workbook utilities
+- `integrations/graph/`
+  - Graph auth and shared Microsoft Graph access helpers
 
-- `integrations/tracker_client.py`
+- `integrations/workbook/`
+  - workbook client behavior
+  - tracker/staff-roster schema aliases
+  - workbook row/header/stage helpers
+
+- `integrations/graph_workbook.py`
+  - temporary compatibility shim re-exporting workbook helpers during refactor
+
+- `integrations/workbook/tracker_client.py`
   - tracker record identity, writes, stage updates, listing
 
-- `integrations/staff_roster_client.py`
+- `integrations/workbook/staff_roster_client.py`
   - staff-roster capacity and add flows
 
 - `integrations/docusign_client.py`
@@ -251,6 +264,25 @@ Key integration modules:
 
 - `integrations/teams/`
   - Teams runtime, proactive messaging, card actions, replies
+
+## Domain Primitives
+
+Shared business primitives are separated from both integrations and
+workflow-specific domains:
+
+- `domain/identity.py`
+  - composite identity normalization and key generation
+
+- `domain/formatting.py`
+  - shared display/date formatting logic
+
+Workflow-specific policy and orchestration still live in:
+
+- `domains/onboard/`
+
+This keeps reusable business rules out of `integrations/` while avoiding
+premature onboarding-specific placement for logic that will later be shared
+with offboarding workflows.
 
 ## Deployment Shape
 

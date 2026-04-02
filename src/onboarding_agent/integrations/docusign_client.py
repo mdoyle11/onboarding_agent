@@ -147,12 +147,26 @@ class DocuSignClient:
         fields = getattr(envelope, "custom_fields", None)
         if fields is None:
             return {}
-        text_fields = getattr(fields, "text_custom_fields", None) or []
-        return {
-            str(getattr(field, "name", "") or ""): str(getattr(field, "value", "") or "")
-            for field in text_fields
-            if getattr(field, "name", "")
-        }
+        if isinstance(fields, dict):
+            text_fields = fields.get("textCustomFields") or fields.get("text_custom_fields") or []
+        else:
+            text_fields = (
+                getattr(fields, "text_custom_fields", None)
+                or getattr(fields, "textCustomFields", None)
+                or []
+            )
+
+        result: dict[str, str] = {}
+        for field in text_fields:
+            if isinstance(field, dict):
+                name = str(field.get("name", "") or "")
+                value = str(field.get("value", "") or "")
+            else:
+                name = str(getattr(field, "name", "") or "")
+                value = str(getattr(field, "value", "") or "")
+            if name:
+                result[name] = value
+        return result
 
     def _matches_identity_fields(
         self,
@@ -171,6 +185,74 @@ class DocuSignClient:
             and field_map.get("status_change", "").strip().lower() != status_change.strip().lower()
         )
 
+    def _search_envelopes_sync(
+        self,
+        employee_email: str,
+        *,
+        folder_id: str,
+        count: str,
+        require_status: str = "",
+        work_location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> tuple[str, str] | None:
+        """Search a DocuSign folder for the first envelope matching *employee_email*.
+
+        Returns ``(envelope_id, status)`` on match, or ``None``.
+        """
+        api_client = self._get_api_client()
+        envelopes_api = EnvelopesApi(api_client)
+        folders_api = FoldersApi(api_client)
+        result = folders_api.search(
+            account_id=settings.docusign_account_id,
+            search_folder_id=folder_id,
+            include_recipients="true",
+            order="desc",
+            order_by="created",
+            count=count,
+        )
+        normalized_email = employee_email.lower()
+
+        for item in (result.folder_items or []):
+            envelope_id = item.envelope_id or ""
+            actual_status = (item.status or "").lower()
+            if not envelope_id:
+                continue
+            if require_status and actual_status != require_status:
+                continue
+
+            try:
+                recipients_result = envelopes_api.list_recipients(
+                    account_id=settings.docusign_account_id,
+                    envelope_id=envelope_id,
+                )
+                recipient_emails = {
+                    (signer.email or "").lower()
+                    for signer in (recipients_result.signers or [])
+                    if signer.email
+                }
+                if normalized_email not in recipient_emails:
+                    continue
+                if work_location or job_title or status_change:
+                    envelope = envelopes_api.get_envelope(
+                        account_id=settings.docusign_account_id,
+                        envelope_id=envelope_id,
+                        include="custom_fields",
+                    )
+                    if not self._matches_identity_fields(
+                        self._custom_field_map(envelope),
+                        work_location=work_location,
+                        job_title=job_title,
+                        status_change=status_change,
+                    ):
+                        continue
+            except ApiException:
+                logger.info("Ignoring stale envelope reference %s", envelope_id)
+                continue
+
+            return envelope_id, actual_status
+        return None
+
     def _check_draft_exists_sync(
         self,
         employee_email: str,
@@ -179,63 +261,17 @@ class DocuSignClient:
         status_change: str = "",
     ) -> dict[str, Any]:
         try:
-            api_client = self._get_api_client()
-            envelopes_api = EnvelopesApi(api_client)
-            folders_api = FoldersApi(api_client)
-            result = folders_api.search(
-                account_id=settings.docusign_account_id,
-                search_folder_id="drafts",
-                include_recipients="true",
-                order="desc",
-                order_by="created",
+            match = self._search_envelopes_sync(
+                employee_email,
+                folder_id="drafts",
                 count="25",
+                require_status="created",
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
             )
-            items = result.folder_items or []
-            for item in items:
-                envelope_id = item.envelope_id or ""
-                actual_status = (item.status or "").lower()
-                if not envelope_id or actual_status != "created":
-                    continue
-
-                try:
-                    recipients_result = envelopes_api.list_recipients(
-                        account_id=settings.docusign_account_id,
-                        envelope_id=envelope_id,
-                    )
-                    recipient_emails = {
-                        (signer.email or "").lower()
-                        for signer in (recipients_result.signers or [])
-                        if signer.email
-                    }
-                    if employee_email.lower() not in recipient_emails:
-                        logger.info(
-                            "Ignoring draft %s for %s because recipients=%s",
-                            envelope_id,
-                            employee_email,
-                            sorted(recipient_emails),
-                        )
-                        continue
-                    if work_location or job_title or status_change:
-                        envelope = envelopes_api.get_envelope(
-                            account_id=settings.docusign_account_id,
-                            envelope_id=envelope_id,
-                        )
-                        if not self._matches_identity_fields(
-                            self._custom_field_map(envelope),
-                            work_location=work_location,
-                            job_title=job_title,
-                            status_change=status_change,
-                        ):
-                            continue
-                except ApiException:
-                    logger.info("Ignoring stale draft reference %s", envelope_id)
-                    continue
-
-                return {
-                    "exists": True,
-                    "envelope_id": envelope_id,
-                    "status": actual_status,
-                }
+            if match:
+                return {"exists": True, "envelope_id": match[0], "status": match[1]}
             return {"exists": False, "envelope_id": ""}
         except ApiException as exc:
             logger.exception("check_draft_exists failed")
@@ -249,60 +285,16 @@ class DocuSignClient:
         status_change: str = "",
     ) -> dict[str, Any]:
         try:
-            api_client = self._get_api_client()
-            envelopes_api = EnvelopesApi(api_client)
-            folders_api = FoldersApi(api_client)
-            result = folders_api.search(
-                account_id=settings.docusign_account_id,
-                search_folder_id="all",
-                include_recipients="true",
-                order="desc",
-                order_by="created",
+            match = self._search_envelopes_sync(
+                employee_email,
+                folder_id="all",
                 count="50",
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
             )
-            items = result.folder_items or []
-            normalized_email = employee_email.lower()
-
-            for item in items:
-                envelope_id = item.envelope_id or ""
-                actual_status = (item.status or "").lower()
-                if not envelope_id:
-                    continue
-
-                try:
-                    recipients_result = envelopes_api.list_recipients(
-                        account_id=settings.docusign_account_id,
-                        envelope_id=envelope_id,
-                    )
-                    recipient_emails = {
-                        (signer.email or "").lower()
-                        for signer in (recipients_result.signers or [])
-                        if signer.email
-                    }
-                    if normalized_email not in recipient_emails:
-                        continue
-                    if work_location or job_title or status_change:
-                        envelope = envelopes_api.get_envelope(
-                            account_id=settings.docusign_account_id,
-                            envelope_id=envelope_id,
-                        )
-                        if not self._matches_identity_fields(
-                            self._custom_field_map(envelope),
-                            work_location=work_location,
-                            job_title=job_title,
-                            status_change=status_change,
-                        ):
-                            continue
-                except ApiException:
-                    logger.info("Ignoring stale envelope reference %s", envelope_id)
-                    continue
-
-                return {
-                    "found": True,
-                    "envelope_id": envelope_id,
-                    "status": actual_status,
-                }
-
+            if match:
+                return {"found": True, "envelope_id": match[0], "status": match[1]}
             return {"found": False, "envelope_id": "", "status": ""}
         except ApiException as exc:
             logger.exception("find_latest_envelope_for_employee failed")

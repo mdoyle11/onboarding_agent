@@ -8,18 +8,15 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from onboarding_agent.domain.formatting import format_date
 from onboarding_agent.integrations.forms_client import FormsClient
-from onboarding_agent.integrations.graph_workbook import ACTIVE_STAGES, ALL_STAGES
-from onboarding_agent.integrations.tracker_client import TrackerClient
+from onboarding_agent.integrations.workbook.schema import ACTIVE_STAGES, ALL_STAGES
+from onboarding_agent.mcp_server.clients import tracker as _tracker
 
 logger = logging.getLogger(__name__)
 
 _LIST_EMPLOYEE_PREVIEW_LIMIT = 25
 _DEFAULT_RECENT_DAYS = 30
-
-
-def _tracker() -> TrackerClient:
-    return TrackerClient()
 
 
 def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
@@ -55,7 +52,7 @@ def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
     email = str(result.get("email", "") or "")
     status = str(result.get("status", "") or "")
     location = str(result.get("location", "") or "")
-    start_date = _format_stage_date(str(result.get("start_date", "") or ""))
+    start_date = format_date(str(result.get("start_date", "") or ""))
 
     summary_bits = [f"Found {name or email}"]
     if email:
@@ -97,30 +94,9 @@ def _employee_preview(employee: dict[str, Any]) -> dict[str, str]:
         "location": str(employee.get("location", "") or ""),
         "job_title": str(employee.get("job_title", "") or ""),
         "position": str(employee.get("position", "") or employee.get("job_title", "") or ""),
-        "start_date": _format_stage_date(str(employee.get("start_date", "") or "")),
+        "start_date": format_date(str(employee.get("start_date", "") or "")),
         "active_stage": active_stage,
     }
-
-
-def _format_stage_date(value: str) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-        try:
-            parsed = datetime.strptime(raw, fmt).date()
-            return parsed.strftime("%m/%d/%Y")
-        except ValueError:
-            continue
-
-    try:
-        excel_serial = float(raw)
-        excel_epoch = date(1899, 12, 30)
-        parsed = excel_epoch.fromordinal(excel_epoch.toordinal() + int(excel_serial))
-        return parsed.strftime("%m/%d/%Y")
-    except ValueError:
-        return raw
 
 
 def _parse_tracker_date(value: str) -> date | None:
@@ -273,7 +249,7 @@ def register(mcp: FastMCP) -> None:
             }
 
         stages: dict[str, str] = result.get("stages", {})
-        formatted_stages = {stage: _format_stage_date(value) for stage, value in stages.items()}
+        formatted_stages = {stage: format_date(value) for stage, value in stages.items()}
         name = result.get("name", employee_email)
 
         completed = [stage for stage in ALL_STAGES if formatted_stages.get(stage)]

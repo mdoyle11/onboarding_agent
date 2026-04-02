@@ -7,18 +7,24 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import unquote
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from onboarding_agent.agent.session_context import SESSION_CONTEXT_FIELDS
 from onboarding_agent.runtime import state_store as store_mod
+from onboarding_agent.runtime.state_store import TTL_SECONDS_FIELD
 
 logger = logging.getLogger(__name__)
 
 NS_CHAT_HISTORY = "chat_history"
 NS_CONVERSATION_SESSION = "conversation_session"
 NS_SESSION_CONTEXT = "session_context"
+NS_THREAD_SEED_CONTEXT = "thread_seed_context"
 _SESSION_INACTIVITY_LIMIT = timedelta(minutes=30)
 _SESSION_MAX_TURNS = 10
+_CHANNEL_THREAD_TTL = timedelta(days=7)
+_THREAD_SEED_CONTEXT_TTL_SECONDS = 30 * 24 * 60 * 60
 _CHAT_HISTORY_LIMIT = 4
 _EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 SessionContext = dict[str, Any]
@@ -53,10 +59,44 @@ def _conversation_category(activity: Any) -> str:
     return "dm"
 
 
+def _normalize_channel_conversation_id(value: str) -> str:
+    return value.split(";messageid=", 1)[0]
+
+
+def _normalize_stored_channel_id(value: str) -> str:
+    return _normalize_channel_conversation_id(unquote(str(value or "").strip()))
+
+
+def _channel_thread_root_id(activity: Any) -> str:
+    reply_to_id = str(getattr(activity, "reply_to_id", "") or "").strip()
+    if reply_to_id:
+        return reply_to_id
+
+    conversation_id = str(getattr(getattr(activity, "conversation", None), "id", "") or "").strip()
+    if ";messageid=" in conversation_id:
+        return conversation_id.split(";messageid=", 1)[1]
+
+    activity_id = str(getattr(activity, "id", "") or "").strip()
+    if activity_id:
+        return activity_id
+    return ""
+
+
+def _is_channel_thread_activity(activity: Any) -> bool:
+    conversation_type = getattr(getattr(activity, "conversation", None), "conversation_type", "") or ""
+    return conversation_type == "channel"
+
+
 def _conversation_key(activity: Any) -> str:
     conversation_id = getattr(getattr(activity, "conversation", None), "id", "") or ""
     if conversation_id:
-        return f"{_conversation_category(activity)}:{conversation_id}"
+        category = _conversation_category(activity)
+        if _is_channel_thread_activity(activity):
+            conversation_id = _normalize_channel_conversation_id(conversation_id)
+            thread_root_id = _channel_thread_root_id(activity)
+            if thread_root_id:
+                return f"{category}:{conversation_id}:thread:{thread_root_id}"
+        return f"{category}:{conversation_id}"
 
     from_property = getattr(activity, "from_property", None)
     user_id = getattr(from_property, "aad_object_id", "") or getattr(from_property, "id", "") or "anon"
@@ -64,6 +104,10 @@ def _conversation_key(activity: Any) -> str:
 
 
 def _should_rotate(session: dict[str, Any], now: datetime) -> bool:
+    if str(session.get("category", "")).strip() == "channel":
+        expires_at = _parse_timestamp(str(session.get("expires_at", "")))
+        return expires_at is None or now >= expires_at
+
     turn_count = int(session.get("turn_count", 0) or 0)
     if turn_count >= _SESSION_MAX_TURNS:
         return True
@@ -75,30 +119,108 @@ def _should_rotate(session: dict[str, Any], now: datetime) -> bool:
     return now - last_activity_at > _SESSION_INACTIVITY_LIMIT
 
 
+async def _delete_session_artifacts(key: str, session_id: str) -> None:
+    session_key = f"teams:{key}:{session_id}"
+    await _store().delete(NS_CHAT_HISTORY, session_key)
+    await _store().delete(NS_SESSION_CONTEXT, session_key)
+
+
+def _channel_thread_store_key(channel_id: str, message_id: str) -> str:
+    conversation_id = _normalize_stored_channel_id(channel_id)
+    root_message_id = str(message_id or "").strip()
+    if not conversation_id or not root_message_id:
+        return ""
+    return f"channel:{conversation_id}:thread:{root_message_id}"
+
+
 async def get_or_create_session_key(activity: Any) -> str:
     """Return the current Teams session key, rotating when needed."""
     now = _now_utc()
     key = _conversation_key(activity)
     session = await _store().get(NS_CONVERSATION_SESSION, key)
+    is_channel_thread = _is_channel_thread_activity(activity)
 
     if session is None or _should_rotate(session, now):
+        if session is not None:
+            previous_session_id = str(session.get("session_id", "")).strip()
+            if previous_session_id:
+                await _delete_session_artifacts(key, previous_session_id)
         session_id = _session_id()
         turn_count = 1
     else:
         session_id = str(session.get("session_id", "")).strip() or _session_id()
         turn_count = int(session.get("turn_count", 0) or 0) + 1
 
+    payload: dict[str, Any] = {
+        "session_id": session_id,
+        "last_activity_at": now.isoformat().replace("+00:00", "Z"),
+        "category": _conversation_category(activity),
+    }
+    if is_channel_thread:
+        payload["expires_at"] = (now + _CHANNEL_THREAD_TTL).isoformat().replace("+00:00", "Z")
+    else:
+        payload["turn_count"] = turn_count
+
+    await _store().put(
+        NS_CONVERSATION_SESSION,
+        key,
+        payload,
+    )
+    session_key = f"teams:{key}:{session_id}"
+    if is_channel_thread:
+        seeded_context = await _load_thread_seed_context(key)
+        if seeded_context:
+            await merge_session_context(session_key, seeded_context)
+    return session_key
+
+
+async def seed_channel_thread_context(
+    channel_id: str,
+    message_id: str,
+    context: SessionContext,
+) -> str:
+    """Seed session context for a proactive channel thread rooted at *message_id*."""
+    key = _channel_thread_store_key(channel_id, message_id)
+    if not key:
+        return ""
+
+    now = _now_utc()
+    session = await _store().get(NS_CONVERSATION_SESSION, key)
+
+    if session is None or _should_rotate(session, now):
+        if session is not None:
+            previous_session_id = str(session.get("session_id", "")).strip()
+            if previous_session_id:
+                await _delete_session_artifacts(key, previous_session_id)
+        session_id = _session_id()
+    else:
+        session_id = str(session.get("session_id", "")).strip() or _session_id()
+
     await _store().put(
         NS_CONVERSATION_SESSION,
         key,
         {
             "session_id": session_id,
-            "turn_count": turn_count,
             "last_activity_at": now.isoformat().replace("+00:00", "Z"),
-            "category": _conversation_category(activity),
+            "category": "channel",
+            "expires_at": (now + _CHANNEL_THREAD_TTL).isoformat().replace("+00:00", "Z"),
         },
     )
-    return f"teams:{key}:{session_id}"
+    session_key = f"teams:{key}:{session_id}"
+    if context:
+        await _store().put(NS_THREAD_SEED_CONTEXT, key, {
+            **_sanitize_session_context(context),
+            TTL_SECONDS_FIELD: _THREAD_SEED_CONTEXT_TTL_SECONDS,
+        })
+        await merge_session_context(session_key, context)
+    return session_key
+
+
+async def _load_thread_seed_context(key: str) -> SessionContext:
+    record = await _store().get(NS_THREAD_SEED_CONTEXT, key)
+    if record is None or not isinstance(record, dict):
+        return {}
+    return _sanitize_session_context(record)
 
 
 def serialize_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
@@ -184,27 +306,12 @@ async def load_session_context(session_key: str) -> SessionContext:
     if record is None or not isinstance(record, dict):
         return {}
 
-    allowed_keys = {
-        "employee_email",
-        "employee_name",
-        "intent",
-        "pending_confirmation",
-        "envelope_id",
-        "job_category",
-        "last_updated_at",
-    }
-    return {
-        key: value for key, value in record.items()
-        if key in allowed_keys and value not in (None, "")
-    }
+    return _sanitize_session_context(record)
 
 
 async def save_session_context(session_key: str, context: SessionContext) -> None:
     """Persist compact structured session context for a Teams conversation."""
-    payload: SessionContext = {
-        key: value for key, value in context.items()
-        if value not in (None, "")
-    }
+    payload = _sanitize_session_context(context)
     if payload:
         payload["last_updated_at"] = _now_utc().isoformat().replace("+00:00", "Z")
     await _store().put(NS_SESSION_CONTEXT, session_key, payload)
@@ -243,3 +350,10 @@ def extract_context_patch_from_text(text: str) -> SessionContext:
         patch["intent"] = "background_clearance"
 
     return patch
+
+
+def _sanitize_session_context(context: SessionContext) -> SessionContext:
+    return {
+        key: value for key, value in context.items()
+        if key in SESSION_CONTEXT_FIELDS and value not in (None, "")
+    }

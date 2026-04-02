@@ -7,9 +7,9 @@ from time import perf_counter
 from typing import Any
 
 import aiohttp
-from azure.identity.aio import ClientSecretCredential
 
 from onboarding_agent.config import settings
+from onboarding_agent.integrations.graph.auth import graph_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +18,27 @@ class TeamsMessenger:
     """Send Teams notifications via proactive messaging and Graph APIs."""
 
     async def send_channel_notification(
-        self, channel_id: str, message: str, card: dict[str, Any] | None = None
+        self,
+        channel_id: str,
+        message: str,
+        card: dict[str, Any] | None = None,
+        session_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Post a message to a Teams channel via Agents SDK proactive messaging."""
         started = perf_counter()
         from onboarding_agent.integrations.adaptive_cards import generic_notification_card
+        from onboarding_agent.integrations.teams.memory import seed_channel_thread_context
         from onboarding_agent.integrations.teams.proactive import send_proactive_message
 
         if card is None:
             card = generic_notification_card(title="Onboarding Agent", message=message)
         result = await send_proactive_message(channel_id, message, card=card)
+        if result.get("success") and result.get("message_id") and session_context:
+            await seed_channel_thread_context(
+                channel_id,
+                str(result["message_id"]),
+                session_context,
+            )
         logger.info(
             "Teams channel notification to %s completed in %.3fs success=%s",
             channel_id,
@@ -38,14 +49,9 @@ class TeamsMessenger:
 
     async def send_direct_message(self, user_id: str, message: str) -> dict[str, Any]:
         """Create or reuse a 1:1 chat and post a message."""
-        cred = ClientSecretCredential(
-            tenant_id=settings.azure_tenant_id,
-            client_id=settings.azure_client_id,
-            client_secret=settings.azure_client_secret,
-        )
         try:
-            token = await cred.get_token("https://graph.microsoft.com/.default")
-            headers = {"Authorization": f"Bearer {token.token}", "Content-Type": "application/json"}
+            token = await graph_access_token()
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
             async with aiohttp.ClientSession() as session:
                 chat_payload = {
@@ -78,8 +84,6 @@ class TeamsMessenger:
         except Exception as exc:
             logger.exception("send_direct_message failed")
             return {"success": False, "chat_id": "", "error": str(exc)}
-        finally:
-            await cred.close()
 
     async def send_reply(self, activity_id: str, message: str) -> dict[str, Any]:
         """Reply in a Teams thread."""

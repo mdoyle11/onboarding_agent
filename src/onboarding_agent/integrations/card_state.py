@@ -5,12 +5,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from onboarding_agent.domain.identity import identity_key as _card_key
+from onboarding_agent.domain.identity import normalize_identity_part
 from onboarding_agent.runtime import state_store as store_mod
+from onboarding_agent.runtime.state_store import TTL_SECONDS_FIELD
 
 logger = logging.getLogger(__name__)
 
 NS_NEW_HIRE = "new_hire_card"
 NS_DOCUSIGN = "docusign_card"
+_CARD_STATE_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 def _store() -> store_mod.StateStore:
@@ -18,17 +22,11 @@ def _store() -> store_mod.StateStore:
     return store_mod.store
 
 
-def _normalize_identity_part(value: str) -> str:
-    return str(value or "").strip().lower()
-
-
-def _card_key(employee_email: str, work_location: str = "", job_title: str = "", status_change: str = "") -> str:
-    return "|".join([
-        _normalize_identity_part(employee_email),
-        _normalize_identity_part(work_location),
-        _normalize_identity_part(job_title),
-        _normalize_identity_part(status_change),
-    ])
+def _card_record(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **payload,
+        TTL_SECONDS_FIELD: _CARD_STATE_TTL_SECONDS,
+    }
 
 
 async def _resolve_card_key(
@@ -41,7 +39,7 @@ async def _resolve_card_key(
     if work_location or job_title or status_change:
         return _card_key(employee_email, work_location, job_title, status_change)
 
-    email_key = _normalize_identity_part(employee_email)
+    email_key = normalize_identity_part(employee_email)
     exact_key = _card_key(employee_email)
     exact_card = await _store().get(namespace, exact_key)
     if exact_card is not None:
@@ -73,7 +71,7 @@ async def save_new_hire_card(
     allow_docusign_action: bool = True,
 ) -> None:
     key = _card_key(employee_email, work_location, job_title, status_change)
-    await _store().put(NS_NEW_HIRE, key, {
+    await _store().put(NS_NEW_HIRE, key, _card_record({
         "channel_id": channel_id,
         "message_id": message_id,
         "employee_name": employee_name,
@@ -89,7 +87,7 @@ async def save_new_hire_card(
         "docusign_sent": False,
         "allow_email_action": allow_email_action,
         "allow_docusign_action": allow_docusign_action,
-    })
+    }))
 
 
 async def reset_new_hire_card_actions(
@@ -107,7 +105,7 @@ async def reset_new_hire_card_actions(
         return
     card["email_sent"] = False
     card["docusign_sent"] = False
-    await _store().put(NS_NEW_HIRE, key, card)
+    await _store().put(NS_NEW_HIRE, key, _card_record(card))
 
 
 async def get_new_hire_card(
@@ -141,7 +139,7 @@ async def mark_new_hire_action_complete(
     elif action == "send_docusign":
         card["docusign_sent"] = True
 
-    await _store().put(NS_NEW_HIRE, key, card)
+    await _store().put(NS_NEW_HIRE, key, _card_record(card))
     return card
 
 
@@ -193,7 +191,7 @@ async def save_docusign_status_card(
     status_change: str = "",
 ) -> None:
     key = _card_key(employee_email, work_location, job_title, status_change)
-    await _store().put(NS_DOCUSIGN, key, {
+    await _store().put(NS_DOCUSIGN, key, _card_record({
         "channel_id": channel_id,
         "message_id": message_id,
         "employee_email": employee_email,
@@ -205,7 +203,7 @@ async def save_docusign_status_card(
         "status_change": status_change,
         "roster_added": False,
         "job_category": "",
-    })
+    }))
 
 
 async def get_docusign_status_card(
@@ -236,7 +234,7 @@ async def mark_docusign_roster_complete(
 
     card["roster_added"] = True
     card["job_category"] = job_category
-    await _store().put(NS_DOCUSIGN, key, card)
+    await _store().put(NS_DOCUSIGN, key, _card_record(card))
     return card
 
 

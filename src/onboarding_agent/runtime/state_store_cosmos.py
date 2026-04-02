@@ -9,7 +9,7 @@ from typing import Any
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
-from onboarding_agent.runtime.state_store import StateStore
+from onboarding_agent.runtime.state_store import TTL_SECONDS_FIELD, StateStore
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +48,21 @@ class CosmosStateStore(StateStore):
             return None
 
     async def put(self, namespace: str, key: str, value: dict[str, Any]) -> None:
-        self._container.upsert_item({
+        payload = {
+            item_key: item_value
+            for item_key, item_value in value.items()
+            if item_key != TTL_SECONDS_FIELD
+        }
+        item: dict[str, Any] = {
             "id": self._doc_id(namespace, key),
             "namespace": namespace,
             "key": key,
-            "payload": value,
-        })
+            "payload": payload,
+        }
+        ttl_seconds = value.get(TTL_SECONDS_FIELD)
+        if isinstance(ttl_seconds, int) and ttl_seconds > 0:
+            item["ttl"] = ttl_seconds
+        self._container.upsert_item(item)
 
     async def delete(self, namespace: str, key: str) -> None:
         with suppress(CosmosResourceNotFoundError):

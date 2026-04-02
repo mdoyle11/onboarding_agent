@@ -9,6 +9,29 @@ from __future__ import annotations
 from typing import Any
 
 
+def _action_button(
+    action: str,
+    title: str,
+    completed_title: str,
+    is_complete: bool,
+    employee_email: str,
+    work_location: str = "",
+    job_title: str = "",
+    status_change: str = "",
+) -> dict[str, Any]:
+    """Build an Adaptive Card Action.Submit button with optional completed state."""
+    data = {
+        "action": action,
+        "employee_email": employee_email,
+        "work_location": work_location,
+        "job_title": job_title,
+        "status_change": status_change,
+    }
+    if is_complete:
+        return {"type": "Action.Submit", "title": completed_title, "isEnabled": False, "data": data}
+    return {"type": "Action.Submit", "title": title, "data": data}
+
+
 def new_hire_card(
     employee_name: str,
     employee_email: str,
@@ -26,68 +49,12 @@ def new_hire_card(
 ) -> dict[str, Any]:
     """Card sent when a new hire webhook triggers the pipeline."""
     card_title = title or f"{status_change or 'Submission'} Requested"
+    identity = dict(employee_email=employee_email, work_location=work_location, job_title=job_title, status_change=status_change)
     actions: list[dict[str, Any]] = []
     if allow_email_action:
-        if email_sent:
-            actions.append(
-                {
-                    "type": "Action.Submit",
-                    "title": "\u2713 Welcome Email Sent",
-                    "isEnabled": False,
-                    "data": {
-                        "action": "send_onboarding_email",
-                        "employee_email": employee_email,
-                        "work_location": work_location,
-                        "job_title": job_title,
-                        "status_change": status_change,
-                    },
-                }
-            )
-        else:
-            actions.append(
-                {
-                    "type": "Action.Submit",
-                    "title": "Send Welcome Email",
-                    "data": {
-                        "action": "send_onboarding_email",
-                        "employee_email": employee_email,
-                        "work_location": work_location,
-                        "job_title": job_title,
-                        "status_change": status_change,
-                    },
-                }
-            )
-
+        actions.append(_action_button("send_onboarding_email", "Send Welcome Email", "\u2713 Welcome Email Sent", email_sent, **identity))
     if allow_docusign_action:
-        if docusign_sent:
-            actions.append(
-                {
-                    "type": "Action.Submit",
-                    "title": "\u2713 Offer Letter Sent",
-                    "isEnabled": False,
-                    "data": {
-                        "action": "send_docusign",
-                        "employee_email": employee_email,
-                        "work_location": work_location,
-                        "job_title": job_title,
-                        "status_change": status_change,
-                    },
-                }
-            )
-        else:
-            actions.append(
-                {
-                    "type": "Action.Submit",
-                    "title": "Send Offer Letter",
-                    "data": {
-                        "action": "send_docusign",
-                        "employee_email": employee_email,
-                        "work_location": work_location,
-                        "job_title": job_title,
-                        "status_change": status_change,
-                    },
-                }
-            )
+        actions.append(_action_button("send_docusign", "Send Offer Letter", "\u2713 Offer Letter Sent", docusign_sent, **identity))
 
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -185,35 +152,11 @@ def docusign_status_card(
                 },
             ]
         )
-        if roster_added:
-            actions.append(
-                {
-                    "type": "Action.Submit",
-                    "title": "\u2713 Added To Staff Roster",
-                    "isEnabled": False,
-                    "data": {
-                        "action": "add_to_staff_roster",
-                        "employee_email": employee_email,
-                        "work_location": work_location,
-                        "job_title": job_title,
-                        "status_change": status_change,
-                    },
-                }
-            )
-        else:
-            actions.append(
-                {
-                    "type": "Action.Submit",
-                    "title": "Add To Staff Roster",
-                    "data": {
-                        "action": "add_to_staff_roster",
-                        "employee_email": employee_email,
-                        "work_location": work_location,
-                        "job_title": job_title,
-                        "status_change": status_change,
-                    },
-                }
-            )
+        actions.append(_action_button(
+            "add_to_staff_roster", "Add To Staff Roster", "\u2713 Added To Staff Roster",
+            roster_added, employee_email=employee_email, work_location=work_location,
+            job_title=job_title, status_change=status_change,
+        ))
 
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",

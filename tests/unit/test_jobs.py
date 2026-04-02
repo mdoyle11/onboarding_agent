@@ -147,8 +147,8 @@ async def test_process_docusign_job_uses_composite_identity_for_stage_updates() 
 @pytest.mark.asyncio
 async def test_process_background_clearance_job_uses_composite_identity_for_stage_updates() -> None:
     payload = {
-        "employeeEmail": "alice@example.com",
-        "employeeName": "Alice Example",
+        "staffEmail": "alice@example.com",
+        "staffName": "Alice Example",
         "workLocation": "Bronx",
         "jobTitle": "Teacher",
     }
@@ -176,6 +176,32 @@ async def test_process_background_clearance_job_uses_composite_identity_for_stag
         job_title="Teacher",
         status_change="",
     )
+
+
+@pytest.mark.asyncio
+async def test_process_background_clearance_job_does_not_raise_when_confirmation_email_fails() -> None:
+    payload = {
+        "staffEmail": "alice@example.com",
+        "staffName": "Alice Example",
+        "workLocation": "Bronx",
+        "jobTitle": "Teacher",
+    }
+    tracker = AsyncMock()
+    tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
+    teams = AsyncMock()
+    teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
+
+    with (
+        patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
+        patch(
+            "onboarding_agent.mcp_server.tools_email.send_background_clearance_confirmation_email",
+            new=AsyncMock(return_value={"success": False, "error": "invalid recipient"}),
+        ),
+    ):
+        from onboarding_agent.runtime.jobs import process_background_clearance_job
+
+        await process_background_clearance_job(payload)
 
 
 @pytest.mark.asyncio

@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from onboarding_agent.integrations.graph_workbook import HEADER_ROW
-from onboarding_agent.integrations.tracker_client import TrackerClient
+from onboarding_agent.integrations.workbook.schema import HEADER_ROW
+from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 
 _HEADER_INDEX = {header: idx for idx, header in enumerate(HEADER_ROW)}
 
@@ -38,7 +38,7 @@ async def test_find_employee_in_tracker_respects_table_start_row_offset():
     )
 
     with (
-        patch("onboarding_agent.integrations.graph_workbook.settings.graph_excel_table_name", "OnboardingTable"),
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
         patch.object(
             client,
             "_graph_workbook_request",
@@ -71,7 +71,7 @@ async def test_find_employee_in_tracker_reuses_index_with_row_verification():
     )
 
     with (
-        patch("onboarding_agent.integrations.graph_workbook.settings.graph_excel_table_name", "OnboardingTable"),
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
         patch.object(
             client,
             "_graph_workbook_request",
@@ -111,7 +111,7 @@ async def test_find_employee_in_tracker_falls_back_when_table_query_fails():
     )
 
     with (
-        patch("onboarding_agent.integrations.graph_workbook.settings.graph_excel_table_name", "OnboardingTable"),
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
         patch.object(
             client,
             "_graph_workbook_request",
@@ -151,7 +151,7 @@ async def test_add_employee_to_tracker_uses_table_rows_add_when_configured():
     )
 
     with (
-        patch("onboarding_agent.integrations.graph_workbook.settings.graph_excel_table_name", "OnboardingTable"),
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
         patch.object(
             client,
             "_graph_workbook_request",
@@ -202,7 +202,7 @@ async def test_find_employee_in_tracker_requires_disambiguation_for_duplicate_em
     )
 
     with (
-        patch("onboarding_agent.integrations.graph_workbook.settings.graph_excel_table_name", "OnboardingTable"),
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
         patch.object(
             client,
             "_graph_workbook_request",
@@ -229,3 +229,40 @@ async def test_find_employee_in_tracker_requires_disambiguation_for_duplicate_em
     assert ambiguous["matches"][1]["added_to_tracker"] == "04/02/2026"
     assert disambiguated["found"] is True
     assert disambiguated["location"] == "Queens"
+
+
+@pytest.mark.asyncio
+async def test_update_stage_refreshes_stage_columns_before_validation():
+    client = TrackerClient()
+    row = _build_row(
+        {
+            "Staff Name": "Alice Example",
+            "Staff Email": "alice@example.com",
+            "Work Location": "Bronx",
+            "Job Title": "Teacher",
+        }
+    )
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(
+                side_effect=[
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {},
+                ]
+            ),
+        ) as mock_request,
+    ):
+        result = await client.update_stage(
+            "alice@example.com",
+            "Sent Offer Letter",
+            location="Bronx",
+            job_title="Teacher",
+        )
+
+    assert result["success"] is True
+    assert mock_request.await_args_list[2].args[0] == "PATCH"

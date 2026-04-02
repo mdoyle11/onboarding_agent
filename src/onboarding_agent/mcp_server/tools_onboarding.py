@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
 
+if TYPE_CHECKING:
+    from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
 from onboarding_agent.config import settings
+from onboarding_agent.domain.formatting import format_date
 from onboarding_agent.integrations.card_state import (
     get_docusign_status_card,
     save_docusign_status_card,
 )
-from onboarding_agent.integrations.docusign_client import DocuSignClient
-from onboarding_agent.integrations.teams.messenger import TeamsMessenger
-from onboarding_agent.integrations.tracker_client import TrackerClient
+from onboarding_agent.mcp_server.clients import docusign as _docusign
+from onboarding_agent.mcp_server.clients import messenger as _messenger
+from onboarding_agent.mcp_server.clients import tracker as _tracker
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +30,6 @@ _DS_STATUS_LINES = {
     "completed": "DocuSign fully signed and completed.",
     "voided":    "DocuSign envelope was voided.",
 }
-
-
-def _tracker() -> TrackerClient:
-    return TrackerClient()
 
 
 async def _reconcile_completed_docusign(
@@ -89,7 +88,7 @@ async def _reconcile_completed_docusign(
         job_title=job_title,
         status_change=status_change,
     )
-    teams_result = await TeamsMessenger().send_channel_notification(channel_id, summary, card=card)
+    teams_result = await _messenger().send_channel_notification(channel_id, summary, card=card)
     if teams_result.get("success") and teams_result.get("message_id"):
         await save_docusign_status_card(
             employee_email=employee_email,
@@ -110,27 +109,6 @@ async def _reconcile_completed_docusign(
         )
 
     return updated_stages
-
-
-def _format_stage_date(value: str) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-        try:
-            parsed = datetime.strptime(raw, fmt).date()
-            return parsed.strftime("%m/%d/%Y")
-        except ValueError:
-            continue
-
-    try:
-        excel_serial = float(raw)
-        excel_epoch = date(1899, 12, 30)
-        parsed = excel_epoch.fromordinal(excel_epoch.toordinal() + int(excel_serial))
-        return parsed.strftime("%m/%d/%Y")
-    except ValueError:
-        return raw
 
 
 def register(mcp: FastMCP) -> None:
@@ -212,11 +190,11 @@ def register(mcp: FastMCP) -> None:
             }
 
         stages: dict[str, str] = record.get("stages", {})
-        formatted_stages = {stage: _format_stage_date(value) for stage, value in stages.items()}
+        formatted_stages = {stage: format_date(value) for stage, value in stages.items()}
         name = record.get("name", employee_email)
 
         # DocuSign status
-        ds_client = DocuSignClient()
+        ds_client = _docusign()
         envelope_id = ""
         docusign_status = ""
 
@@ -258,7 +236,7 @@ def register(mcp: FastMCP) -> None:
                 job_title=job_title,
                 status_change=status_change,
             )
-            formatted_stages = {stage: _format_stage_date(value) for stage, value in stages.items()}
+            formatted_stages = {stage: format_date(value) for stage, value in stages.items()}
 
         if not docusign_status:
             if stages.get("Offer Letter Signed"):

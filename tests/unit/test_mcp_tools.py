@@ -31,7 +31,7 @@ class TestGetOnboardingStatus:
 
         with (
             patch("onboarding_agent.mcp_server.tools_onboarding._tracker", return_value=self.tracker),
-            patch("onboarding_agent.mcp_server.tools_onboarding.DocuSignClient", return_value=self.docusign),
+            patch("onboarding_agent.mcp_server.tools_onboarding._docusign", return_value=self.docusign),
         ):
             yield
 
@@ -192,6 +192,89 @@ class TestGetOnboardingStatus:
         )
         assert result["docusign_status"] == "completed"
         assert result["stages"]["Offer Letter Signed"] == "04/04/2026"
+
+
+class TestDocuSignTools:
+    @pytest.fixture(autouse=True)
+    def _patch_clients(self):
+        self.tracker = AsyncMock()
+        self.docusign = AsyncMock()
+        with (
+            patch("onboarding_agent.mcp_server.tools_docusign._tracker", return_value=self.tracker),
+            patch("onboarding_agent.mcp_server.tools_docusign._docusign", return_value=self.docusign),
+        ):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_check_docusign_draft_exists_surfaces_duplicate_tracker_matches(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": False,
+            "multiple_matches": True,
+            "matches": [
+                {"location": "Collier", "job_title": "Instructional Coach"},
+                {"location": "Collier", "job_title": "Assistant Principal"},
+            ],
+        }
+        self.tracker.get_employee_stages.side_effect = [
+            {"found": True, "stages": {"Sent Offer Letter": ""}},
+            {"found": True, "stages": {"Sent Offer Letter": ""}},
+        ]
+
+        from onboarding_agent.mcp_server.tools_docusign import register
+
+        mcp = FastMCP(name="test-docusign")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "check_docusign_draft_exists")
+        result = await tool_fn(employee_email="mdoyle@bridgeprepacademy.com")
+
+        assert result["exists"] is False
+        assert result["multiple_matches"] is True
+        assert "Multiple tracker rows match this email" in result["error"]
+        self.docusign.check_draft_exists.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_check_docusign_draft_exists_auto_resolves_single_unsent_match(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": False,
+            "multiple_matches": True,
+            "matches": [
+                {
+                    "location": "Collier",
+                    "job_title": "Instructional Coach",
+                    "status_change": "New Hire",
+                },
+                {
+                    "location": "Collier",
+                    "job_title": "Assistant Principal",
+                    "status_change": "Promotion",
+                },
+            ],
+        }
+        self.tracker.get_employee_stages.side_effect = [
+            {"found": True, "stages": {"Sent Offer Letter": ""}},
+            {"found": True, "stages": {"Sent Offer Letter": "04/01/2026"}},
+        ]
+        self.docusign.check_draft_exists.return_value = {"exists": True, "envelope_id": "env-123"}
+
+        from onboarding_agent.mcp_server.tools_docusign import register
+
+        mcp = FastMCP(name="test-docusign-autoresolve")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "check_docusign_draft_exists")
+        result = await tool_fn(employee_email="mdoyle@bridgeprepacademy.com")
+
+        assert result["exists"] is True
+        assert result["work_location"] == "Collier"
+        assert result["job_title"] == "Instructional Coach"
+        assert result["status_change"] == "New Hire"
+        self.docusign.check_draft_exists.assert_awaited_once_with(
+            "mdoyle@bridgeprepacademy.com",
+            "Collier",
+            "Instructional Coach",
+            "New Hire",
+        )
 
 
 class TestTrackerTools:

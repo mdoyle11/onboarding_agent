@@ -6,16 +6,8 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from onboarding_agent.integrations.staff_roster_client import StaffRosterClient
-from onboarding_agent.integrations.tracker_client import TrackerClient
-
-
-def _staff_roster() -> StaffRosterClient:
-    return StaffRosterClient()
-
-
-def _tracker() -> TrackerClient:
-    return TrackerClient()
+from onboarding_agent.mcp_server.clients import staff_roster as _staff_roster
+from onboarding_agent.mcp_server.clients import tracker as _tracker
 
 
 def register(mcp: FastMCP) -> None:

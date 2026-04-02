@@ -6,16 +6,22 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-from onboarding_agent.integrations.graph_workbook import (
+from onboarding_agent.integrations.workbook.client import WorkbookGraphClient
+from onboarding_agent.integrations.workbook.helpers import (
+    cell as _cell,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    column_letter as _column_letter,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    header_map as _header_map,
+)
+from onboarding_agent.integrations.workbook.schema import (
     CAPACITY_ALIASES,
     ROSTER_OPTIONAL_ALIASES,
     ROSTER_REQUIRED_ALIASES,
-    WorkbookGraphClient,
-    _cell,
-    _column_letter,
-    _header_map,
 )
-from onboarding_agent.integrations.tracker_client import TrackerClient
+from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 
 logger = logging.getLogger(__name__)
 

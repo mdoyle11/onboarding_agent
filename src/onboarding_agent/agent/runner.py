@@ -15,6 +15,7 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import SecretStr
 
+from onboarding_agent.agent.session_context import SESSION_CONTEXT_FIELDS
 from onboarding_agent.config import settings
 
 logger = logging.getLogger(__name__)
@@ -43,11 +44,16 @@ Tracked stages:
 
 For trigger_source=teams_query:
 - For employee status questions, call get_onboarding_status.
-- To send a DocuSign envelope, first call check_docusign_draft_exists by employee email, then call send_docusign_envelope. Do not ask for an envelope ID.
-- After sending DocuSign, call update_tracker_stage for "Sent Offer Letter".
+- For offer-letter actions, never guess between multiple tracker rows that share the same email unless exactly one matching row still needs an offer letter.
+- If work_location, job_title, or status_change are available from the user or session context, pass them into relevant tools.
+- If only an email is provided and the employee may have multiple tracker rows, resolve or ask for clarification before sending DocuSign.
+- To send a DocuSign envelope, first call check_docusign_draft_exists with the fullest available identity, then call send_docusign_envelope. Do not ask for an envelope ID.
+- After sending DocuSign, call update_tracker_stage for "Sent Offer Letter" using the same identity fields.
 - To send an onboarding email, call send_onboarding_email. If no draft exists, create one first with draft_onboarding_email, then confirm before sending.
-- To check roster capacity, call check_staff_roster_capacity with the exact location and exact job category from HR.
-- To add someone to the staff roster, call add_employee_to_staff_roster with the employee email and exact job category. If the category is missing, ask for it.
+- For staff roster capacity, use the exact Group value used in the roster/capacity sheets. Do not assume categories like Instructional, Administrative, or Support unless the workbook actually uses them.
+- If the user asks for capacity for a title like "teacher" and it appears to be the intended Group value, call check_staff_roster_capacity directly with that value.
+- If work_location is available from the user or session context, use it for roster capacity queries instead of asking again.
+- To add someone to the staff roster, call add_employee_to_staff_roster with the employee email and exact job category/Group value. If the category is missing, ask for it.
 """
 
 # MCP server command — started as a subprocess via stdio transport
@@ -64,17 +70,7 @@ def _format_session_context(session_context: dict[str, Any] | None) -> SystemMes
     if not session_context:
         return None
 
-    fields = [
-        ("employee_email", session_context.get("employee_email", "")),
-        ("employee_name", session_context.get("employee_name", "")),
-        ("work_location", session_context.get("work_location", "")),
-        ("job_title", session_context.get("job_title", "")),
-        ("status_change", session_context.get("status_change", "")),
-        ("intent", session_context.get("intent", "")),
-        ("pending_confirmation", session_context.get("pending_confirmation", "")),
-        ("envelope_id", session_context.get("envelope_id", "")),
-        ("job_category", session_context.get("job_category", "")),
-    ]
+    fields = [(name, session_context.get(name, "")) for name in SESSION_CONTEXT_FIELDS if name != "last_updated_at"]
     lines = [f"- {name}: {value}" for name, value in fields if value not in ("", None)]
     if not lines:
         return None

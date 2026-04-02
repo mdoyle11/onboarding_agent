@@ -11,6 +11,7 @@ from typing import Any, cast
 from fastmcp import FastMCP
 
 from onboarding_agent.config import settings
+from onboarding_agent.mcp_server.clients import email_client as _email_client
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,6 @@ def _load_drafts() -> dict[str, dict[str, str]]:
 def _save_drafts(drafts: dict[str, dict[str, str]]) -> None:
     _DRAFTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     _DRAFTS_PATH.write_text(json.dumps(drafts, indent=2))
-
-
-def _email_client() -> Any:
-    """Return the Outlook email client."""
-    from onboarding_agent.integrations.outlook_email_client import OutlookEmailClient
-    return OutlookEmailClient()
 
 
 def _resolve_template_path(template_path: str | Path) -> Path:
@@ -143,6 +138,48 @@ async def draft_onboarding_email_for_employee(
     }
 
 
+async def send_onboarding_email_to_employee(employee_email: str) -> dict[str, Any]:
+    """Send a previously drafted onboarding email for an employee."""
+    key = employee_email.strip().lower()
+    drafts = _load_drafts()
+    logger.info("send_onboarding_email called for %s (key=%s), drafts=%s", employee_email, key, list(drafts.keys()))
+
+    draft = drafts.get(key)
+    if not draft:
+        return {
+            "success": False,
+            "error": (
+                f"No email draft found for {employee_email}. "
+                "Call draft_onboarding_email first to create a draft."
+            ),
+        }
+
+    result = await _email_client().send_email(
+        to_email=draft["to_email"],
+        subject=draft["subject"],
+        body_html=draft["body_html"],
+    )
+
+    if result.get("success"):
+        del drafts[key]
+        _save_drafts(drafts)
+        logger.info("Onboarding email sent to %s", employee_email)
+        return {
+            "success": True,
+            "employee_email": employee_email,
+            "message_id": result.get("message_id", ""),
+            "message": f"Onboarding email sent to {employee_email}.",
+        }
+
+    logger.warning("Email send failed for %s: %s", employee_email, result.get("error"))
+    return {
+        "success": False,
+        "employee_email": employee_email,
+        "error": result.get("error", "Unknown error"),
+        "message": f"Failed to send email to {employee_email}. Draft preserved — you can retry.",
+    }
+
+
 def register(mcp: FastMCP) -> None:
     """Register email draft and send tools on the given FastMCP instance."""
 
@@ -175,45 +212,7 @@ def register(mcp: FastMCP) -> None:
 
         Fails if no draft exists. Call draft_onboarding_email first if needed.
         """
-        key = employee_email.strip().lower()
-        drafts = _load_drafts()
-        logger.info("send_onboarding_email called for %s (key=%s), drafts=%s", employee_email, key, list(drafts.keys()))
-
-        draft = drafts.get(key)
-        if not draft:
-            return {
-                "success": False,
-                "error": (
-                    f"No email draft found for {employee_email}. "
-                    "Call draft_onboarding_email first to create a draft."
-                ),
-            }
-
-        result = await _email_client().send_email(
-            to_email=draft["to_email"],
-            subject=draft["subject"],
-            body_html=draft["body_html"],
-        )
-
-        if result.get("success"):
-            del drafts[key]
-            _save_drafts(drafts)
-            logger.info("Onboarding email sent to %s", employee_email)
-            return {
-                "success": True,
-                "employee_email": employee_email,
-                "message_id": result.get("message_id", ""),
-                "message": f"Onboarding email sent to {employee_email}.",
-            }
-
-        # Preserve draft on failure so HR can retry
-        logger.warning("Email send failed for %s: %s", employee_email, result.get("error"))
-        return {
-            "success": False,
-            "employee_email": employee_email,
-            "error": result.get("error", "Unknown error"),
-            "message": f"Failed to send email to {employee_email}. Draft preserved — you can retry.",
-        }
+        return await send_onboarding_email_to_employee(employee_email)
 
     @mcp.tool()
     async def send_background_clearance_confirmation(

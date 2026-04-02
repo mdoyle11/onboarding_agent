@@ -3,47 +3,41 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
 
 from onboarding_agent.config import settings
-from onboarding_agent.integrations.graph_workbook import (
+from onboarding_agent.domain.formatting import format_date
+from onboarding_agent.domain.identity import identity_key, normalize_identity_part
+from onboarding_agent.integrations.workbook.client import WorkbookGraphClient
+from onboarding_agent.integrations.workbook.helpers import (
+    column_letter as _column_letter,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    header_map as _header_map,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    latest_active_stage as _latest_active_stage,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    resolve_stage_name as _resolve_stage_name,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    row_to_stages as _row_to_stages,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    stage_column_map as _stage_column_map,
+)
+from onboarding_agent.integrations.workbook.helpers import (
+    today_iso as _today,
+)
+from onboarding_agent.integrations.workbook.schema import (
     HEADER_ROW,
     TRACKER_OPTIONAL_ALIASES,
     TRACKER_REQUIRED_ALIASES,
-    WorkbookGraphClient,
-    _column_letter,
-    _header_map,
-    _latest_active_stage,
-    _resolve_stage_name,
-    _row_to_stages,
-    _stage_column_map,
-    _today,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _format_tracker_date(value: str) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-        try:
-            parsed = datetime.strptime(raw, fmt).date()
-            return parsed.strftime("%m/%d/%Y")
-        except ValueError:
-            continue
-
-    try:
-        excel_serial = float(raw)
-        excel_epoch = date(1899, 12, 30)
-        parsed = excel_epoch.fromordinal(excel_epoch.toordinal() + int(excel_serial))
-        return parsed.strftime("%m/%d/%Y")
-    except ValueError:
-        return raw
 
 
 class TrackerClient(WorkbookGraphClient):
@@ -55,18 +49,8 @@ class TrackerClient(WorkbookGraphClient):
     _cache_identity_to_row_id: dict[str, str] = {}
     _cache_email_to_row_ids: dict[str, list[str]] = {}
 
-    @staticmethod
-    def _normalize_identity_part(value: str) -> str:
-        return str(value or "").strip().lower()
-
-    @classmethod
-    def _identity_key(cls, email: str, location: str = "", job_title: str = "", status_change: str = "") -> str:
-        return "|".join([
-            cls._normalize_identity_part(email),
-            cls._normalize_identity_part(location),
-            cls._normalize_identity_part(job_title),
-            cls._normalize_identity_part(status_change),
-        ])
+    _normalize_identity_part = staticmethod(normalize_identity_part)
+    _identity_key = staticmethod(identity_key)
 
     @staticmethod
     def _row_job_title(row: list[Any]) -> str:
@@ -224,7 +208,7 @@ class TrackerClient(WorkbookGraphClient):
             "location": str(row[location_idx]) if location_idx is not None and len(row) > location_idx else "",
             "job_title": TrackerClient._row_job_title(row),
             "status_change": TrackerClient._row_status_change(row),
-            "added_to_tracker": _format_tracker_date(
+            "added_to_tracker": format_date(
                 str(row[added_to_tracker_idx]) if added_to_tracker_idx is not None and len(row) > added_to_tracker_idx else ""
             ),
         }
@@ -453,7 +437,12 @@ class TrackerClient(WorkbookGraphClient):
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
+        if not self._stage_columns:
+            await self._refresh_index()
         resolved_stage_name = _resolve_stage_name(stage_name, self._stage_columns)
+        if resolved_stage_name is None:
+            await self._refresh_index()
+            resolved_stage_name = _resolve_stage_name(stage_name, self._stage_columns)
         if resolved_stage_name is None:
             return {
                 "success": False,

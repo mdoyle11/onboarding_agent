@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from onboarding_agent.integrations.teams.messenger import TeamsMessenger
-
-
-def _messenger() -> TeamsMessenger:
-    return TeamsMessenger()
+from onboarding_agent.mcp_server.clients import messenger as _messenger
 
 
 def register(mcp: FastMCP) -> None:
@@ -51,7 +47,19 @@ def register(mcp: FastMCP) -> None:
             allow_email_action=True,
             allow_docusign_action=True,
         )
-        result = await _messenger().send_channel_notification(channel_id, summary, card=card)
+        result = await _messenger().send_channel_notification(
+            channel_id,
+            summary,
+            card=card,
+            session_context={
+                "employee_email": employee_email,
+                "employee_name": employee_name,
+                "work_location": work_location,
+                "job_title": job_title,
+                "status_change": status_change,
+                "intent": "check_onboarding_status",
+            },
+        )
         if result.get("success") and result.get("message_id"):
             await save_new_hire_card(
                 employee_email=employee_email,
@@ -93,7 +101,19 @@ def register(mcp: FastMCP) -> None:
             job_title=job_title,
             status_change=status_change,
         )
-        result = await _messenger().send_channel_notification(channel_id, summary, card=card)
+        result = await _messenger().send_channel_notification(
+            channel_id,
+            summary,
+            card=card,
+            session_context={
+                "employee_email": employee_email,
+                "work_location": work_location,
+                "job_title": job_title,
+                "status_change": status_change,
+                "intent": "check_onboarding_status",
+                "envelope_id": envelope_id,
+            },
+        )
         if result.get("success") and result.get("message_id") and status.lower() == "completed":
             await save_docusign_status_card(
                 employee_email=employee_email,
@@ -118,7 +138,16 @@ def register(mcp: FastMCP) -> None:
         from onboarding_agent.integrations.adaptive_cards import background_clearance_card
 
         card = background_clearance_card(employee_name, employee_email, summary)
-        return await _messenger().send_channel_notification(channel_id, summary, card=card)
+        return await _messenger().send_channel_notification(
+            channel_id,
+            summary,
+            card=card,
+            session_context={
+                "employee_email": employee_email,
+                "employee_name": employee_name,
+                "intent": "background_clearance",
+            },
+        )
 
     @mcp.tool()
     async def send_teams_direct_message(user_id: str, message: str) -> dict[str, object]:

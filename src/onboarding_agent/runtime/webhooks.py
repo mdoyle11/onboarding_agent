@@ -13,6 +13,7 @@ from aiohttp import web
 from onboarding_agent.config import settings
 from onboarding_agent.runtime.job_queue import JobQueue
 from onboarding_agent.runtime.jobs import JOB_BACKGROUND_CLEARANCE, JOB_DOCUSIGN, JOB_NEW_HIRE
+from onboarding_agent.runtime.payloads import payload_value
 
 logger = logging.getLogger(__name__)
 
@@ -225,9 +226,11 @@ async def handle_background_clearance_webhook(request: web.Request) -> web.Respo
     except json.JSONDecodeError:
         return web.Response(status=400, text="Invalid JSON")
 
-    employee_email = str(payload.get("employeeEmail", ""))
-    work_location = str(payload.get("workLocation", ""))
-    job_title = str(payload.get("jobTitle", ""))
+    employee_email = payload_value(payload, "staffEmail", "employeeEmail")
+    employee_name = payload_value(payload, "staffName", "employeeName")
+    work_location = payload_value(payload, "workLocation")
+    job_title = payload_value(payload, "jobTitle")
+    status_change = payload_value(payload, "statusChange")
     logger.info("Background clearance webhook received: %s", employee_email or "unknown")
 
     try:
@@ -235,9 +238,11 @@ async def handle_background_clearance_webhook(request: web.Request) -> web.Respo
             JOB_BACKGROUND_CLEARANCE,
             {
                 **payload,
-                "employeeEmail": employee_email,
+                "staffEmail": employee_email,
+                "staffName": employee_name,
                 "workLocation": work_location,
                 "jobTitle": job_title,
+                "statusChange": status_change,
             },
         )
         return _accepted_response()

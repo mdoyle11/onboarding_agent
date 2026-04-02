@@ -13,9 +13,7 @@ from onboarding_agent.agent import runner
 from onboarding_agent.integrations.teams.card_actions import (
     already_completed_message,
     card_action_already_completed,
-    card_action_to_command,
-    complete_card_action,
-    complete_card_action_without_context,
+    execute_new_hire_card_action_without_context,
     extract_card_action,
     handle_staff_roster_card_action,
     notify_card_action_failure,
@@ -65,16 +63,15 @@ def register_handlers(agent_app: Any) -> None:
         if card_action and card_action["action"] == "add_to_staff_roster":
             await handle_staff_roster_card_action(context, card_action)
             return
-        card_action_text = card_action_to_command(card_action)
-
-        if card_action_text:
-            assert card_action is not None
+        if card_action and card_action["action"] in {"send_onboarding_email", "send_docusign"}:
             if await card_action_already_completed(card_action):
                 await refresh_card_from_context(context, card_action)
                 await context.send_activity(already_completed_message(card_action))
                 return
-            user_text = card_action_text
-        elif conversation_type in ("channel", "groupChat"):
+            asyncio.create_task(_run_deterministic_card_action_in_background(card_action=card_action))
+            return
+
+        if conversation_type in ("channel", "groupChat"):
             mentioned = is_mentioned(activity)
             logger.info("Channel/groupChat message mention_detected=%s", mentioned)
             if not mentioned:
@@ -93,16 +90,6 @@ def register_handlers(agent_app: Any) -> None:
 
         user_id = getattr(activity.from_property, "aad_object_id", "") or ""
         logger.info("Teams message from %s (%s): %s", user_id, conversation_type, user_text[:80])
-
-        if card_action_text:
-            assert card_action is not None
-            asyncio.create_task(
-                _run_card_action_in_background(
-                    user_text=user_text,
-                    card_action=card_action,
-                )
-            )
-            return
 
         # Load chat history for session continuity
         session_key = await get_or_create_session_key(activity)
@@ -125,55 +112,32 @@ def register_handlers(agent_app: Any) -> None:
                 runner.derive_session_context(result_messages, existing=session_context),
             )
 
-            if card_action and await complete_card_action(context, card_action, result_messages):
-                reply_text = ""
-            else:
-                reply_text = (
-                    "" if should_suppress_reply(result_messages)
-                    else extract_reply(result_messages)
-                )
+            reply_text = (
+                "" if should_suppress_reply(result_messages)
+                else extract_reply(result_messages)
+            )
         except Exception as exc:
             logger.exception("Agent invocation failed")
             reply_text = f"Sorry, something went wrong: {exc}"
 
         if reply_text:
             await context.send_activity(reply_text)
-
-
-async def _run_card_action_in_background(
+async def _run_deterministic_card_action_in_background(
     *,
-    user_text: str,
     card_action: dict[str, str],
 ) -> None:
-    if not runner.is_ready():
-        logger.warning("Skipping Teams card action because agent is not ready")
-        return
-
-    session_context = {
-        "employee_email": card_action["employee_email"],
-        "intent": card_action["action"],
-    }
-    if card_action.get("job_category"):
-        session_context["job_category"] = card_action["job_category"]
-
-    messages: list[BaseMessage] = [HumanMessage(content=user_text)]
-
     try:
-        result_messages = await runner.run_agent(
-            messages,
-            trigger_source="teams_query",
-            session_context=session_context,
-        )
-        updated = await complete_card_action_without_context(card_action, result_messages)
+        updated = await execute_new_hire_card_action_without_context(card_action)
         if not updated:
             logger.warning(
-                "Teams card action completed without a card update: action=%s employee=%s",
+                "Deterministic Teams card action completed without a card update: action=%s employee=%s",
                 card_action["action"],
                 card_action["employee_email"],
             )
+            await notify_card_action_failure(card_action)
     except Exception:
         logger.exception(
-            "Background Teams card action failed: action=%s employee=%s",
+            "Deterministic Teams card action failed: action=%s employee=%s",
             card_action["action"],
             card_action["employee_email"],
         )

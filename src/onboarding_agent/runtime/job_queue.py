@@ -76,6 +76,7 @@ class AzureStorageJobQueue:
         queue_name: str,
         poll_interval_seconds: float = 1.0,
         visibility_timeout_seconds: int = 300,
+        max_dequeue_count: int = 5,
     ) -> None:
         from azure.core.exceptions import ResourceExistsError
         from azure.storage.queue import QueueClient
@@ -85,6 +86,7 @@ class AzureStorageJobQueue:
         self._resource_exists_error = ResourceExistsError
         self._poll_interval_seconds = poll_interval_seconds
         self._visibility_timeout_seconds = visibility_timeout_seconds
+        self._max_dequeue_count = max_dequeue_count
         self._stop_event = asyncio.Event()
         self._worker_task: asyncio.Task[None] | None = None
 
@@ -130,6 +132,16 @@ class AzureStorageJobQueue:
         return await asyncio.to_thread(_receive)
 
     async def _handle_message(self, message: Any) -> None:
+        dequeue_count = int(getattr(message, "dequeue_count", 0) or 0)
+        if dequeue_count > self._max_dequeue_count:
+            logger.error(
+                "Deleting poison queue message %s after dequeue_count=%s",
+                getattr(message, "id", "?"),
+                dequeue_count,
+            )
+            await asyncio.to_thread(self._client.delete_message, message.id, message.pop_receipt)
+            return
+
         try:
             raw = json.loads(message.content)
             job = QueueJob(
@@ -177,5 +189,6 @@ def create_job_queue(
             connection_string=connection_string,
             queue_name=str(kwargs.get("azure_storage_queue_name", "onboarding-jobs")),
             poll_interval_seconds=float(kwargs.get("queue_poll_interval_seconds", 1.0)),
+            max_dequeue_count=int(kwargs.get("queue_max_dequeue_count", 5)),
         )
     return LocalJobQueue(handler)

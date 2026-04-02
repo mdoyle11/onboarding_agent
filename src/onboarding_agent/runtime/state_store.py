@@ -10,6 +10,8 @@ from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
+TTL_SECONDS_FIELD = "__ttl_seconds"
+
 
 class StateStore(ABC):
     """Abstract key-value store partitioned by namespace."""
@@ -59,7 +61,11 @@ class FileStateStore(StateStore):
 
     async def put(self, namespace: str, key: str, value: dict[str, Any]) -> None:
         data = self._load(namespace)
-        data[key] = value
+        data[key] = {
+            item_key: item_value
+            for item_key, item_value in value.items()
+            if item_key != TTL_SECONDS_FIELD
+        }
         self._save(namespace, data)
 
     async def delete(self, namespace: str, key: str) -> None:

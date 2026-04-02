@@ -16,6 +16,7 @@ from onboarding_agent.integrations.teams.memory import (
     merge_session_context,
     save_chat_history,
     save_session_context,
+    seed_channel_thread_context,
     serialize_messages,
 )
 
@@ -186,6 +187,76 @@ async def test_save_and_merge_session_context_round_trip():
 
 
 @pytest.mark.asyncio
+async def test_save_and_load_session_context_preserves_composite_identity_fields():
+    storage: dict[str, dict] = {}
+
+    async def mock_put(ns: str, key: str, value: dict) -> None:
+        storage[f"{ns}:{key}"] = value
+
+    async def mock_get(ns: str, key: str) -> dict | None:
+        return storage.get(f"{ns}:{key}")
+
+    mock_store = AsyncMock()
+    mock_store.put = mock_put
+    mock_store.get = mock_get
+
+    with patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod:
+        mock_mod.session_store = mock_store
+        await save_session_context(
+            "session-1",
+            {
+                "employee_email": "alice@example.com",
+                "work_location": "Collier",
+                "job_title": "Teacher",
+                "status_change": "New Hire",
+            },
+        )
+        loaded = await load_session_context("session-1")
+
+    assert loaded["employee_email"] == "alice@example.com"
+    assert loaded["work_location"] == "Collier"
+    assert loaded["job_title"] == "Teacher"
+    assert loaded["status_change"] == "New Hire"
+
+
+@pytest.mark.asyncio
+async def test_seed_channel_thread_context_creates_thread_scoped_session_from_proactive_post():
+    storage: dict[str, dict] = {}
+
+    async def mock_put(ns: str, key: str, value: dict) -> None:
+        storage[f"{ns}:{key}"] = value
+
+    async def mock_get(ns: str, key: str) -> dict | None:
+        return storage.get(f"{ns}:{key}")
+
+    async def mock_delete(ns: str, key: str) -> None:
+        storage.pop(f"{ns}:{key}", None)
+
+    mock_store = AsyncMock()
+    mock_store.put = mock_put
+    mock_store.get = mock_get
+    mock_store.delete = mock_delete
+
+    with patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod:
+        mock_mod.session_store = mock_store
+        session_key = await seed_channel_thread_context(
+            "19%3Achannel%40thread.tacv2",
+            "1775085730146",
+            {
+                "employee_email": "alice@example.com",
+                "work_location": "Collier",
+                "job_title": "Teacher",
+                "status_change": "New Hire",
+            },
+        )
+        loaded = await load_session_context(session_key)
+
+    assert session_key.startswith("teams:channel:19:channel@thread.tacv2:thread:1775085730146:")
+    assert loaded["employee_email"] == "alice@example.com"
+    assert loaded["work_location"] == "Collier"
+
+
+@pytest.mark.asyncio
 async def test_get_or_create_session_key_reuses_existing_session():
     activity = SimpleNamespace(
         conversation=SimpleNamespace(id="conv-1", conversation_type="personal"),
@@ -218,3 +289,195 @@ async def test_get_or_create_session_key_reuses_existing_session():
 
     assert result == "teams:dm:conv-1:20260330T120000Z-abcd"
     mock_store.put.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_session_key_anchors_channel_root_post_to_activity_id():
+    activity = SimpleNamespace(
+        id="msg-root",
+        reply_to_id="",
+        conversation=SimpleNamespace(id="19:channel-thread", conversation_type="channel"),
+        from_property=SimpleNamespace(aad_object_id="user-1"),
+    )
+
+    mock_store = AsyncMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.put = AsyncMock()
+
+    with patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod:
+        mock_mod.session_store = mock_store
+        result = await get_or_create_session_key(activity)
+
+    assert result.startswith("teams:channel:19:channel-thread:thread:msg-root:")
+    put_payload = mock_store.put.await_args.args[2]
+    assert put_payload["category"] == "channel"
+    assert "expires_at" in put_payload
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_session_key_anchors_channel_reply_to_root_message():
+    activity = SimpleNamespace(
+        id="reply-msg",
+        reply_to_id="msg-root",
+        conversation=SimpleNamespace(id="19:channel-thread", conversation_type="channel"),
+        from_property=SimpleNamespace(aad_object_id="user-1"),
+    )
+
+    mock_store = AsyncMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.put = AsyncMock()
+
+    with patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod:
+        mock_mod.session_store = mock_store
+        result = await get_or_create_session_key(activity)
+
+    assert result.startswith("teams:channel:19:channel-thread:thread:msg-root:")
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_session_key_anchors_channel_reply_from_conversation_suffix_when_reply_to_missing():
+    activity = SimpleNamespace(
+        id="reply-msg",
+        reply_to_id="",
+        conversation=SimpleNamespace(
+            id="19:channel-thread;messageid=msg-root",
+            conversation_type="channel",
+        ),
+        from_property=SimpleNamespace(aad_object_id="user-1"),
+    )
+
+    mock_store = AsyncMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.put = AsyncMock()
+
+    with patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod:
+        mock_mod.session_store = mock_store
+        result = await get_or_create_session_key(activity)
+
+    assert result.startswith("teams:channel:19:channel-thread:thread:msg-root:")
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_session_key_rotates_expired_channel_thread_and_deletes_old_artifacts():
+    from datetime import UTC, datetime
+
+    activity = SimpleNamespace(
+        id="msg-root",
+        reply_to_id="",
+        conversation=SimpleNamespace(id="19:channel-thread", conversation_type="channel"),
+        from_property=SimpleNamespace(aad_object_id="user-1"),
+    )
+    existing_session = {
+        "session_id": "20260320T120000Z-abcd",
+        "last_activity_at": "2026-03-20T12:05:00Z",
+        "expires_at": "2026-03-27T12:00:00Z",
+    }
+
+    mock_store = AsyncMock()
+    mock_store.get = AsyncMock(return_value=existing_session)
+    mock_store.put = AsyncMock()
+    mock_store.delete = AsyncMock()
+
+    with (
+        patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod,
+        patch("onboarding_agent.integrations.teams.memory._now_utc") as mock_now,
+    ):
+        mock_mod.session_store = mock_store
+        mock_now.return_value = datetime(2026, 4, 1, 12, 10, tzinfo=UTC)
+        result = await get_or_create_session_key(activity)
+
+    assert result.startswith("teams:channel:19:channel-thread:thread:msg-root:20260401T121000Z-")
+    assert mock_store.delete.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_session_key_reuses_channel_thread_session_until_expiration():
+    from datetime import UTC, datetime
+
+    activity = SimpleNamespace(
+        id="msg-root",
+        reply_to_id="",
+        conversation=SimpleNamespace(id="19:channel-thread", conversation_type="channel"),
+        from_property=SimpleNamespace(aad_object_id="user-1"),
+    )
+    existing_session = {
+        "session_id": "20260330T120000Z-abcd",
+        "last_activity_at": "2026-03-30T12:05:00Z",
+        "expires_at": "2026-04-06T12:00:00Z",
+        "category": "channel",
+    }
+
+    mock_store = AsyncMock()
+    mock_store.get = AsyncMock(return_value=existing_session)
+    mock_store.put = AsyncMock()
+    mock_store.delete = AsyncMock()
+
+    with (
+        patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod,
+        patch("onboarding_agent.integrations.teams.memory._now_utc") as mock_now,
+    ):
+        mock_mod.session_store = mock_store
+        mock_now.return_value = datetime(2026, 4, 1, 12, 10, tzinfo=UTC)
+        result = await get_or_create_session_key(activity)
+
+    assert result == "teams:channel:19:channel-thread:thread:msg-root:20260330T120000Z-abcd"
+    put_payload = mock_store.put.await_args.args[2]
+    assert "turn_count" not in put_payload
+    assert mock_store.delete.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_session_key_rehydrates_expired_channel_thread_from_seed_context():
+    from datetime import UTC, datetime
+
+    activity = SimpleNamespace(
+        id="reply-msg",
+        reply_to_id="msg-root",
+        conversation=SimpleNamespace(id="19:channel-thread", conversation_type="channel"),
+        from_property=SimpleNamespace(aad_object_id="user-1"),
+    )
+    existing_session = {
+        "session_id": "20260320T120000Z-abcd",
+        "last_activity_at": "2026-03-20T12:05:00Z",
+        "expires_at": "2026-03-27T12:00:00Z",
+        "category": "channel",
+    }
+    storage: dict[str, dict] = {
+        "thread_seed_context:channel:19:channel-thread:thread:msg-root": {
+            "employee_email": "alice@example.com",
+            "work_location": "Collier",
+            "job_title": "Teacher",
+            "status_change": "New Hire",
+        }
+    }
+
+    async def mock_get(ns: str, key: str) -> dict | None:
+        if ns == "conversation_session":
+            return existing_session
+        return storage.get(f"{ns}:{key}")
+
+    async def mock_put(ns: str, key: str, value: dict) -> None:
+        storage[f"{ns}:{key}"] = value
+
+    async def mock_delete(ns: str, key: str) -> None:
+        storage.pop(f"{ns}:{key}", None)
+
+    mock_store = AsyncMock()
+    mock_store.get = mock_get
+    mock_store.put = mock_put
+    mock_store.delete = mock_delete
+
+    with (
+        patch("onboarding_agent.integrations.teams.memory.store_mod") as mock_mod,
+        patch("onboarding_agent.integrations.teams.memory._now_utc") as mock_now,
+    ):
+        mock_mod.session_store = mock_store
+        mock_now.return_value = datetime(2026, 4, 1, 12, 10, tzinfo=UTC)
+        result = await get_or_create_session_key(activity)
+        loaded = await load_session_context(result)
+
+    assert result.startswith("teams:channel:19:channel-thread:thread:msg-root:20260401T121000Z-")
+    assert loaded["employee_email"] == "alice@example.com"
+    assert loaded["work_location"] == "Collier"
+    assert loaded["job_title"] == "Teacher"
+    assert loaded["status_change"] == "New Hire"
