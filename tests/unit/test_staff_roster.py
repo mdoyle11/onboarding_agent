@@ -305,6 +305,11 @@ async def test_execute_new_hire_card_action_recreates_missing_docusign_draft_fro
 async def test_staff_roster_client_verifies_write_before_success():
     client = StaffRosterClient()
     roster_header = ["Employee Name", "Employee Email", "Group", "Location"]
+    roster_rows = [
+        roster_header,
+        ["Existing Teacher", "existing@company.org", "Teacher", "Bronx"],
+        ["Totals", "1", "Teacher", "Bronx"],
+    ]
     capacity_header = ["Group", "Capacity"]
 
     with (
@@ -329,9 +334,9 @@ async def test_staff_roster_client_verifies_write_before_success():
             "_used_range_rows",
             new=AsyncMock(
                 side_effect=[
-                    [roster_header],
-                    [capacity_header, ["Teacher", "1"]],
-                    [roster_header],
+                    roster_rows,
+                        [capacity_header, ["Teacher", "2"]],
+                    roster_rows,
                     [roster_header],
                 ]
             ),
@@ -358,6 +363,527 @@ async def test_staff_roster_client_verifies_write_before_success():
 
     assert result["success"] is False
     assert "did not verify" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_check_staff_roster_capacity_normalizes_plural_group_name():
+    client = StaffRosterClient()
+    capacity_rows = [["Group", "Capacity"], ["Teacher", "15"]]
+    roster_rows = [["Employee Name", "Work Email", "Group"], ["Alice Example", "alice@example.com", "Teacher"]]
+
+    with (
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(side_effect=[capacity_rows, roster_rows]),
+        ),
+    ):
+        result = await client.check_staff_roster_capacity("Collier", "Teachers")
+
+    assert result["success"] is True
+    assert result["job_category"] == "Teacher"
+    assert result["current_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_add_employee_to_staff_roster_inserts_above_group_totals():
+    client = StaffRosterClient()
+    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_rows_before = [
+        roster_header,
+        ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Totals", "1", "", "Teacher", "", "Bronx"],
+        ["Bob Example", "bob@company.org", "bob@example.com", "Auxiliary", "Custodian", "Bronx"],
+        ["Totals", "1", "", "Auxiliary", "", "Bronx"],
+    ]
+    roster_rows_after = [
+        roster_header,
+        ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Carol Example", "carol@example.com", "carol@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Totals", "2", "", "Teacher", "", "Bronx"],
+        ["Bob Example", "bob@company.org", "bob@example.com", "Auxiliary", "Custodian", "Bronx"],
+        ["Totals", "1", "", "Auxiliary", "", "Bronx"],
+    ]
+    capacity_rows = [["Group", "Capacity"], ["Teacher", "5"]]
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch.object(
+            TrackerClient,
+            "find_employee_in_tracker",
+            new=AsyncMock(
+                return_value={
+                    "found": True,
+                    "name": "Carol Example",
+                    "email": "carol@example.com",
+                    "location": "Bronx",
+                    "job_title": "Teacher",
+                    "position": "Teacher",
+                    "start_date": "2026-04-10",
+                    "manager_email": "manager@example.com",
+                }
+            ),
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(
+                side_effect=[
+                    roster_rows_before,
+                    capacity_rows,
+                    roster_rows_before,
+                    roster_rows_after,
+                ]
+            ),
+        ),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.add_employee_to_staff_roster(
+            "carol@example.com",
+            "Teacher",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    assert result["success"] is True
+    insert_call = graph.await_args_list[0]
+    assert insert_call.args[0] == "POST"
+    assert "/range(address='A3%3AF3')/insert" in insert_call.args[1]
+    assert insert_call.args[2] == {"shift": "Down"}
+    patch_call = graph.await_args_list[1]
+    assert patch_call.args[0] == "PATCH"
+    assert "/range(address='A3%3AF3')" in patch_call.args[1]
+
+
+@pytest.mark.asyncio
+async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_location_unique():
+    client = StaffRosterClient()
+    roster_rows = [
+        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"],
+        ["Totals", "0", "", "Teacher", "", "Collier"],
+    ]
+    capacity_rows = [["Group", "Capacity"], ["Teacher", "2"]]
+    tracker = AsyncMock()
+    tracker.find_employee_in_tracker.side_effect = [
+        {"found": False, "row_id": "", "stages": {}},
+        {
+            "found": True,
+            "name": "Matt",
+            "email": "mdoyle@bridgeprepacademy.com",
+            "location": "Collier",
+            "job_title": "Teacher",
+            "position": "Teacher",
+            "start_date": "",
+            "manager_email": "",
+        },
+    ]
+
+    with (
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.TrackerClient", return_value=tracker),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(side_effect=[
+                roster_rows,
+                capacity_rows,
+                roster_rows,
+                [
+                    roster_rows[0],
+                    ["Matt", "mdoyle@bridgeprepacademy.com", "mdoyle@bridgeprepacademy.com", "Teacher", "Teacher", "Collier"],
+                    ["Totals", "1", "", "Teacher", "", "Collier"],
+                ],
+            ]),
+        ),
+        patch.object(client, "_insert_roster_row", new=AsyncMock()),
+        patch.object(client, "_graph_workbook_request", new=AsyncMock(return_value={})),
+    ):
+        result = await client.add_employee_to_staff_roster(
+            "mdoyle@bridgeprepacademy.com",
+            "Teacher",
+            location="Collier",
+            job_title="Instructional Coach",
+            status_change="New Hire",
+        )
+
+    assert result["success"] is True
+    assert tracker.find_employee_in_tracker.await_args_list[0].kwargs["job_title"] == "Instructional Coach"
+    assert tracker.find_employee_in_tracker.await_args_list[1].kwargs["job_title"] == ""
+
+
+@patch("onboarding_agent.mcp_server.tools_staff_roster._tracker")
+@patch("onboarding_agent.mcp_server.tools_staff_roster._staff_roster")
+@pytest.mark.asyncio
+async def test_remove_employee_from_staff_roster_clears_tracker_stage(
+    mock_staff_roster_factory,
+    mock_tracker_factory,
+):
+    staff_roster = AsyncMock()
+    staff_roster.remove_employee_from_staff_roster.return_value = {
+        "success": True,
+        "location": "Bronx",
+        "job_category": "Teacher",
+    }
+    tracker = AsyncMock()
+    tracker.update_stage.return_value = {"success": True}
+    mock_staff_roster_factory.return_value = staff_roster
+    mock_tracker_factory.return_value = tracker
+
+    mcp = FastMCP(name="test-roster-remove")
+    register(mcp)
+    tool_fn = await _get_tool_fn(mcp, "remove_employee_from_staff_roster")
+    result = await tool_fn(
+        employee_email="alice@example.com",
+        location="Bronx",
+        job_category="Teacher",
+        job_title="Teacher",
+        status_change="New Hire",
+    )
+
+    staff_roster.remove_employee_from_staff_roster.assert_awaited_once_with(
+        "alice@example.com",
+        location="Bronx",
+        job_category="Teacher",
+        job_title="Teacher",
+        status_change="New Hire",
+    )
+    tracker.update_stage.assert_awaited_once_with(
+        "alice@example.com",
+        "Added to Staff Roster",
+        value="",
+        location="Bronx",
+        job_title="Teacher",
+        status_change="New Hire",
+    )
+    assert result["action"] == "removed"
+
+
+@patch("onboarding_agent.mcp_server.tools_staff_roster._staff_roster")
+@pytest.mark.asyncio
+async def test_update_employee_in_staff_roster_returns_summary(
+    mock_staff_roster_factory,
+):
+    staff_roster = AsyncMock()
+    staff_roster.update_employee_in_staff_roster.return_value = {
+        "success": True,
+        "location": "Bronx",
+        "job_category": "Teacher",
+    }
+    mock_staff_roster_factory.return_value = staff_roster
+
+    mcp = FastMCP(name="test-roster-update")
+    register(mcp)
+    tool_fn = await _get_tool_fn(mcp, "update_employee_in_staff_roster")
+    result = await tool_fn(
+        employee_email="alice@example.com",
+        location="Bronx",
+        current_job_category="teacher",
+        job_category="Teacher",
+    )
+
+    staff_roster.update_employee_in_staff_roster.assert_awaited_once_with(
+        "alice@example.com",
+        location="Bronx",
+        current_job_category="teacher",
+        job_title="",
+        status_change="",
+        employee_id="",
+        job_category="Teacher",
+        position="",
+        work_email="",
+        personal_email="",
+        employee_name="",
+        grade_level="",
+        subject="",
+        supplements="",
+        talent="",
+        background_eligibility="",
+        date_approved="",
+        license_value="",
+        nine_cell="",
+        notes="",
+        roster_status="",
+        nti_culture="",
+        nti_content="",
+        mupd_culture="",
+        mupd_content="",
+        rt_boy_pd_content="",
+        cc_1="",
+        cc_2="",
+        cc_3="",
+    )
+    assert result["action"] == "updated"
+
+
+@patch("onboarding_agent.mcp_server.tools_staff_roster._staff_roster")
+@pytest.mark.asyncio
+async def test_find_employee_in_staff_roster_tool_returns_extended_fields(
+    mock_staff_roster_factory,
+):
+    staff_roster = AsyncMock()
+    staff_roster.find_employee_in_staff_roster.return_value = {
+        "found": True,
+        "employee_id": "2101",
+        "employee_email": "alice@company.org",
+        "personal_email": "alice@example.com",
+        "employee_name": "Alice Example",
+        "job_category": "Teacher",
+        "status": "Active",
+    }
+    mock_staff_roster_factory.return_value = staff_roster
+
+    mcp = FastMCP(name="test-roster-find")
+    register(mcp)
+    tool_fn = await _get_tool_fn(mcp, "find_employee_in_staff_roster")
+    result = await tool_fn(employee_email="alice@example.com", location="Bronx")
+
+    assert result["found"] is True
+    assert result["employee_id"] == "2101"
+    assert result["status"] == "Active"
+
+
+@pytest.mark.asyncio
+async def test_remove_employee_from_staff_roster_deletes_matching_row():
+    client = StaffRosterClient()
+    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_rows = [
+        roster_header,
+        ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Totals", "1", "", "Teacher", "", "Bronx"],
+    ]
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch.object(
+            TrackerClient,
+            "find_employee_in_tracker",
+            new=AsyncMock(
+                return_value={
+                    "found": True,
+                    "name": "Alice Example",
+                    "email": "alice@example.com",
+                    "location": "Bronx",
+                    "job_title": "Teacher",
+                    "position": "Teacher",
+                }
+            ),
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(return_value=roster_rows),
+        ),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "find_employee_in_staff_roster",
+            new=AsyncMock(
+                side_effect=[
+                    {"found": True, "row_id": "2", "job_category": "Teacher"},
+                    {"found": False},
+                ]
+            ),
+        ),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.remove_employee_from_staff_roster(
+            "alice@example.com",
+            location="Bronx",
+            job_category="Teacher",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    assert result["success"] is True
+    delete_call = graph.await_args_list[0]
+    assert delete_call.args[0] == "POST"
+    assert "/range(address='A2%3AF2')/delete" in delete_call.args[1]
+    assert delete_call.args[2] == {"shift": "Up"}
+
+
+@pytest.mark.asyncio
+async def test_update_employee_in_staff_roster_patches_existing_row():
+    client = StaffRosterClient()
+    roster_header = ["Employee ID", "Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location", "Status"]
+    roster_rows = [
+        roster_header,
+        ["", "Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx", ""],
+        ["", "Totals", "1", "", "Teacher", "", "Bronx", ""],
+    ]
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch.object(
+            TrackerClient,
+            "find_employee_in_tracker",
+            new=AsyncMock(
+                return_value={
+                    "found": True,
+                    "name": "Alice Example",
+                    "email": "alice@example.com",
+                    "location": "Bronx",
+                    "job_title": "Teacher",
+                    "position": "Teacher",
+                }
+            ),
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(return_value=roster_rows),
+        ),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "find_employee_in_staff_roster",
+            new=AsyncMock(
+                side_effect=[
+                    {"found": True, "row_id": "2", "job_category": "Teacher"},
+                    {"found": True, "row_id": "2", "job_category": "Teacher"},
+                ]
+            ),
+        ),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.update_employee_in_staff_roster(
+            "alice@example.com",
+            location="Bronx",
+            current_job_category="Teacher",
+            employee_id="2101",
+            position="Lead Teacher",
+            roster_status="Active",
+        )
+
+    assert result["success"] is True
+    patch_call = graph.await_args_list[0]
+    assert patch_call.args[0] == "PATCH"
+    assert "/range(address='A2%3AH2')" in patch_call.args[1]
+    written_row = patch_call.args[2]["values"][0]
+    assert written_row[0] == "2101"
+
+
+@pytest.mark.asyncio
+async def test_update_employee_in_staff_roster_moves_to_new_group_section():
+    client = StaffRosterClient()
+    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_rows = [
+        roster_header,
+        ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Totals", "1", "", "Teacher", "", "Bronx"],
+        ["Bob Example", "bob@company.org", "bob@example.com", "Auxiliary", "Custodian", "Bronx"],
+        ["Totals", "1", "", "Auxiliary", "", "Bronx"],
+    ]
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch.object(
+            TrackerClient,
+            "find_employee_in_tracker",
+            new=AsyncMock(
+                return_value={
+                    "found": True,
+                    "name": "Alice Example",
+                    "email": "alice@example.com",
+                    "location": "Bronx",
+                    "job_title": "Teacher",
+                    "position": "Teacher",
+                }
+            ),
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(
+                side_effect=[
+                    roster_rows,
+                    [["Group", "Capacity"], ["Auxiliary", "5"]],
+                    roster_rows,
+                    roster_rows,
+                ]
+            ),
+        ),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "find_employee_in_staff_roster",
+            new=AsyncMock(
+                side_effect=[
+                    {"found": True, "row_id": "2", "job_category": "Teacher"},
+                    {"found": True, "row_id": "4", "job_category": "Auxiliary"},
+                ]
+            ),
+        ),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.update_employee_in_staff_roster(
+            "alice@example.com",
+            location="Bronx",
+            current_job_category="Teacher",
+            job_category="Auxiliary",
+        )
+
+    assert result["success"] is True
+    assert graph.await_args_list[0].args[0] == "POST"
+    assert "/insert" in graph.await_args_list[0].args[1]
+    assert graph.await_args_list[2].args[0] == "POST"
+    assert "/delete" in graph.await_args_list[2].args[1]
 
 
 @pytest.mark.asyncio

@@ -170,6 +170,10 @@ class TrackerClient(WorkbookGraphClient):
         return True
 
     @staticmethod
+    def _row_width(header: list[Any]) -> int:
+        return len(header) if header else len(HEADER_ROW)
+
+    @staticmethod
     def _employee_payload(row: list[Any], row_id: str) -> dict[str, Any]:
         stages = _row_to_stages(row, TrackerClient._stage_columns)
         location_idx = TrackerClient._tracker_columns.get("work_location")
@@ -426,6 +430,62 @@ class TrackerClient(WorkbookGraphClient):
             logger.exception("add_employee_to_tracker failed")
             self._clear_index()
             return {"success": False, "row_id": "", "error": str(exc)}
+
+    async def remove_employee_from_tracker(
+        self,
+        employee_email: str,
+        *,
+        location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
+        employee = await self.find_employee_in_tracker(
+            employee_email,
+            location=location,
+            job_title=job_title,
+            status_change=status_change,
+        )
+        if not employee.get("found"):
+            return {
+                "success": False,
+                "employee_email": employee_email,
+                "error": str(employee.get("error", f"Employee {employee_email} not found in tracker")),
+                "multiple_matches": bool(employee.get("multiple_matches", False)),
+                "matches": employee.get("matches", []),
+            }
+
+        try:
+            row_id = str(employee["row_id"])
+            header_row_number, rows = await self._tracker_rows_with_start_row()
+            row_width = self._row_width(rows[0] if rows else HEADER_ROW)
+            range_address = quote(f"A{row_id}:{_column_letter(row_width - 1)}{row_id}")
+            await self._graph_workbook_request(
+                "POST",
+                f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')/delete",
+                {"shift": "Up"},
+            )
+            self._clear_index()
+            verified = await self.find_employee_in_tracker(
+                employee_email,
+                location=location,
+                job_title=job_title,
+                status_change=status_change,
+            )
+            if verified.get("found"):
+                return {
+                    "success": False,
+                    "employee_email": employee_email,
+                    "error": "Tracker delete did not verify after the workbook update.",
+                }
+            return {
+                "success": True,
+                "employee_email": employee_email,
+                "row_id": row_id,
+            }
+        except Exception as exc:
+            logger.exception("remove_employee_from_tracker failed")
+            self._clear_index()
+            return {"success": False, "employee_email": employee_email, "error": str(exc)}
 
     async def update_stage(
         self,

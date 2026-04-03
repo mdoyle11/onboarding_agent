@@ -3,9 +3,12 @@
 
 Examples:
     uv run python scripts/find_excel_ids.py list-drives
+    uv run python scripts/find_excel_ids.py list-sites --search bridgeprep
+    uv run python scripts/find_excel_ids.py list-site-drives --site-id contoso.sharepoint.com,site-id,web-id
     uv run python scripts/find_excel_ids.py list-items --drive-id b!abc123
     uv run python scripts/find_excel_ids.py search --drive-id b!abc123 --name roster
     uv run python scripts/find_excel_ids.py explore
+    uv run python scripts/find_excel_ids.py explore-sites --search bridgeprep
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 from azure.identity.aio import ClientSecretCredential
@@ -73,6 +76,24 @@ class GraphDiscoveryClient:
     async def list_drives(self) -> list[dict[str, Any]]:
         return await self._collect("https://graph.microsoft.com/v1.0/drives")
 
+    async def search_sites(self, query: str) -> list[dict[str, Any]]:
+        encoded_query = quote(query)
+        return await self._collect(f"https://graph.microsoft.com/v1.0/sites?search={encoded_query}")
+
+    async def resolve_site_by_url(self, url: str) -> dict[str, Any]:
+        parsed = urlparse(url)
+        hostname = parsed.netloc.strip()
+        site_path = parsed.path.strip("/")
+        if not hostname or not site_path:
+            raise ValueError("SharePoint site URL must include a hostname and site path, e.g. https://contoso.sharepoint.com/sites/HR")
+        return await self._get(f"https://graph.microsoft.com/v1.0/sites/{hostname}:/{site_path}")
+
+    async def get_site(self, site_id: str) -> dict[str, Any]:
+        return await self._get(f"https://graph.microsoft.com/v1.0/sites/{site_id}")
+
+    async def list_site_drives(self, site_id: str) -> list[dict[str, Any]]:
+        return await self._collect(f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives")
+
     async def get_drive(self, drive_id: str) -> dict[str, Any]:
         return await self._get(f"https://graph.microsoft.com/v1.0/drives/{drive_id}")
 
@@ -98,6 +119,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("list-drives", help="List accessible drives.")
     subparsers.add_parser("explore", help="Open an interactive drive/folder explorer.")
+    list_sites = subparsers.add_parser("list-sites", help="Search SharePoint sites by name.")
+    list_sites.add_argument("--search", required=True, help="Free-text SharePoint site search term.")
+    resolve_site_url = subparsers.add_parser("resolve-site-url", help="Resolve a SharePoint site URL to a Graph site ID.")
+    resolve_site_url.add_argument("--url", required=True, help="SharePoint site URL, e.g. https://contoso.sharepoint.com/sites/HR")
+    site_drives = subparsers.add_parser("list-site-drives", help="List drives/document libraries for a SharePoint site.")
+    site_drives.add_argument("--site-id", required=True, help="Microsoft Graph site ID.")
+    explore_sites = subparsers.add_parser("explore-sites", help="Interactively search sites and browse their drives.")
+    explore_sites.add_argument("--search", default="", help="Optional initial SharePoint site search term.")
+    explore_site_url = subparsers.add_parser("explore-site-url", help="Resolve a SharePoint site URL and browse its drives.")
+    explore_site_url.add_argument("--url", required=True, help="SharePoint site URL, e.g. https://contoso.sharepoint.com/sites/HR")
 
     list_items = subparsers.add_parser("list-items", help="List children in a drive root, folder, or path.")
     list_items.add_argument("--drive-id", default="", help="Graph drive ID. Defaults to GRAPH_EXCEL_DRIVE_ID if set.")
@@ -137,6 +168,25 @@ def _display(items: list[dict[str, Any]]) -> None:
         print("-" * 60)
 
 
+def _display_sites(items: list[dict[str, Any]]) -> None:
+    if not items:
+        print("No results found.")
+        return
+
+    for item in items:
+        name = str(item.get("displayName", "") or item.get("name", ""))
+        site_id = str(item.get("id", ""))
+        web_url = str(item.get("webUrl", ""))
+        site_collection = item.get("siteCollection", {}) if isinstance(item.get("siteCollection"), dict) else {}
+        host = str(site_collection.get("hostname", ""))
+        print(f"name: {name}")
+        print("kind: site")
+        print(f"site_id: {site_id}")
+        print(f"hostname: {host}")
+        print(f"url: {web_url}")
+        print("-" * 60)
+
+
 def _item_kind(item: dict[str, Any]) -> str:
     if "folder" in item:
         return "folder"
@@ -154,6 +204,27 @@ def _display_compact(items: list[dict[str, Any]]) -> None:
         return
     for index, item in enumerate(items, start=1):
         print(f"{index:>2}. [{_item_kind(item)}] {item.get('name', '')}")
+
+
+def _display_sites_compact(items: list[dict[str, Any]]) -> None:
+    if not items:
+        print("No results found.")
+        return
+    for index, item in enumerate(items, start=1):
+        name = str(item.get("displayName", "") or item.get("name", ""))
+        web_url = str(item.get("webUrl", ""))
+        print(f"{index:>2}. [site] {name} :: {web_url}")
+
+
+def _print_site_selection(item: dict[str, Any]) -> None:
+    site_collection = item.get("siteCollection", {}) if isinstance(item.get("siteCollection"), dict) else {}
+    print()
+    print(f"name: {item.get('displayName', '') or item.get('name', '')}")
+    print("kind: site")
+    print(f"site_id: {item.get('id', '')}")
+    print(f"hostname: {site_collection.get('hostname', '')}")
+    print(f"url: {item.get('webUrl', '')}")
+    print()
 
 
 def _print_selection(item: dict[str, Any]) -> None:
@@ -214,6 +285,77 @@ async def _explore(client: GraphDiscoveryClient, settings: GraphDiscoverySetting
         result = await _explore_drive(client, selected_drive)
         if result == "quit":
             return 0
+
+
+async def _explore_sites(client: GraphDiscoveryClient, initial_query: str) -> int:
+    query = initial_query.strip()
+    while True:
+        if not query:
+            query = input("SharePoint site search term (or q to quit): ").strip()
+        if query.lower() == "q":
+            return 0
+        if not query:
+            continue
+
+        sites = await client.search_sites(query)
+        if not sites:
+            print(f"No sites found for {query!r}.")
+            query = ""
+            continue
+
+        while True:
+            print("\nMatching SharePoint sites")
+            _display_sites_compact(sites)
+            print()
+            print("Commands:")
+            print("  <number>  inspect site and choose one of its drives")
+            print("  n         new site search")
+            print("  q         quit")
+            raw = input("> ").strip().lower()
+            if raw == "q":
+                return 0
+            if raw == "n":
+                query = ""
+                break
+            if not raw.isdigit():
+                print("Unknown command.")
+                continue
+            index = int(raw) - 1
+            if index < 0 or index >= len(sites):
+                print("Selection out of range.")
+                continue
+
+            selected_site = sites[index]
+            _print_site_selection(selected_site)
+            site_id = str(selected_site.get("id", ""))
+            drives = await client.list_site_drives(site_id)
+            if not drives:
+                print("No drives found for this site.")
+                continue
+
+            while True:
+                print("Site drives")
+                _display_compact(drives)
+                print()
+                print("Commands:")
+                print("  <number>  explore drive")
+                print("  b         back to sites")
+                print("  q         quit")
+                drive_raw = input("> ").strip().lower()
+                if drive_raw == "q":
+                    return 0
+                if drive_raw == "b":
+                    break
+                if not drive_raw.isdigit():
+                    print("Unknown command.")
+                    continue
+                drive_index = int(drive_raw) - 1
+                if drive_index < 0 or drive_index >= len(drives):
+                    print("Selection out of range.")
+                    continue
+                result = await _explore_drive(client, drives[drive_index])
+                if result == "quit":
+                    return 0
 
 
 async def _explore_drive(client: GraphDiscoveryClient, drive: dict[str, Any]) -> str:
@@ -310,8 +452,46 @@ async def _run(args: argparse.Namespace) -> int:
     if args.command == "list-drives":
         _display(await client.list_drives())
         return 0
+    if args.command == "list-sites":
+        _display_sites(await client.search_sites(args.search))
+        return 0
+    if args.command == "resolve-site-url":
+        _print_site_selection(await client.resolve_site_by_url(args.url))
+        return 0
+    if args.command == "list-site-drives":
+        _display(await client.list_site_drives(args.site_id))
+        return 0
     if args.command == "explore":
         return await _explore(client, settings)
+    if args.command == "explore-sites":
+        return await _explore_sites(client, args.search)
+    if args.command == "explore-site-url":
+        site = await client.resolve_site_by_url(args.url)
+        _print_site_selection(site)
+        drives = await client.list_site_drives(str(site.get("id", "")))
+        if not drives:
+            print("No drives found for this site.")
+            return 1
+        while True:
+            print("Site drives")
+            _display_compact(drives)
+            print()
+            print("Commands:")
+            print("  <number>  explore drive")
+            print("  q         quit")
+            raw = input("> ").strip().lower()
+            if raw == "q":
+                return 0
+            if not raw.isdigit():
+                print("Unknown command.")
+                continue
+            index = int(raw) - 1
+            if index < 0 or index >= len(drives):
+                print("Selection out of range.")
+                continue
+            result = await _explore_drive(client, drives[index])
+            if result == "quit":
+                return 0
 
     drive_id = args.drive_id or settings.graph_excel_drive_id
     if not drive_id:

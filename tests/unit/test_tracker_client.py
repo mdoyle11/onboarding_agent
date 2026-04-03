@@ -301,3 +301,41 @@ async def test_update_stage_accepts_legacy_completed_in_adp_header_alias():
 
     assert result["success"] is True
     assert mock_request.await_args_list[2].args[0] == "PATCH"
+
+
+@pytest.mark.asyncio
+async def test_remove_employee_from_tracker_deletes_row_and_verifies():
+    client = TrackerClient()
+    row = _build_row(
+        {
+            "Staff Name": "Alice Example",
+            "Staff Email": "alice@example.com",
+            "Work Location": "Bronx",
+            "Job Title": "Teacher",
+        }
+    )
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(
+                side_effect=[
+                    {"address": "Onboarding!A1:P2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A2:P2", "values": [row]},
+                    {},
+                    {"address": "Onboarding!A1:P1", "values": [HEADER_ROW]},
+                ]
+            ),
+        ) as mock_request,
+    ):
+        result = await client.remove_employee_from_tracker(
+            "alice@example.com",
+            location="Bronx",
+            job_title="Teacher",
+        )
+
+    assert result["success"] is True
+    assert mock_request.await_args_list[2].args[0] == "POST"
+    assert "/range(address='A2%3AAA2')/delete" in mock_request.await_args_list[2].args[1]

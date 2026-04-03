@@ -34,7 +34,7 @@ mcp = FastMCP(
     name="onboarding-tools",
     instructions=(
         "Tools for HR onboarding: Microsoft Graph Excel tracker, "
-        "staff roster capacity and roster updates, "
+        "staff roster capacity and roster CRUD, "
         "DocuSign (draft, send, status), Outlook email (draft, send), and "
         "Teams notifications. "
         "Use get_onboarding_status for composite queries."

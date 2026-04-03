@@ -1,0 +1,77 @@
+Summary for April 2, 2026
+
+Major work completed:
+
+- Shifted more agent capability detail out of the large Teams query system prompt and into MCP tool docstrings.
+- Condensed the system prompt so it focuses on policy, ambiguity handling, and context reuse rather than enumerating CRUD fields and workflow sequences.
+- Removed the duplicated tracked-stage list from the prompt and replaced it with a semantic canonicalization rule.
+
+Teams thread context and memory:
+
+- Kept Teams channel thread seeding and rehydration intact.
+- Tightened prompt guidance so follow-up requests in the same thread reuse seeded context fields by default:
+  - employee_email
+  - employee_name
+  - work_location
+  - job_title
+  - status_change
+  - job_category
+- Restored an explicit rule to reuse work_location from session context for roster capacity queries.
+- Added a stronger rule telling the agent not to ask again for already-seeded values unless the user is clearly changing them or a tool result shows ambiguity.
+- Reverted a bad heuristic that preferred fuller-looking names over source-driven names. Session names are source-driven again.
+
+Staff roster behavior:
+
+- Added simple singular/plural normalization for roster Group values at the workbook client layer so requests like `teachers` can resolve to `Teacher`.
+- Expanded staff-roster CRUD behavior already in progress:
+  - section-aware insert above each group’s `Totals` row
+  - row deletion with worksheet shift-up
+  - in-place updates and section-aware group moves
+- Kept `job_title` and roster `job_category` separate concepts.
+- Fixed roster-action tracker resolution so roster add/remove/update can relax tracker lookup when thread `job_title` is too specific, while still refusing to guess on ambiguous multiple matches.
+- Added support for `Personal Email` as the preferred durable roster correlation field inside each location workbook.
+- Updated roster schema aliases to match the real workbook more closely, including:
+  - Employee ID
+  - Work Email
+  - Personal Email
+  - Position
+  - Group
+  - Status
+  - and other current roster columns
+
+Tracker and CRUD improvements:
+
+- Extended tracker/staff-roster natural-language support through the tool surface:
+  - tracker row removal
+  - tracker stage update/clear for all stages
+  - staff-roster row inspection
+  - staff-roster row updates across many fields
+- Added inactive-stage guarding so attempts to update `N/A` stages return an inactive/non-applicable response instead of misleading not-found failures.
+
+SharePoint and workbook tooling:
+
+- Expanded `scripts/find_excel_ids.py` to support SharePoint exploration:
+  - site search
+  - site drive listing
+  - direct site resolution by URL
+  - interactive site exploration
+- Confirmed URL-based SharePoint site resolution works locally with app credentials.
+- Confirmed moving workbook files from OneDrive to SharePoint only requires updating configured `drive_id` and `item_id`, assuming workbook structure remains compatible.
+
+Validation completed today:
+
+- Multiple targeted suites passed during the work:
+  - `tests/unit/test_runner.py`
+  - `tests/unit/test_mcp_tools.py`
+  - `tests/unit/test_staff_roster.py`
+  - `tests/unit/test_tracker_client.py`
+- Broad validation checks repeatedly passed:
+  - `uv run ruff check src tests`
+  - `uv run mypy src`
+
+Current status before redeploy:
+
+- Tool metadata and prompt shape are cleaner.
+- Teams thread context is seeded and re-used more explicitly.
+- Staff-roster Group normalization and relaxed tracker lookup for roster actions are in place.
+- Session naming is back to source-driven behavior.

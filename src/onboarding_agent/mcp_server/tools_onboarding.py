@@ -123,26 +123,14 @@ def register(mcp: FastMCP) -> None:
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
-        """
-        Get a comprehensive onboarding status for an employee, combining pipeline
-        stage tracking and DocuSign envelope status.
+        """Get the primary HR-facing onboarding status summary for one employee.
 
-        This is the primary tool for HR queries like:
-          "What's the status of [employee]?"
-          "Has [employee] signed their offer letter?"
-          "Where is [employee] in the pipeline?"
+        This combines tracker stages with DocuSign state and should be the
+        first tool for questions like "What's their status?", "Was the offer
+        letter sent?", or "Has the employee signed?".
 
-        Parameters:
-        - employee_email: The new hire's email address
-
-        Returns a dict with:
-        - found (bool)
-        - employee_email (str)
-        - name (str)
-        - stages (dict) — all pipeline stages with completion dates or "" if pending
-        - docusign_envelope_id (str)
-        - docusign_status (str) — created | sent | delivered | completed | voided
-        - summary (str) — full human-readable status with per-stage breakdown
+        When duplicate tracker rows exist for the same email, pass
+        `location`, `job_title`, or `status_change` to disambiguate.
         """
         tracker = _tracker()
         record = await tracker.get_employee_stages(

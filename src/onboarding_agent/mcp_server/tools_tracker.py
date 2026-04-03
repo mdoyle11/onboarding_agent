@@ -226,6 +226,13 @@ def register(mcp: FastMCP) -> None:
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
+        """Find one tracker row and return a compact employee summary.
+
+        Use this to inspect the canonical onboarding tracker record before
+        updating stages or deleting the row. If the same email has multiple
+        tracker rows, provide `location`, `job_title`, or `status_change` to
+        disambiguate.
+        """
         result = await _tracker().find_employee_in_tracker(
             employee_email,
             location=location,
@@ -251,7 +258,13 @@ def register(mcp: FastMCP) -> None:
         compensation: str = "",
         employment_type: str = "",
         contract_term: str = "",
-    ) -> dict[str, Any]:
+        ) -> dict[str, Any]:
+        """Add a new employee row to the onboarding tracker.
+
+        This is the tracker create operation. It writes the intake fields used
+        by HR submissions and creates the canonical row used by downstream
+        status, DocuSign, and roster workflows.
+        """
         return await _tracker().add_employee_to_tracker(
             staff_name=staff_name,
             staff_email=staff_email,
@@ -271,6 +284,25 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
+    async def remove_employee_from_tracker(
+        employee_email: str,
+        location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+    ) -> dict[str, Any]:
+        """Delete one employee row from the onboarding tracker.
+
+        This is the tracker delete operation. Use the fullest available
+        identity when duplicate rows may exist for the same email.
+        """
+        return await _tracker().remove_employee_from_tracker(
+            employee_email,
+            location=location,
+            job_title=job_title,
+            status_change=status_change,
+        )
+
+    @mcp.tool()
     async def update_tracker_stage(
         employee_email: str,
         stage_name: str,
@@ -279,6 +311,13 @@ def register(mcp: FastMCP) -> None:
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
+        """Set a tracker stage value for one employee row.
+
+        Use this to mark any tracker stage complete or to set an explicit stage
+        value such as a specific date or `N/A`. If `stage_value` is empty, the
+        tracker client uses today's date. If the stage is currently `N/A`, this
+        tool returns an inactive-stage response instead of writing.
+        """
         identity = EmployeeIdentity(employee_email, location, job_title, status_change)
         guarded = await _guard_inactive_stage_update(
             identity=identity,
@@ -303,6 +342,11 @@ def register(mcp: FastMCP) -> None:
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
+        """Clear one tracker stage back to pending for an employee row.
+
+        This resets the stage cell to blank. If the stage is currently `N/A`,
+        this tool returns an inactive-stage response instead of writing.
+        """
         identity = EmployeeIdentity(employee_email, location, job_title, status_change)
         guarded = await _guard_inactive_stage_update(
             identity=identity,
@@ -326,6 +370,11 @@ def register(mcp: FastMCP) -> None:
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
+        """Return the full tracker stage grid for one employee.
+
+        This is a tracker-only stage view. For a fuller HR-facing answer that
+        also reconciles DocuSign state, prefer `get_onboarding_status`.
+        """
         result = await _tracker().find_employee_in_tracker(
             employee_email,
             location=location,
@@ -378,6 +427,12 @@ def register(mcp: FastMCP) -> None:
         recent_days: int = _DEFAULT_RECENT_DAYS,
         limit: int = _LIST_EMPLOYEE_PREVIEW_LIMIT,
     ) -> dict[str, Any]:
+        """List tracker employees with optional filters.
+
+        Supports filters such as pending stage, location, title/position,
+        free-text query, and start-date window. Use this for queue-style HR
+        questions like "who still needs Clear to Start?".
+        """
         result = await _tracker().list_all_employees()
         if not result.get("success"):
             return result

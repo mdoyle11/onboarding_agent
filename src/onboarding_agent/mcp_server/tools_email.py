@@ -172,29 +172,19 @@ def register(mcp: FastMCP) -> None:
         employee_email: str,
         employee_name: str,
     ) -> dict[str, Any]:
-        """
-        Draft an onboarding welcome email for a new hire.
-        Does NOT send the email — stores it for HR review.
-        HR must explicitly approve by saying "send the onboarding email for [employee]".
+        """Create and persist a welcome-email draft for HR review.
 
-        Parameters:
-        - employee_email: The new hire's email address (recipient)
-        - employee_name: Full name of the new hire
-
-        Returns the rendered subject and a body preview for HR to review.
+        This does not send the email. Use it before `send_onboarding_email`
+        when no draft exists yet.
         """
         return await draft_onboarding_email_for_employee(employee_email, employee_name)
 
     @mcp.tool()
     async def send_onboarding_email(employee_email: str) -> dict[str, Any]:
-        """
-        Send a previously drafted onboarding email.
-        Must be explicitly requested by HR — e.g. "send the onboarding email for [employee]".
+        """Send a previously drafted onboarding email for one employee.
 
-        Parameters:
-        - employee_email: The new hire's email address (must have an existing draft)
-
-        Fails if no draft exists. Call draft_onboarding_email first if needed.
+        This requires an existing draft. If no draft exists, call
+        `draft_onboarding_email` first.
         """
         return await send_onboarding_email_to_employee(employee_email)
 
@@ -203,12 +193,5 @@ def register(mcp: FastMCP) -> None:
         employee_email: str,
         employee_name: str,
     ) -> dict[str, Any]:
-        """
-        Send a confirmation email after an employee submits their background clearance form.
-        This is sent immediately — no HR approval required.
-
-        Parameters:
-        - employee_email: The employee's email address
-        - employee_name: Full name of the employee
-        """
+        """Send the background-clearance confirmation email immediately."""
         return await send_background_clearance_confirmation_email(employee_email, employee_name)

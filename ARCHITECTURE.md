@@ -222,6 +222,8 @@ The system prompt is intentionally narrow:
 - use tools for tracker, roster, email, Teams, and DocuSign data
 - ask short clarification questions when identity or required inputs are missing
 - do not orchestrate webhook workflows
+- treat seeded Teams thread context as default input for follow-up requests
+- rely on MCP tool descriptions as the source of truth for detailed tool capabilities
 
 Shared session-context fields live in:
 
@@ -234,6 +236,7 @@ Key stored context fields include:
 - `work_location`
 - `job_title`
 - `status_change`
+- `job_category`
 - `intent`
 - `envelope_id`
 
@@ -299,10 +302,12 @@ The FastMCP server is launched as a subprocess over stdio.
 Tool groups:
 
 - `tools_tracker.py`
-  - tracker lookup, stage updates, listing/filtering
+  - tracker lookup, row creation/removal, stage updates/clears, listing/filtering
 
 - `tools_staff_roster.py`
-  - roster capacity and deterministic roster updates
+  - roster capacity
+  - row inspection
+  - section-aware add/remove/update operations
 
 - `tools_docusign.py`
   - draft lookup, envelope creation, sending, status retrieval
@@ -321,6 +326,16 @@ Thin shared client factories live in:
 
 - `src/onboarding_agent/mcp_server/clients.py`
 
+Tool descriptions now carry most capability-specific guidance:
+
+- tracker CRUD and stage semantics
+- staff-roster CRUD/editable fields
+- DocuSign sequencing expectations
+- onboarding email draft/send behavior
+
+This keeps the agent prompt shorter and reduces drift between prompt text and
+tool implementation.
+
 
 ## Integration Layer
 
@@ -334,6 +349,7 @@ Key integration modules:
   - tracker/staff-roster schema aliases
   - workbook row/header/stage helpers
   - workbook-specific tracker and roster adapters
+  - section-aware roster insertion/deletion above per-group `Totals` rows
 
 - `integrations/docusign_client.py`
   - draft creation, envelope sending, composite-aware envelope lookup
@@ -357,6 +373,8 @@ When adding new functionality:
 3. Keep workbook/Graph IO in `integrations/workbook` and `integrations/graph`
 4. Keep shared business primitives in `domain/`
 5. Avoid reintroducing email-only identity assumptions into operational paths
+6. Keep prompt policy short; prefer tool docstrings for exact capability detail
+7. Preserve the distinction between tracker `job_title` and roster `job_category`
 
 The general direction remains:
 

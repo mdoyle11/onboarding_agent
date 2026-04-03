@@ -58,15 +58,13 @@ def register(mcp: FastMCP) -> None:
         job_title: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
-        """
-        Check whether a DocuSign envelope draft already exists for an employee.
+        """Check whether a matching DocuSign draft exists for one workflow row.
 
-        Parameters:
-        - employee_email: The new hire's email address
-
-        Returns a dict with:
-        - exists (bool)
-        - envelope_id (str) — empty string if no draft exists
+        Use this before sending an offer letter. If duplicate tracker rows share
+        the same email, pass `work_location`, `job_title`, and/or
+        `status_change` when available. When only one matching tracker row still
+        needs an offer letter, this tool can resolve it automatically; otherwise
+        it returns an ambiguity error instead of guessing.
         """
         if not (work_location or job_title or status_change):
             resolved = await _resolve_unsent_offer_letter_match(employee_email)
@@ -104,22 +102,10 @@ def register(mcp: FastMCP) -> None:
         work_location: str = "",
         status_change: str = "",
     ) -> dict[str, Any]:
-        """
-        Create a DocuSign envelope draft using the configured template.
+        """Create a DocuSign offer-letter draft, but do not send it yet.
 
-        Uses templateRoles to pre-fill signer details. The envelope is created
-        in "created" (draft) status — it is NOT sent until send_docusign_envelope is called.
-
-        Parameters:
-        - employee_name: Full name of the new hire (used as templateRole name)
-        - employee_email: New hire's email (used as templateRole email / signer)
-        - start_date: ISO 8601 date string (YYYY-MM-DD)
-        - position: Employee position / job title
-
-        Returns a dict with:
-        - success (bool)
-        - envelope_id (str)
-        - status (str) — should be "created"
+        This uses the configured template and returns an envelope in `created`
+        status. Call `send_docusign_envelope` afterward to actually send it.
         """
         client = _docusign()
         return await client.create_envelope_draft(
@@ -133,19 +119,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def send_docusign_envelope(envelope_id: str) -> dict[str, Any]:
-        """
-        Push a DocuSign envelope from draft ("created") to sent status.
+        """Send an existing DocuSign draft envelope by envelope ID.
 
-        This triggers DocuSign to email the signing request to all recipients
-        defined in the envelope template.
-
-        Parameters:
-        - envelope_id: The DocuSign envelope ID to send
-
-        Returns a dict with:
-        - success (bool)
-        - envelope_id (str)
-        - status (str) — should be "sent"
+        Use this after `check_docusign_draft_exists` or
+        `create_docusign_envelope_draft`. This tool sends the envelope but does
+        not update tracker stages on its own.
         """
         client = _docusign()
         result = await client.send_envelope(envelope_id)
@@ -153,16 +131,6 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_docusign_envelope_status(envelope_id: str) -> dict[str, Any]:
-        """
-        Retrieve the current status and recipient tracking for a DocuSign envelope.
-
-        Parameters:
-        - envelope_id: The DocuSign envelope ID
-
-        Returns a dict with:
-        - envelope_id (str)
-        - status (str) — one of: created, sent, delivered, completed, voided
-        - recipients (list[dict]) — each with name, email, status, signed_date_time
-        """
+        """Retrieve the current DocuSign status and recipient tracking for an envelope."""
         client = _docusign()
         return await client.get_envelope_status(envelope_id)

@@ -34,37 +34,20 @@ Core rules:
 - If required data is missing, ask a short clarification question.
 - If a tool fails, explain the failure and next step.
 - Never expose credentials. Do not expose envelope IDs unless directly asked.
-
-Tracked stages:
-- Added to Tracker
-- Added to Staff Roster
-- Sent Offer Letter
-- Offer Letter Signed
-- Background Submission
-- Background Cleared
-- Added to ADP
-- Employee Complete ADP Profile
-- Complete in ADP
-- Proration
-- Clear to Start
-- Drug Screening
+- If a user's wording does not exactly match a schema field, stage, or tool parameter, infer the closest intended canonical key when the meaning is clear.
+- If the intent could map to multiple valid schema keys or records, ask a short clarification question instead of guessing.
 
 For trigger_source=teams_query:
 - For employee status questions, call get_onboarding_status.
-- HR users can update any tracker stage through natural language.
-- To mark a stage complete, call update_tracker_stage. If no date/value is specified, leave stage_value empty so the tool uses today's date.
-- If the user gives an explicit date or value such as "N/A", pass that as stage_value.
-- To clear or reset a stage back to pending, call clear_tracker_stage.
-- For offer-letter actions, never guess between multiple tracker rows that share the same email unless exactly one matching row still needs an offer letter.
+- HR users can update tracker stages and perform tracker/staff-roster CRUD through natural language when the corresponding tools support it.
+- Use the tool descriptions as the source of truth for exact tracker, staff-roster, email, and DocuSign capabilities.
+- For follow-up requests in the same Teams thread, reuse available employee_email, employee_name, work_location, job_title, status_change, and job_category from session context unless the user clearly changes them.
+- Treat those session-context fields as default inputs for follow-up requests, not just optional hints.
 - If work_location, job_title, or status_change are available from the user or session context, pass them into relevant tools.
-- If only an email is provided and the employee may have multiple tracker rows, resolve or ask for clarification before sending DocuSign.
-- To send a DocuSign envelope, first call check_docusign_draft_exists with the fullest available identity, then call send_docusign_envelope. Do not ask for an envelope ID.
-- After sending DocuSign, call update_tracker_stage for "Sent Offer Letter" using the same identity fields.
-- To send an onboarding email, call send_onboarding_email. If no draft exists, create one first with draft_onboarding_email, then confirm before sending.
-- For staff roster capacity, use the exact Group value used in the roster/capacity sheets. Do not assume categories like Instructional, Administrative, or Support unless the workbook actually uses them.
-- If the user asks for capacity for a title like "teacher" and it appears to be the intended Group value, call check_staff_roster_capacity directly with that value.
-- If work_location is available from the user or session context, use it for roster capacity queries instead of asking again.
-- To add someone to the staff roster, call add_employee_to_staff_roster with the employee email and exact job category/Group value. If the category is missing, ask for it.
+- For staff-roster capacity questions, reuse work_location from session context when available instead of asking again.
+- Do not ask the user to repeat work_location, employee_email, employee_name, or job_category if they are already present in session context, unless the user is clearly changing them or a tool result indicates real ambiguity.
+- For staff-roster follow-ups, treat job_category from session context as the last referenced roster group when the user does not restate it.
+- Ask for clarification instead of guessing when duplicate tracker rows may exist, especially for offer-letter actions.
 """
 
 # MCP server command — started as a subprocess via stdio transport
@@ -162,7 +145,7 @@ def derive_session_context(
                 context["status_change"] = status_change
 
         if tool_name in {"get_employee_stages", "get_onboarding_status"}:
-            employee_name = str(payload.get("name", "")).strip()
+            employee_name = str(payload.get("employee_name") or payload.get("name", "")).strip()
             if employee_name:
                 context["employee_name"] = employee_name
             context["intent"] = "check_onboarding_status"
@@ -189,6 +172,23 @@ def derive_session_context(
             job_category = str(payload.get("job_category", "")).strip()
             if job_category:
                 context["job_category"] = job_category
+            context["intent"] = "staff_roster"
+
+        if tool_name in {
+            "check_staff_roster_capacity",
+            "find_employee_in_staff_roster",
+            "remove_employee_from_staff_roster",
+            "update_employee_in_staff_roster",
+        }:
+            job_category = str(payload.get("job_category", "")).strip()
+            if job_category:
+                context["job_category"] = job_category
+            work_location = str(payload.get("work_location") or payload.get("location") or "").strip()
+            if work_location:
+                context["work_location"] = work_location
+            employee_name = str(payload.get("employee_name") or payload.get("name", "")).strip()
+            if employee_name:
+                context["employee_name"] = employee_name
             context["intent"] = "staff_roster"
 
     return context

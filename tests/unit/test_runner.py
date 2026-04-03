@@ -91,6 +91,28 @@ def test_derive_session_context_uses_tool_results():
     assert result["intent"] == "send_docusign_envelope"
 
 
+def test_derive_session_context_uses_source_driven_employee_name_and_job_category():
+    messages = [
+        ToolMessage(
+            content='{"success": true, "location": "Collier", "job_category": "Teacher"}',
+            tool_call_id="1",
+            name="check_staff_roster_capacity",
+        ),
+        ToolMessage(
+            content='{"found": true, "employee_email": "alice@example.com", "name": "Alice"}',
+            tool_call_id="2",
+            name="get_onboarding_status",
+        ),
+    ]
+
+    result = derive_session_context(messages, existing={"employee_name": "Alice Example"})
+
+    assert result["employee_name"] == "Alice"
+    assert result["job_category"] == "Teacher"
+    assert result["work_location"] == "Collier"
+    assert result["intent"] == "check_onboarding_status"
+
+
 @pytest.mark.asyncio
 async def test_run_agent_returns_messages_when_no_tool_calls():
     mock_response = AIMessage(content="Done!")
