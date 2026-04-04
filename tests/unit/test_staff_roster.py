@@ -55,10 +55,16 @@ def test_completed_docusign_card_includes_staff_roster_action():
         envelope_id="env-123",
         status="completed",
         summary="Signed.",
+        employee_name="Alice Example",
         work_location="Bronx",
         job_title="Teacher",
     )
 
+    facts = card["body"][2]["facts"]
+    assert {"title": "Employee", "value": "Alice Example"} in facts
+    assert {"title": "Email", "value": "alice@example.com"} in facts
+    assert {"title": "Location", "value": "Bronx"} in facts
+    assert {"title": "Job Title", "value": "Teacher"} in facts
     assert any(action.get("title") == "Add To Staff Roster" for action in card["actions"])
     assert any(block.get("id") == "job_category" for block in card["body"])
     roster_action = next(action for action in card["actions"] if action.get("title") == "Add To Staff Roster")
@@ -71,15 +77,18 @@ def test_new_hire_card_actions_include_composite_identity():
         employee_name="Alice Example",
         employee_email="alice@example.com",
         summary="Summary",
+        submission_id="sub-123",
         work_location="Bronx",
         job_title="Teacher",
     )
 
     action_data = {action["title"]: action["data"] for action in card["actions"]}
+    assert action_data["Send Welcome Email"]["submission_id"] == "sub-123"
     assert action_data["Send Welcome Email"]["work_location"] == "Bronx"
     assert action_data["Send Welcome Email"]["job_title"] == "Teacher"
-    assert action_data["Send Offer Letter"]["work_location"] == "Bronx"
-    assert action_data["Send Offer Letter"]["job_title"] == "Teacher"
+    assert action_data["Create Offer Letter Draft"]["submission_id"] == "sub-123"
+    assert action_data["Create Offer Letter Draft"]["work_location"] == "Bronx"
+    assert action_data["Create Offer Letter Draft"]["job_title"] == "Teacher"
 
 
 async def _get_tool_fn(mcp, tool_name: str):
@@ -124,6 +133,7 @@ async def test_add_employee_to_staff_roster_marks_tracker_stage(
         location="Bronx",
         job_title="Teacher",
         status_change="",
+        submission_id="",
     )
     tracker.update_stage.assert_awaited_once_with(
         "alice@example.com",
@@ -131,6 +141,7 @@ async def test_add_employee_to_staff_roster_marks_tracker_stage(
         location="Bronx",
         job_title="Teacher",
         status_change="",
+        submission_id="",
     )
     assert result["action"] == "added"
     assert "was added" in result["summary"]
@@ -219,70 +230,40 @@ async def test_add_employee_to_staff_roster_surfaces_multiple_matches(
 
 
 @pytest.mark.asyncio
-async def test_execute_new_hire_card_action_without_context_sends_docusign_deterministically():
+async def test_execute_new_hire_card_action_without_context_creates_docusign_draft_from_tracker_and_posts_reply():
     card_action = {
-        "action": "send_docusign",
+        "action": "create_docusign_draft",
         "employee_email": "alice@example.com",
-        "work_location": "Bronx",
-        "job_title": "Teacher",
-        "status_change": "New Hire",
-    }
-    docusign = AsyncMock()
-    docusign.check_draft_exists.return_value = {"exists": True, "envelope_id": "env-123"}
-    docusign.send_envelope.return_value = {"success": True, "envelope_id": "env-123", "status": "sent"}
-    tracker = AsyncMock()
-    tracker.update_stage.return_value = {"success": True}
-
-    with (
-        patch("onboarding_agent.integrations.teams.card_actions.mark_new_hire_action_complete", new=AsyncMock()),
-        patch("onboarding_agent.integrations.teams.card_actions.refresh_new_hire_card", new=AsyncMock(return_value={"success": True})),
-        patch("onboarding_agent.integrations.teams.card_actions.DocuSignClient", create=True),
-        patch("onboarding_agent.integrations.docusign_client.DocuSignClient", return_value=docusign),
-        patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
-    ):
-        result = await execute_new_hire_card_action_without_context(card_action)
-
-    assert result is True
-    docusign.check_draft_exists.assert_awaited_once_with(
-        "alice@example.com",
-        "Bronx",
-        "Teacher",
-        "New Hire",
-    )
-    docusign.send_envelope.assert_awaited_once_with("env-123")
-    tracker.update_stage.assert_awaited_once_with(
-        "alice@example.com",
-        "Sent Offer Letter",
-        location="Bronx",
-        job_title="Teacher",
-        status_change="New Hire",
-    )
-
-
-@pytest.mark.asyncio
-async def test_execute_new_hire_card_action_recreates_missing_docusign_draft_from_card_state():
-    card_action = {
-        "action": "send_docusign",
-        "employee_email": "alice@example.com",
+        "submission_id": "sub-123",
         "work_location": "Bronx",
         "job_title": "Teacher",
         "status_change": "New Hire",
     }
     docusign = AsyncMock()
     docusign.check_draft_exists.return_value = {"exists": False, "envelope_id": ""}
-    docusign.create_envelope_draft.return_value = {"success": True, "envelope_id": "env-456", "status": "created"}
-    docusign.send_envelope.return_value = {"success": True, "envelope_id": "env-456", "status": "sent"}
+    docusign.create_envelope_draft.return_value = {"success": True, "envelope_id": "env-123", "status": "created"}
+    docusign.create_envelope_edit_view.return_value = {"success": True, "url": "https://review.example.com/env-123"}
     tracker = AsyncMock()
-    tracker.update_stage.return_value = {"success": True}
-    card_state = {
-        "employee_name": "Alice Example",
-        "requested_start_date": "2026-04-10",
+    tracker.find_employee_in_tracker.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+        "start_date": "2026-04-10",
     }
+    card_state = {"channel_id": "channel-1", "message_id": "root-msg", "employee_name": "Alice Example", "submission_id": "sub-123"}
 
     with (
-        patch("onboarding_agent.integrations.teams.card_actions.mark_new_hire_action_complete", new=AsyncMock()),
+        patch("onboarding_agent.integrations.teams.card_actions.mark_new_hire_action_complete", new=AsyncMock()) as mark_complete,
         patch("onboarding_agent.integrations.teams.card_actions.refresh_new_hire_card", new=AsyncMock(return_value={"success": True})),
         patch("onboarding_agent.integrations.teams.card_actions.get_new_hire_card", new=AsyncMock(return_value=card_state)),
+        patch("onboarding_agent.integrations.teams.card_actions.save_docusign_status_card", new=AsyncMock()) as save_card,
+        patch(
+            "onboarding_agent.integrations.teams.messenger.TeamsMessenger.send_channel_notification",
+            new=AsyncMock(return_value={"success": True, "message_id": "reply-msg"}),
+        ) as send_reply,
         patch("onboarding_agent.integrations.teams.card_actions.DocuSignClient", create=True),
         patch("onboarding_agent.integrations.docusign_client.DocuSignClient", return_value=docusign),
         patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
@@ -290,6 +271,7 @@ async def test_execute_new_hire_card_action_recreates_missing_docusign_draft_fro
         result = await execute_new_hire_card_action_without_context(card_action)
 
     assert result is True
+    tracker.find_employee_in_tracker.assert_awaited_once_with("alice@example.com", submission_id="sub-123")
     docusign.create_envelope_draft.assert_awaited_once_with(
         employee_name="Alice Example",
         employee_email="alice@example.com",
@@ -297,8 +279,101 @@ async def test_execute_new_hire_card_action_recreates_missing_docusign_draft_fro
         position="Teacher",
         work_location="Bronx",
         status_change="New Hire",
+        submission_id="sub-123",
     )
+    send_reply.assert_awaited_once()
+    send_kwargs = send_reply.await_args.kwargs
+    assert send_kwargs["reply_to_id"] == "root-msg"
+    assert send_kwargs["session_context"]["employee_email"] == "alice@example.com"
+    assert send_kwargs["session_context"]["employee_name"] == "Alice Example"
+    assert send_kwargs["session_context"]["work_location"] == "Bronx"
+    assert send_kwargs["session_context"]["job_title"] == "Teacher"
+    assert send_kwargs["session_context"]["status_change"] == "New Hire"
+    save_card.assert_awaited_once()
+    mark_complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_new_hire_card_action_without_context_tolerates_missing_reply_message_id():
+    card_action = {
+        "action": "create_docusign_draft",
+        "employee_email": "alice@example.com",
+        "submission_id": "sub-123",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+    }
+    docusign = AsyncMock()
+    docusign.check_draft_exists.return_value = {"exists": False, "envelope_id": ""}
+    docusign.create_envelope_draft.return_value = {"success": True, "envelope_id": "env-123", "status": "created"}
+    docusign.create_envelope_edit_view.return_value = {"success": True, "url": "https://review.example.com/env-123"}
+    tracker = AsyncMock()
+    tracker.find_employee_in_tracker.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+        "start_date": "2026-04-10",
+    }
+    card_state = {"channel_id": "channel-1", "message_id": "root-msg", "employee_name": "Alice Example", "submission_id": "sub-123"}
+
+    with (
+        patch("onboarding_agent.integrations.teams.card_actions.mark_new_hire_action_complete", new=AsyncMock()) as mark_complete,
+        patch("onboarding_agent.integrations.teams.card_actions.refresh_new_hire_card", new=AsyncMock(return_value={"success": True})),
+        patch("onboarding_agent.integrations.teams.card_actions.get_new_hire_card", new=AsyncMock(return_value=card_state)),
+        patch("onboarding_agent.integrations.teams.card_actions.save_docusign_status_card", new=AsyncMock()) as save_card,
+        patch(
+            "onboarding_agent.integrations.teams.messenger.TeamsMessenger.send_channel_notification",
+            new=AsyncMock(return_value={"success": True, "message_id": ""}),
+        ),
+        patch("onboarding_agent.integrations.teams.card_actions.DocuSignClient", create=True),
+        patch("onboarding_agent.integrations.docusign_client.DocuSignClient", return_value=docusign),
+        patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
+    ):
+        result = await execute_new_hire_card_action_without_context(card_action)
+
+    assert result is True
+    save_card.assert_awaited_once()
+    assert save_card.await_args.kwargs["message_id"] == ""
+    mark_complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_new_hire_card_action_sends_existing_docusign_reply_card():
+    card_action = {
+        "action": "send_docusign",
+        "employee_email": "alice@example.com",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+    }
+    docusign = AsyncMock()
+    docusign.send_envelope.return_value = {"success": True, "envelope_id": "env-456", "status": "sent"}
+    tracker = AsyncMock()
+    tracker.update_stage.return_value = {"success": True}
+    docusign_card = {
+        "channel_id": "channel-1",
+        "message_id": "reply-msg",
+        "envelope_id": "env-456",
+        "review_url": "https://review.example.com/env-456",
+    }
+
+    with (
+        patch("onboarding_agent.integrations.teams.card_actions.get_docusign_status_card", new=AsyncMock(return_value=docusign_card)),
+        patch("onboarding_agent.integrations.teams.card_actions.save_docusign_status_card", new=AsyncMock()) as save_card,
+        patch("onboarding_agent.integrations.teams.card_actions.refresh_docusign_status_card", new=AsyncMock(return_value={"success": True})) as refresh_card,
+        patch("onboarding_agent.integrations.teams.card_actions.DocuSignClient", create=True),
+        patch("onboarding_agent.integrations.docusign_client.DocuSignClient", return_value=docusign),
+        patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
+    ):
+        result = await execute_new_hire_card_action_without_context(card_action)
+
+    assert result is True
     docusign.send_envelope.assert_awaited_once_with("env-456")
+    save_card.assert_awaited_once()
+    refresh_card.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -576,6 +651,7 @@ async def test_remove_employee_from_staff_roster_clears_tracker_stage(
         job_category="Teacher",
         job_title="Teacher",
         status_change="New Hire",
+        submission_id="",
     )
     tracker.update_stage.assert_awaited_once_with(
         "alice@example.com",
@@ -584,6 +660,7 @@ async def test_remove_employee_from_staff_roster_clears_tracker_stage(
         location="Bronx",
         job_title="Teacher",
         status_change="New Hire",
+        submission_id="",
     )
     assert result["action"] == "removed"
 
@@ -617,6 +694,7 @@ async def test_update_employee_in_staff_roster_returns_summary(
         current_job_category="teacher",
         job_title="",
         status_change="",
+        submission_id="",
         employee_id="",
         job_category="Teacher",
         position="",
@@ -1037,6 +1115,7 @@ async def test_handle_staff_roster_card_action_uses_existing_roster_membership_a
         location="Bronx",
         job_title="Teacher",
         status_change="New Hire",
+        submission_id="",
     )
     staff_roster.add_employee_to_staff_roster.assert_not_awaited()
     context.send_activity.assert_awaited()

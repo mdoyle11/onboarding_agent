@@ -30,12 +30,14 @@ async def _guard_inactive_stage_update(
     *,
     identity: EmployeeIdentity,
     stage_name: str,
+    submission_id: str = "",
 ) -> dict[str, Any] | None:
     result = await _tracker().find_employee_in_tracker(
         identity.email,
         location=identity.work_location,
         job_title=identity.job_title,
         status_change=identity.status_change,
+        submission_id=submission_id,
     )
     if not result.get("found"):
         matches = result.get("matches", [])
@@ -101,6 +103,7 @@ def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
             "found": False,
             "row_id": "",
             "email": str(result.get("email", "") or ""),
+            "submission_id": str(result.get("submission_id", "") or ""),
             "status": "",
             "multiple_matches": bool(result.get("multiple_matches", False)),
             "matches": matches if isinstance(matches, list) else [],
@@ -110,6 +113,7 @@ def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
 
     name = str(result.get("name", "") or "")
     email = str(result.get("email", "") or "")
+    submission_id = str(result.get("submission_id", "") or "")
     status = str(result.get("status", "") or "")
     location = str(result.get("location", "") or "")
     start_date = format_date(str(result.get("start_date", "") or ""))
@@ -128,14 +132,28 @@ def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
         "found": True,
         "row_id": str(result.get("row_id", "") or ""),
         "name": name,
+        "staff_name": str(result.get("staff_name", name) or name),
         "email": email,
+        "staff_email": str(result.get("staff_email", email) or email),
+        "submission_id": submission_id,
         "location": location,
+        "work_location": str(result.get("work_location", location) or location),
         "start_date": start_date,
+        "requested_start_date": start_date,
         "job_title": str(result.get("job_title", "") or ""),
         "status_change": str(result.get("status_change", "") or ""),
         "position": str(result.get("position", "") or result.get("job_title", "") or ""),
         "identity_key": str(result.get("identity_key", "") or ""),
         "manager_email": str(result.get("manager_email", "") or ""),
+        "requesting_manager": str(result.get("requesting_manager", result.get("manager_email", "")) or ""),
+        "staff_phone": str(result.get("staff_phone", "") or ""),
+        "education_level": str(result.get("education_level", "") or ""),
+        "supplements": str(result.get("supplements", "") or ""),
+        "license_number": str(result.get("license_number", "") or ""),
+        "uploaded_credentials": str(result.get("uploaded_credentials", "") or ""),
+        "compensation": str(result.get("compensation", "") or ""),
+        "employment_type": str(result.get("employment_type", "") or ""),
+        "contract_term": str(result.get("contract_term", "") or ""),
         "status": status,
         "summary": " ".join(summary_bits),
     }
@@ -225,19 +243,23 @@ def register(mcp: FastMCP) -> None:
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
-        """Find one tracker row and return a compact employee summary.
+        """Find one tracker row and return its current tracker fields.
 
         Use this to inspect the canonical onboarding tracker record before
-        updating stages or deleting the row. If the same email has multiple
-        tracker rows, provide `location`, `job_title`, or `status_change` to
-        disambiguate.
+        updating fields, updating stages, or deleting the row. The response
+        includes row-level values such as start date, location, job title,
+        status change, manager, phone, compensation, and other tracker fields.
+        If the same email has multiple tracker rows, provide `location`,
+        `job_title`, or `status_change` to disambiguate.
         """
         result = await _tracker().find_employee_in_tracker(
             employee_email,
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
         return _compact_employee_lookup(result)
 
@@ -245,6 +267,7 @@ def register(mcp: FastMCP) -> None:
     async def add_employee_to_tracker(
         staff_name: str,
         staff_email: str,
+        submission_id: str = "",
         requested_start_date: str = "",
         job_title: str = "",
         work_location: str = "",
@@ -266,6 +289,7 @@ def register(mcp: FastMCP) -> None:
         status, DocuSign, and roster workflows.
         """
         return await _tracker().add_employee_to_tracker(
+            submission_id=submission_id,
             staff_name=staff_name,
             staff_email=staff_email,
             requested_start_date=requested_start_date,
@@ -289,6 +313,7 @@ def register(mcp: FastMCP) -> None:
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         """Delete one employee row from the onboarding tracker.
 
@@ -300,6 +325,66 @@ def register(mcp: FastMCP) -> None:
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
+        )
+
+    @mcp.tool()
+    async def update_employee_in_tracker(
+        employee_email: str,
+        location: str = "",
+        current_job_title: str = "",
+        current_status_change: str = "",
+        submission_id: str = "",
+        staff_name: str | None = None,
+        staff_email: str | None = None,
+        requested_start_date: str | None = None,
+        job_title: str | None = None,
+        work_location: str | None = None,
+        requesting_manager: str | None = None,
+        status_change: str | None = None,
+        staff_phone: str | None = None,
+        education_level: str | None = None,
+        supplements: str | None = None,
+        license_number: str | None = None,
+        uploaded_credentials: str | None = None,
+        compensation: str | None = None,
+        employment_type: str | None = None,
+        contract_term: str | None = None,
+    ) -> dict[str, Any]:
+        """Edit tracker row fields for one employee.
+
+        This is the tracker update operation. It supports row-level updates for
+        `staff_name`, `staff_email`, `requested_start_date`, `job_title`,
+        `work_location`, `requesting_manager`, `status_change`, `staff_phone`,
+        `education_level`, `supplements`, `license_number`,
+        `uploaded_credentials`, `compensation`, `employment_type`, and
+        `contract_term`.
+
+        Use `location`, `current_job_title`, and `current_status_change` to
+        identify the current row when duplicate emails exist. Use
+        `submission_id` whenever available because it is the most stable key.
+        """
+        return await _tracker().update_employee_in_tracker(
+            employee_email,
+            location=location,
+            current_job_title=current_job_title,
+            current_status_change=current_status_change,
+            submission_id=submission_id,
+            staff_name=staff_name,
+            staff_email=staff_email,
+            requested_start_date=requested_start_date,
+            job_title=job_title,
+            work_location=work_location,
+            requesting_manager=requesting_manager,
+            status_change=status_change,
+            staff_phone=staff_phone,
+            education_level=education_level,
+            supplements=supplements,
+            license_number=license_number,
+            uploaded_credentials=uploaded_credentials,
+            compensation=compensation,
+            employment_type=employment_type,
+            contract_term=contract_term,
         )
 
     @mcp.tool()
@@ -310,6 +395,7 @@ def register(mcp: FastMCP) -> None:
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         """Set a tracker stage value for one employee row.
 
@@ -322,6 +408,7 @@ def register(mcp: FastMCP) -> None:
         guarded = await _guard_inactive_stage_update(
             identity=identity,
             stage_name=stage_name,
+            submission_id=submission_id,
         )
         if guarded is not None:
             return guarded
@@ -332,6 +419,7 @@ def register(mcp: FastMCP) -> None:
             location=identity.work_location,
             job_title=identity.job_title,
             status_change=identity.status_change,
+            submission_id=submission_id,
         )
 
     @mcp.tool()
@@ -341,6 +429,7 @@ def register(mcp: FastMCP) -> None:
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         """Clear one tracker stage back to pending for an employee row.
 
@@ -351,6 +440,7 @@ def register(mcp: FastMCP) -> None:
         guarded = await _guard_inactive_stage_update(
             identity=identity,
             stage_name=stage_name,
+            submission_id=submission_id,
         )
         if guarded is not None:
             return guarded
@@ -361,6 +451,7 @@ def register(mcp: FastMCP) -> None:
             location=identity.work_location,
             job_title=identity.job_title,
             status_change=identity.status_change,
+            submission_id=submission_id,
         )
 
     @mcp.tool()
@@ -369,6 +460,7 @@ def register(mcp: FastMCP) -> None:
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         """Return the full tracker stage grid for one employee.
 
@@ -380,6 +472,7 @@ def register(mcp: FastMCP) -> None:
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
 
         if not result.get("found"):

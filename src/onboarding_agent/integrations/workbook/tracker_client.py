@@ -46,6 +46,7 @@ class TrackerClient(WorkbookGraphClient):
     _index_header_row = 1
     _tracker_columns: dict[str, int] = {}
     _stage_columns: dict[str, int] = {}
+    _tracker_row_width: int = len(HEADER_ROW)
     _cache_identity_to_row_id: dict[str, str] = {}
     _cache_email_to_row_ids: dict[str, list[str]] = {}
 
@@ -72,6 +73,7 @@ class TrackerClient(WorkbookGraphClient):
             cls._index_header_row = header_row
             cls._tracker_columns = {}
             cls._stage_columns = {}
+            cls._tracker_row_width = len(HEADER_ROW)
             cls._cache_identity_to_row_id = {}
             cls._cache_email_to_row_ids = {}
             return
@@ -102,6 +104,7 @@ class TrackerClient(WorkbookGraphClient):
         cls._index_header_row = header_row
         cls._tracker_columns = tracker_columns
         cls._stage_columns = stage_columns
+        cls._tracker_row_width = len(header)
         cls._cache_identity_to_row_id = identity_index
         cls._cache_email_to_row_ids = email_index
 
@@ -110,6 +113,7 @@ class TrackerClient(WorkbookGraphClient):
         cls._index_header_row = 1
         cls._tracker_columns = {}
         cls._stage_columns = {}
+        cls._tracker_row_width = len(HEADER_ROW)
         cls._cache_identity_to_row_id = {}
         cls._cache_email_to_row_ids = {}
 
@@ -124,7 +128,7 @@ class TrackerClient(WorkbookGraphClient):
         except ValueError:
             return None
 
-        range_address = quote(f"A{row_number}:P{row_number}")
+        range_address = quote(f"A{row_number}:{_column_letter(self._tracker_row_width - 1)}{row_number}")
         data = await self._graph_workbook_request(
             "GET",
             f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
@@ -176,26 +180,41 @@ class TrackerClient(WorkbookGraphClient):
     @staticmethod
     def _employee_payload(row: list[Any], row_id: str) -> dict[str, Any]:
         stages = _row_to_stages(row, TrackerClient._stage_columns)
-        location_idx = TrackerClient._tracker_columns.get("work_location")
-        name_idx = TrackerClient._tracker_columns.get("staff_name")
-        email_idx = TrackerClient._tracker_columns.get("staff_email")
-        start_date_idx = TrackerClient._tracker_columns.get("requested_start_date")
-        manager_idx = TrackerClient._tracker_columns.get("requesting_manager")
-        location = str(row[location_idx]) if location_idx is not None and len(row) > location_idx else ""
+        def value(key: str) -> str:
+            idx = TrackerClient._tracker_columns.get(key)
+            if idx is None or len(row) <= idx:
+                return ""
+            return str(row[idx] or "")
+
+        location = value("work_location")
         job_title = TrackerClient._row_job_title(row)
         status_change = TrackerClient._row_status_change(row)
-        email = str(row[email_idx]) if email_idx is not None and len(row) > email_idx else ""
+        email = value("staff_email")
         return {
             "found": True,
             "row_id": row_id,
-            "name": str(row[name_idx]) if name_idx is not None and len(row) > name_idx else "",
+            "name": value("staff_name"),
+            "staff_name": value("staff_name"),
             "email": email,
+            "staff_email": email,
+            "submission_id": value("submission_id"),
             "location": location,
-            "start_date": str(row[start_date_idx]) if start_date_idx is not None and len(row) > start_date_idx else "",
+            "work_location": location,
+            "start_date": value("requested_start_date"),
+            "requested_start_date": value("requested_start_date"),
             "job_title": job_title,
             "status_change": status_change,
             "position": job_title,
-            "manager_email": str(row[manager_idx]) if manager_idx is not None and len(row) > manager_idx else "",
+            "manager_email": value("requesting_manager"),
+            "requesting_manager": value("requesting_manager"),
+            "staff_phone": value("staff_phone"),
+            "education_level": value("education_level"),
+            "supplements": value("supplements"),
+            "license_number": value("license_number"),
+            "uploaded_credentials": value("uploaded_credentials"),
+            "compensation": value("compensation"),
+            "employment_type": value("employment_type"),
+            "contract_term": value("contract_term"),
             "identity_key": TrackerClient._identity_key(email, location, job_title, status_change),
             "stages": stages,
             "status": _latest_active_stage(stages),
@@ -223,8 +242,10 @@ class TrackerClient(WorkbookGraphClient):
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         try:
+            submission_id_key = submission_id.strip()
             email_key = employee_email.strip().lower()
             location_key = location.strip()
             job_title_key = job_title.strip()
@@ -270,6 +291,47 @@ class TrackerClient(WorkbookGraphClient):
             if not rows:
                 return {"found": False, "row_id": "", "stages": {}}
 
+            if submission_id_key:
+                submission_idx = self._tracker_columns.get("submission_id")
+                if submission_idx is not None:
+                    submission_matches: list[tuple[str, list[Any]]] = []
+                    for i, scan_row in enumerate(rows[1:], start=header_row_number + 1):
+                        row_submission_id = (
+                            str(scan_row[submission_idx] or "").strip()
+                            if len(scan_row) > submission_idx
+                            else ""
+                        )
+                        if row_submission_id == submission_id_key:
+                            submission_matches.append((str(i), scan_row))
+
+                    if not submission_matches:
+                        return {"found": False, "row_id": "", "stages": {}}
+                    if len(submission_matches) > 1:
+                        return {
+                            "found": False,
+                            "row_id": "",
+                            "stages": {},
+                            "multiple_matches": True,
+                            "error": (
+                                "Multiple tracker rows match the provided submission_id. "
+                                "Resolve the duplicate tracker records before continuing."
+                            ),
+                            "matches": [self._match_payload(row, row_id) for row_id, row in submission_matches],
+                        }
+
+                    row_id, row = submission_matches[0]
+                    identity_key = self._identity_key(
+                        email_key,
+                        str(row[self._tracker_columns["work_location"]]) if "work_location" in self._tracker_columns and len(row) > self._tracker_columns["work_location"] else "",
+                        self._row_job_title(row),
+                        self._row_status_change(row),
+                    )
+                    self._cache_identity_to_row_id[identity_key] = row_id
+                    self._cache_email_to_row_ids.setdefault(email_key, [])
+                    if row_id not in self._cache_email_to_row_ids[email_key]:
+                        self._cache_email_to_row_ids[email_key].append(row_id)
+                    return self._employee_payload(row, row_id)
+
             matches: list[tuple[str, list[Any]]] = []
             for i, scan_row in enumerate(rows[1:], start=header_row_number + 1):
                 if self._row_matches_identity(
@@ -314,6 +376,7 @@ class TrackerClient(WorkbookGraphClient):
 
     async def add_employee_to_tracker(
         self,
+        submission_id: str = "",
         staff_name: str = "",
         staff_email: str = "",
         requested_start_date: str = "",
@@ -349,6 +412,7 @@ class TrackerClient(WorkbookGraphClient):
             start_idx = self._tracker_columns.get("requested_start_date")
             manager_idx = self._tracker_columns.get("requesting_manager")
             job_idx = self._tracker_columns.get("job_title")
+            submission_id_idx = self._tracker_columns.get("submission_id")
             status_change_idx = self._tracker_columns.get("status_change")
             staff_phone_idx = self._tracker_columns.get("staff_phone")
             education_level_idx = self._tracker_columns.get("education_level")
@@ -372,6 +436,8 @@ class TrackerClient(WorkbookGraphClient):
                 row[manager_idx] = final_requesting_manager
             if job_idx is not None:
                 row[job_idx] = final_job_title
+            if submission_id_idx is not None:
+                row[submission_id_idx] = submission_id
             if status_change_idx is not None:
                 row[status_change_idx] = status_change
             if staff_phone_idx is not None:
@@ -415,6 +481,7 @@ class TrackerClient(WorkbookGraphClient):
                 location=final_work_location,
                 job_title=final_job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
             row_id = str(found.get("row_id", "") or next_row)
             if found.get("found"):
@@ -438,12 +505,14 @@ class TrackerClient(WorkbookGraphClient):
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         employee = await self.find_employee_in_tracker(
             employee_email,
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
         if not employee.get("found"):
             return {
@@ -470,6 +539,7 @@ class TrackerClient(WorkbookGraphClient):
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
             if verified.get("found"):
                 return {
@@ -487,6 +557,126 @@ class TrackerClient(WorkbookGraphClient):
             self._clear_index()
             return {"success": False, "employee_email": employee_email, "error": str(exc)}
 
+    async def update_employee_in_tracker(
+        self,
+        employee_email: str,
+        *,
+        location: str = "",
+        current_job_title: str = "",
+        current_status_change: str = "",
+        submission_id: str = "",
+        staff_name: str | None = None,
+        staff_email: str | None = None,
+        requested_start_date: str | None = None,
+        job_title: str | None = None,
+        work_location: str | None = None,
+        requesting_manager: str | None = None,
+        status_change: str | None = None,
+        staff_phone: str | None = None,
+        education_level: str | None = None,
+        supplements: str | None = None,
+        license_number: str | None = None,
+        uploaded_credentials: str | None = None,
+        compensation: str | None = None,
+        employment_type: str | None = None,
+        contract_term: str | None = None,
+    ) -> dict[str, Any]:
+        employee = await self.find_employee_in_tracker(
+            employee_email,
+            location=location,
+            job_title=current_job_title,
+            status_change=current_status_change,
+            submission_id=submission_id,
+        )
+        if not employee.get("found"):
+            return {
+                "success": False,
+                "employee_email": employee_email,
+                "error": str(employee.get("error", f"Employee {employee_email} not found in tracker")),
+                "multiple_matches": bool(employee.get("multiple_matches", False)),
+                "matches": employee.get("matches", []),
+            }
+
+        updates = {
+            "staff_name": staff_name,
+            "staff_email": staff_email,
+            "requested_start_date": requested_start_date,
+            "job_title": job_title,
+            "work_location": work_location,
+            "requesting_manager": requesting_manager,
+            "status_change": status_change,
+            "staff_phone": staff_phone,
+            "education_level": education_level,
+            "supplements": supplements,
+            "license_number": license_number,
+            "uploaded_credentials": uploaded_credentials,
+            "compensation": compensation,
+            "employment_type": employment_type,
+            "contract_term": contract_term,
+        }
+        applied_updates = {key: value for key, value in updates.items() if value is not None}
+        if not applied_updates:
+            return {
+                "success": False,
+                "employee_email": employee_email,
+                "error": "No tracker fields were provided to update.",
+            }
+
+        try:
+            row_id = str(employee["row_id"])
+            row = await self._get_row_by_row_id(row_id)
+            if row is None:
+                return {"success": False, "employee_email": employee_email, "error": "Tracker row not found"}
+
+            for key, value in applied_updates.items():
+                column_idx = self._tracker_columns.get(key)
+                if column_idx is None:
+                    continue
+                while len(row) < self._tracker_row_width:
+                    row.append("")
+                row[column_idx] = value
+
+            range_address = quote(f"A{row_id}:{_column_letter(self._tracker_row_width - 1)}{row_id}")
+            await self._graph_workbook_request(
+                "PATCH",
+                f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
+                {"values": [row[:self._tracker_row_width]]},
+            )
+
+            final_email = str(applied_updates.get("staff_email", employee.get("email", employee_email)) or "")
+            final_location = str(applied_updates.get("work_location", employee.get("location", location)) or "")
+            final_job_title = str(applied_updates.get("job_title", employee.get("job_title", current_job_title)) or "")
+            final_status_change = str(
+                applied_updates.get("status_change", employee.get("status_change", current_status_change)) or ""
+            )
+
+            self._clear_index()
+            verified = await self.find_employee_in_tracker(
+                final_email,
+                location=final_location,
+                job_title=final_job_title,
+                status_change=final_status_change,
+                submission_id=submission_id or str(employee.get("submission_id", "") or ""),
+            )
+            if not verified.get("found"):
+                return {
+                    "success": False,
+                    "employee_email": final_email,
+                    "error": "Tracker update failed to verify after the workbook update.",
+                }
+
+            return {
+                "success": True,
+                "employee_email": final_email,
+                "row_id": str(verified.get("row_id", row_id) or row_id),
+                "submission_id": str(verified.get("submission_id", submission_id) or submission_id),
+                "updated_fields": sorted(applied_updates),
+            }
+        except Exception as exc:
+            logger.exception("update_employee_in_tracker failed")
+            self._clear_index()
+            return {"success": False, "employee_email": employee_email, "error": str(exc)}
+
     async def update_stage(
         self,
         employee_email: str,
@@ -496,6 +686,7 @@ class TrackerClient(WorkbookGraphClient):
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         if not self._stage_columns:
             await self._refresh_index()
@@ -514,6 +705,7 @@ class TrackerClient(WorkbookGraphClient):
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
         if not employee.get("found"):
             return {"success": False, "error": f"Employee {employee_email} not found in tracker"}
@@ -587,18 +779,21 @@ class TrackerClient(WorkbookGraphClient):
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         result = await self.find_employee_in_tracker(
             employee_email,
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
         if not result.get("found"):
             return {
                 "found": False,
                 "employee_email": employee_email,
                 "stages": {},
+                "submission_id": submission_id,
                 "multiple_matches": bool(result.get("multiple_matches", False)),
                 "matches": result.get("matches", []),
                 "error": result.get("error", ""),
@@ -608,6 +803,7 @@ class TrackerClient(WorkbookGraphClient):
             "employee_email": employee_email,
             "name": result.get("name", ""),
             "start_date": result.get("start_date", ""),
+            "submission_id": result.get("submission_id", submission_id),
             "status_change": result.get("status_change", ""),
             "stages": result.get("stages", {}),
         }

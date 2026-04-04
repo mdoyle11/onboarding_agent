@@ -23,6 +23,7 @@ class TeamsMessenger:
         message: str,
         card: dict[str, Any] | None = None,
         session_context: dict[str, Any] | None = None,
+        reply_to_id: str = "",
     ) -> dict[str, Any]:
         """Post a message to a Teams channel via Agents SDK proactive messaging."""
         started = perf_counter()
@@ -32,7 +33,7 @@ class TeamsMessenger:
 
         if card is None:
             card = generic_notification_card(title="Onboarding Agent", message=message)
-        result = await send_proactive_message(channel_id, message, card=card)
+        result = await send_proactive_message(channel_id, message, card=card, reply_to_id=reply_to_id)
         if result.get("success") and result.get("message_id") and session_context:
             await seed_channel_thread_context(
                 channel_id,

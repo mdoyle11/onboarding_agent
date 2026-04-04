@@ -15,7 +15,9 @@ from onboarding_agent.integrations.card_state import (
     get_new_hire_card,
     mark_docusign_roster_complete,
     mark_new_hire_action_complete,
+    refresh_docusign_status_card,
     refresh_new_hire_card,
+    save_docusign_status_card,
 )
 from onboarding_agent.integrations.teams.proactive import send_proactive_message
 
@@ -34,6 +36,7 @@ def extract_card_action(activity: Any) -> dict[str, str] | None:
     return {
         "action": action,
         "employee_email": employee_email,
+        "submission_id": str(value.get("submission_id", "")).strip(),
         "job_category": str(value.get("job_category", "")).strip(),
         "work_location": str(value.get("work_location", "")).strip(),
         "job_title": str(value.get("job_title", "")).strip(),
@@ -45,6 +48,84 @@ def _identity_from_action(card_action: dict[str, str]) -> EmployeeIdentity:
     return EmployeeIdentity.from_dict(card_action)
 
 
+async def _submission_id_for_identity(identity: EmployeeIdentity) -> str:
+    try:
+        card_state = await get_new_hire_card(identity)
+    except AssertionError:
+        return ""
+    return str((card_state or {}).get("submission_id", "") or "").strip()
+
+
+async def _resolve_tracker_record_for_docusign(identity: EmployeeIdentity) -> dict[str, Any]:
+    from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
+    tracker_client = TrackerClient()
+    submission_id = await _submission_id_for_identity(identity)
+    if submission_id:
+        result = await tracker_client.find_employee_in_tracker(
+            identity.email,
+            submission_id=submission_id,
+        )
+        if result.get("found") or result.get("multiple_matches"):
+            return result
+
+    attempts = [
+        {
+            "location": identity.work_location,
+            "job_title": identity.job_title,
+            "status_change": identity.status_change,
+        },
+        {
+            "location": identity.work_location,
+            "job_title": "",
+            "status_change": identity.status_change,
+        },
+        {
+            "location": identity.work_location,
+            "job_title": "",
+            "status_change": "",
+        },
+        {
+            "location": "",
+            "job_title": "",
+            "status_change": "",
+        },
+    ]
+    seen: set[tuple[str, str, str]] = set()
+    for attempt in attempts:
+        key = (
+            attempt["location"].strip().lower(),
+            attempt["job_title"].strip().lower(),
+            attempt["status_change"].strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result = await tracker_client.find_employee_in_tracker(
+            identity.email,
+            location=attempt["location"],
+            job_title=attempt["job_title"],
+            status_change=attempt["status_change"],
+        )
+        if result.get("found") or result.get("multiple_matches"):
+            return result
+    return {"found": False, "row_id": "", "stages": {}}
+
+
+async def _resolve_tracker_record_for_docusign_action(card_action: dict[str, str]) -> dict[str, Any]:
+    submission_id = str(card_action.get("submission_id", "") or "").strip()
+    if submission_id:
+        from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
+        result = await TrackerClient().find_employee_in_tracker(
+            str(card_action.get("employee_email", "") or "").strip(),
+            submission_id=submission_id,
+        )
+        if result.get("found") or result.get("multiple_matches"):
+            return result
+    return await _resolve_tracker_record_for_docusign(_identity_from_action(card_action))
+
+
 async def card_action_already_completed(card_action: dict[str, str] | None) -> bool:
     if not card_action:
         return False
@@ -54,8 +135,11 @@ async def card_action_already_completed(card_action: dict[str, str] | None) -> b
         return False
     if card_action["action"] == "send_onboarding_email":
         return bool(card.get("email_sent"))
+    if card_action["action"] == "create_docusign_draft":
+        return bool(card.get("docusign_draft_created"))
     if card_action["action"] == "send_docusign":
-        return bool(card.get("docusign_sent"))
+        ds_card = await get_docusign_status_card(identity)
+        return bool(ds_card and str(ds_card.get("status", "")).lower() in {"sent", "completed", "delivered"})
     if card_action["action"] == "add_to_staff_roster":
         from onboarding_agent.integrations.workbook.staff_roster_client import StaffRosterClient
         from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
@@ -65,6 +149,7 @@ async def card_action_already_completed(card_action: dict[str, str] | None) -> b
             location=identity.work_location,
             job_title=identity.job_title,
             status_change=identity.status_change,
+            submission_id=await _submission_id_for_identity(identity),
         )
         membership = await StaffRosterClient().find_employee_in_staff_roster(
             identity.email,
@@ -82,6 +167,8 @@ def already_completed_message(card_action: dict[str, str]) -> str:
         return f"Welcome email was already sent for {card_action['employee_email']}."
     if card_action["action"] == "add_to_staff_roster":
         return f"Staff roster was already updated for {card_action['employee_email']}."
+    if card_action["action"] == "create_docusign_draft":
+        return f"Offer letter draft was already created for {card_action['employee_email']}."
     return f"Offer letter was already sent for {card_action['employee_email']}."
 
 
@@ -95,11 +182,13 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
 
         staff_roster_client = StaffRosterClient()
         tracker_client = TrackerClient()
+        submission_id = await _submission_id_for_identity(identity)
         employee = await tracker_client.find_employee_in_tracker(
             identity.email,
             location=identity.work_location,
             job_title=identity.job_title,
             status_change=identity.status_change,
+            submission_id=submission_id,
         )
         existing_roster_entry = await staff_roster_client.find_employee_in_staff_roster(
             identity.email,
@@ -116,6 +205,7 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
                 location=identity.work_location,
                 job_title=identity.job_title,
                 status_change=identity.status_change,
+                submission_id=submission_id,
             )
             docusign_card = await mark_docusign_roster_complete(identity, existing_job_category)
             if docusign_card:
@@ -138,6 +228,7 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
             location=identity.work_location,
             job_title=identity.job_title,
             status_change=identity.status_change,
+            submission_id=submission_id,
         )
         if result.get("success"):
             await tracker_client.update_stage(
@@ -146,6 +237,7 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
                 location=identity.work_location,
                 job_title=identity.job_title,
                 status_change=identity.status_change,
+                submission_id=submission_id,
             )
             docusign_card = await mark_docusign_roster_complete(identity, job_category)
             if docusign_card:
@@ -183,51 +275,73 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
 async def _run_new_hire_card_action(card_action: dict[str, str]) -> dict[str, Any]:
     identity = _identity_from_action(card_action)
     action = card_action["action"]
+    action_submission_id = str(card_action.get("submission_id", "") or "").strip()
 
     if action == "send_onboarding_email":
         from onboarding_agent.mcp_server.tools_email import send_onboarding_email_to_employee
 
         return await send_onboarding_email_to_employee(identity.email)
 
-    if action == "send_docusign":
+    if action == "create_docusign_draft":
         from onboarding_agent.integrations.docusign_client import DocuSignClient
-        from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+        from onboarding_agent.integrations.teams.messenger import TeamsMessenger
 
+        parent_card = await get_new_hire_card(identity)
+        if not parent_card:
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "error": f"No stored submission card state for {identity.email}.",
+            }
+        if action_submission_id and not str(parent_card.get("submission_id", "") or "").strip():
+            parent_card["submission_id"] = action_submission_id
+
+        tracker_record = await _resolve_tracker_record_for_docusign_action(card_action)
+        if not tracker_record.get("found"):
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "error": str(
+                    tracker_record.get("error", f"Tracker row not found for {identity.email}.")
+                ),
+                "multiple_matches": bool(tracker_record.get("multiple_matches", False)),
+                "matches": tracker_record.get("matches", []),
+            }
+
+        current_work_location = str(tracker_record.get("location", "") or identity.work_location or "").strip()
+        current_job_title = str(tracker_record.get("job_title", "") or identity.job_title or "").strip()
+        current_status_change = str(tracker_record.get("status_change", "") or identity.status_change or "").strip()
         docusign_client = DocuSignClient()
         draft_result = await docusign_client.check_draft_exists(
             identity.email,
-            identity.work_location,
-            identity.job_title,
-            identity.status_change,
+            current_work_location,
+            current_job_title,
+            current_status_change,
         )
         if not draft_result.get("exists"):
-            card = await get_new_hire_card(identity)
-            requested_start_date = str((card or {}).get("requested_start_date", "") or "").strip()
-            employee_name = str((card or {}).get("employee_name", "") or "").strip()
-            if not card or not requested_start_date or not identity.job_title:
+            requested_start_date = str(tracker_record.get("start_date", "") or "").strip()
+            employee_name = str(tracker_record.get("name", "") or parent_card.get("employee_name", "") or "").strip()
+            if not requested_start_date or not current_job_title or not current_work_location:
                 return {
                     "success": False,
                     "employee_email": identity.email,
-                    "error": (
-                        f"No DocuSign draft found for {identity.email} "
-                        f"({identity.work_location or 'unknown location'}, {identity.job_title or 'unknown title'}, {identity.status_change or 'unknown status'}), "
-                        "and the card state does not include enough data to recreate one."
-                    ),
+                    "error": "Tracker does not contain enough data to create the offer letter draft.",
                 }
             draft_result = await docusign_client.create_envelope_draft(
                 employee_name=employee_name or identity.email,
                 employee_email=identity.email,
                 start_date=requested_start_date,
-                position=identity.job_title,
-                work_location=identity.work_location,
-                status_change=identity.status_change,
+                position=current_job_title,
+                work_location=current_work_location,
+                status_change=current_status_change,
+                submission_id=str(tracker_record.get("submission_id", "") or action_submission_id or "").strip(),
             )
             if not draft_result.get("success"):
                 return {
                     "success": False,
                     "employee_email": identity.email,
                     "error": (
-                        f"DocuSign draft was missing for {identity.email} and recreation failed: "
+                        f"DocuSign draft creation failed for {identity.email}: "
                         f"{draft_result.get('error', 'unknown error')}"
                     ),
                 }
@@ -240,6 +354,95 @@ async def _run_new_hire_card_action(card_action: dict[str, str]) -> dict[str, An
                 "error": "DocuSign draft lookup succeeded but returned no envelope_id.",
             }
 
+        review_result = await docusign_client.create_envelope_edit_view(envelope_id)
+        review_url = str(review_result.get("url", "") or "").strip()
+        summary = "Offer letter draft created from the current tracker fields. Review the draft in DocuSign, then send it when ready."
+        reply_card = docusign_status_card(
+            employee_email=identity.email,
+            envelope_id=envelope_id,
+            status="created",
+            summary=summary,
+            submission_id=str(tracker_record.get("submission_id", "") or action_submission_id or "").strip(),
+            employee_name=employee_name or identity.email,
+            work_location=current_work_location,
+            job_title=current_job_title,
+            status_change=current_status_change,
+            review_url=review_url,
+            allow_send_action=True,
+        )
+        reply_result = await TeamsMessenger().send_channel_notification(
+            channel_id=parent_card.get("channel_id", ""),
+            message=summary,
+            card=reply_card,
+            session_context={
+                "submission_id": str(tracker_record.get("submission_id", "") or action_submission_id or "").strip(),
+                "employee_email": identity.email,
+                "employee_name": employee_name or identity.email,
+                "work_location": current_work_location,
+                "job_title": current_job_title,
+                "status_change": current_status_change,
+                "intent": "send_docusign_envelope",
+                "envelope_id": envelope_id,
+            },
+            reply_to_id=parent_card.get("message_id", ""),
+        )
+        if not reply_result.get("success"):
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "error": f"DocuSign draft created, but posting the review card failed: {reply_result.get('error', 'unknown error')}",
+            }
+        if not reply_result.get("message_id"):
+            logger.warning(
+                "DocuSign draft review card posted for %s without a returned Teams message_id; continuing without card update handle.",
+                identity.email,
+            )
+        await save_docusign_status_card(
+            employee_email=identity.email,
+            employee_name=employee_name or identity.email,
+            channel_id=parent_card.get("channel_id", ""),
+            message_id=str(reply_result.get("message_id", "") or ""),
+            envelope_id=envelope_id,
+            status="created",
+            summary=summary,
+            submission_id=str(tracker_record.get("submission_id", "") or action_submission_id or ""),
+            work_location=current_work_location,
+            job_title=current_job_title,
+            status_change=current_status_change,
+            review_url=review_url,
+            allow_send_action=True,
+        )
+        return {
+            "success": True,
+            "employee_email": identity.email,
+            "envelope_id": envelope_id,
+            "status": "created",
+            "review_url": review_url,
+        }
+
+    if action == "send_docusign":
+        from onboarding_agent.integrations.docusign_client import DocuSignClient
+        from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
+        docusign_client = DocuSignClient()
+        submission_id = await _submission_id_for_identity(identity)
+        docusign_card = await get_docusign_status_card(identity)
+        envelope_id = str((docusign_card or {}).get("envelope_id", "") or "").strip()
+        if not envelope_id:
+            draft_result = await docusign_client.check_draft_exists(
+                identity.email,
+                identity.work_location,
+                identity.job_title,
+                identity.status_change,
+            )
+            envelope_id = str(draft_result.get("envelope_id", "") or "").strip()
+        if not envelope_id:
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "error": f"No DocuSign draft found for {identity.email}. Create the draft first.",
+            }
+
         send_result = await docusign_client.send_envelope(envelope_id)
         if not send_result.get("success"):
             return send_result
@@ -250,10 +453,30 @@ async def _run_new_hire_card_action(card_action: dict[str, str]) -> dict[str, An
             location=identity.work_location,
             job_title=identity.job_title,
             status_change=identity.status_change,
+            submission_id=submission_id,
         )
         result: dict[str, Any] = dict(send_result)
         if not stage_result.get("success"):
             result["warning"] = f"Offer letter sent, but tracker update failed: {stage_result.get('error', 'unknown error')}"
+        if docusign_card:
+            await save_docusign_status_card(
+                employee_email=identity.email,
+                employee_name=str(docusign_card.get("employee_name", "") or identity.email),
+                channel_id=docusign_card.get("channel_id", ""),
+                message_id=docusign_card.get("message_id", ""),
+                envelope_id=envelope_id,
+                status="sent",
+                summary="Offer letter sent to the employee via DocuSign.",
+                submission_id=str(docusign_card.get("submission_id", "") or submission_id or ""),
+                work_location=identity.work_location,
+                job_title=identity.job_title,
+                status_change=identity.status_change,
+                roster_added=bool(docusign_card.get("roster_added", False)),
+                job_category=str(docusign_card.get("job_category", "") or ""),
+                review_url=str(docusign_card.get("review_url", "") or ""),
+                allow_send_action=False,
+            )
+            await refresh_docusign_status_card(identity)
         return result
 
     return {"success": False, "employee_email": identity.email, "error": f"Unsupported card action: {action}"}
@@ -261,12 +484,22 @@ async def _run_new_hire_card_action(card_action: dict[str, str]) -> dict[str, An
 
 async def execute_new_hire_card_action_without_context(card_action: dict[str, str]) -> bool:
     identity = _identity_from_action(card_action)
+    submission_id = str(card_action.get("submission_id", "") or "").strip()
     result = await _run_new_hire_card_action(card_action)
     if not result.get("success"):
         return False
 
-    await mark_new_hire_action_complete(identity, card_action["action"])
-    refresh_result = await refresh_new_hire_card(identity)
+    refresh_result = {"success": True}
+    if card_action["action"] in {"send_onboarding_email", "create_docusign_draft"}:
+        await mark_new_hire_action_complete(identity, card_action["action"], submission_id=submission_id)
+        refresh_result = await refresh_new_hire_card(identity, submission_id=submission_id)
+        if card_action["action"] == "create_docusign_draft" and not refresh_result.get("success"):
+            logger.warning(
+                "Offer letter draft action succeeded for %s, but root card refresh failed: %s",
+                identity.email,
+                refresh_result.get("error", "unknown error"),
+            )
+            refresh_result = {"success": True}
 
     warning = str(result.get("warning", "") or "").strip()
     if warning:
@@ -287,6 +520,7 @@ async def notify_card_action_failure(card_action: dict[str, str]) -> None:
 
     action_labels = {
         "send_onboarding_email": "send the welcome email",
+        "create_docusign_draft": "create the offer letter draft",
         "send_docusign": "send the offer letter",
         "add_to_staff_roster": "add the employee to the staff roster",
     }
@@ -299,7 +533,7 @@ async def notify_card_action_failure(card_action: dict[str, str]) -> None:
 
 async def refresh_card_from_context(context: TurnContext, card_action: dict[str, str]) -> bool:
     identity = _identity_from_action(card_action)
-    if card_action["action"] == "add_to_staff_roster":
+    if card_action["action"] in {"add_to_staff_roster", "send_docusign"}:
         card = await get_docusign_status_card(identity)
         if not card:
             return False
@@ -341,6 +575,7 @@ async def _update_new_hire_card(context: TurnContext, card: dict[str, Any]) -> b
     updated = new_hire_card(
         employee_name=card.get("employee_name", ""),
         employee_email=card.get("employee_email", ""),
+        submission_id=card.get("submission_id", ""),
         title=card.get("title", ""),
         status_change=card.get("status_change", ""),
         requested_start_date=card.get("requested_start_date", ""),
@@ -349,7 +584,7 @@ async def _update_new_hire_card(context: TurnContext, card: dict[str, Any]) -> b
         requesting_manager=card.get("requesting_manager", ""),
         summary=card.get("summary", ""),
         email_sent=bool(card.get("email_sent")),
-        docusign_sent=bool(card.get("docusign_sent")),
+        docusign_draft_created=bool(card.get("docusign_draft_created")),
         allow_email_action=bool(card.get("allow_email_action", True)),
         allow_docusign_action=bool(card.get("allow_docusign_action", True)),
     )
@@ -362,10 +597,14 @@ async def _update_docusign_status_card(context: TurnContext, card: dict[str, Any
         envelope_id=card.get("envelope_id", ""),
         status=card.get("status", ""),
         summary=card.get("summary", ""),
+        submission_id=card.get("submission_id", ""),
+        employee_name=card.get("employee_name", ""),
         roster_added=bool(card.get("roster_added")),
         job_category=card.get("job_category", ""),
         work_location=card.get("work_location", ""),
         job_title=card.get("job_title", ""),
         status_change=card.get("status_change", ""),
+        review_url=card.get("review_url", ""),
+        allow_send_action=bool(card.get("allow_send_action", False)),
     )
     return await _update_card_via_context(context, card, updated, "DocuSign status")

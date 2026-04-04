@@ -39,11 +39,17 @@ Core rules:
 
 For trigger_source=teams_query:
 - For employee status questions, call get_onboarding_status.
+- For detailed tracker field lookups or tracker row edits, use find_employee_in_tracker and update_employee_in_tracker.
+- For "create offer letter draft" requests, call create_offer_letter_draft_from_tracker instead of the lower-level DocuSign draft tool whenever possible.
+- For requests to list drafts waiting to be sent, call list_docusign_drafts.
+- For requests to delete an unsent offer letter draft, call delete_docusign_draft instead of asking for an envelope ID whenever possible.
 - HR users can update tracker stages and perform tracker/staff-roster CRUD through natural language when the corresponding tools support it.
 - Use the tool descriptions as the source of truth for exact tracker, staff-roster, email, and DocuSign capabilities.
 - For follow-up requests in the same Teams thread, reuse available employee_email, employee_name, work_location, job_title, status_change, and job_category from session context unless the user clearly changes them.
+- When submission_id is present in session context, treat it as the primary workflow disambiguator and pass it into tracker, roster, and DocuSign tools whenever those tools accept it.
 - Treat those session-context fields as default inputs for follow-up requests, not just optional hints.
 - If work_location, job_title, or status_change are available from the user or session context, pass them into relevant tools.
+- If submission_id is present in session context, do not ask the user to choose among duplicate tracker rows unless the tool still reports ambiguity after using that submission_id.
 - For staff-roster capacity questions, reuse work_location from session context when available instead of asking again.
 - Do not ask the user to repeat work_location, employee_email, employee_name, or job_category if they are already present in session context, unless the user is clearly changing them or a tool result indicates real ambiguity.
 - For staff-roster follow-ups, treat job_category from session context as the last referenced roster group when the user does not restate it.
@@ -132,6 +138,9 @@ def derive_session_context(
                 or payload.get("email")
                 or ""
             ).strip()
+            submission_id = str(payload.get("submission_id", "")).strip()
+            if submission_id:
+                context["submission_id"] = submission_id
             if employee_email:
                 context["employee_email"] = employee_email
             work_location = str(payload.get("work_location") or payload.get("location") or "").strip()
@@ -157,10 +166,33 @@ def derive_session_context(
             if tool_name == "send_onboarding_email" and payload.get("success"):
                 context["pending_confirmation"] = False
 
-        if tool_name in {"check_docusign_draft_exists", "create_docusign_envelope_draft", "send_docusign_envelope"}:
+        if tool_name in {
+            "check_docusign_draft_exists",
+            "create_docusign_envelope_draft",
+            "create_offer_letter_draft_from_tracker",
+            "list_docusign_drafts",
+            "delete_docusign_draft",
+            "delete_offer_letter_draft_from_tracker",
+            "send_docusign_envelope",
+        }:
             envelope_id = str(payload.get("envelope_id", "")).strip()
             if envelope_id:
                 context["envelope_id"] = envelope_id
+            employee_name = str(payload.get("employee_name") or payload.get("name", "")).strip()
+            if employee_name:
+                context["employee_name"] = employee_name
+            submission_id = str(payload.get("submission_id", "")).strip()
+            if submission_id:
+                context["submission_id"] = submission_id
+            work_location = str(payload.get("work_location") or payload.get("location") or "").strip()
+            if work_location:
+                context["work_location"] = work_location
+            job_title = str(payload.get("job_title") or payload.get("position") or "").strip()
+            if job_title:
+                context["job_title"] = job_title
+            status_change = str(payload.get("status_change") or "").strip()
+            if status_change:
+                context["status_change"] = status_change
             context["intent"] = "send_docusign_envelope"
 
         if tool_name == "get_docusign_envelope_status":

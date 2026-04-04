@@ -10,6 +10,7 @@ TRACKER_REQUIRED_ALIASES = {
 }
 
 TRACKER_OPTIONAL_ALIASES = {
+    "submission_id": {"submission id", "submissionid", "forms submission id"},
     "requesting_manager": {"requesting manager", "manager", "manager email"},
     "status_change": {"status change", "status"},
     "staff_phone": {"staff phone #", "staff phone", "phone"},

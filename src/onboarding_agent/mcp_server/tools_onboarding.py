@@ -44,6 +44,7 @@ async def _reconcile_completed_docusign(
     location: str = "",
     job_title: str = "",
     status_change: str = "",
+    submission_id: str = "",
 ) -> dict[str, str]:
     if stages.get("Offer Letter Signed"):
         return stages
@@ -54,6 +55,7 @@ async def _reconcile_completed_docusign(
         location=location,
         job_title=job_title,
         status_change=status_change,
+        submission_id=submission_id,
     )
     if not result.get("success"):
         logger.warning(
@@ -86,6 +88,7 @@ async def _reconcile_completed_docusign(
         envelope_id,
         "completed",
         summary,
+        employee_name=employee_name or employee_email,
         work_location=location,
         job_title=job_title,
         status_change=status_change,
@@ -94,11 +97,13 @@ async def _reconcile_completed_docusign(
     if teams_result.get("success") and teams_result.get("message_id"):
         await save_docusign_status_card(
             employee_email=employee_email,
+            employee_name=employee_name or employee_email,
             channel_id=channel_id,
             message_id=str(teams_result["message_id"]),
             envelope_id=envelope_id,
             status="completed",
             summary=summary,
+            submission_id=submission_id,
             work_location=location,
             job_title=job_title,
             status_change=status_change,
@@ -122,6 +127,7 @@ def register(mcp: FastMCP) -> None:
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         """Get the primary HR-facing onboarding status summary for one employee.
 
@@ -138,6 +144,7 @@ def register(mcp: FastMCP) -> None:
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
 
         if not record.get("found"):
@@ -156,6 +163,7 @@ def register(mcp: FastMCP) -> None:
                 return {
                     "found": False,
                     "employee_email": employee_email,
+                    "submission_id": submission_id,
                     "stages": {},
                     "docusign_envelope_id": "",
                     "docusign_status": "",
@@ -170,6 +178,7 @@ def register(mcp: FastMCP) -> None:
             return {
                 "found": False,
                 "employee_email": employee_email,
+                "submission_id": submission_id,
                 "stages": {},
                 "docusign_envelope_id": "",
                 "docusign_status": "",
@@ -225,6 +234,7 @@ def register(mcp: FastMCP) -> None:
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
             formatted_stages = {stage: format_date(value) for stage, value in stages.items()}
 
@@ -251,6 +261,7 @@ def register(mcp: FastMCP) -> None:
         return {
             "found": True,
             "employee_email": employee_email,
+            "submission_id": record.get("submission_id", submission_id),
             "name": name,
             "stages": formatted_stages,
             "docusign_envelope_id": envelope_id,

@@ -15,6 +15,7 @@ from onboarding_agent.runtime.jobs import (
 @pytest.mark.asyncio
 async def test_process_new_hire_job_normalizes_uploaded_credentials_links() -> None:
     payload = {
+        "submissionId": "sub-123",
         "staffName": "Alice Example",
         "staffEmail": "alice@example.com",
         "workLocation": "Bronx",
@@ -45,6 +46,7 @@ async def test_process_new_hire_job_normalizes_uploaded_credentials_links() -> N
         await process_new_hire_job(payload)
 
     kwargs = tracker.add_employee_to_tracker.await_args.kwargs
+    assert kwargs["submission_id"] == "sub-123"
     assert kwargs["uploaded_credentials"] == "https://example.com/doc.pdf"
 
 
@@ -119,6 +121,7 @@ async def test_process_docusign_job_uses_composite_identity_for_stage_updates() 
         "employee_email": "alice@example.com",
         "work_location": "Bronx",
         "job_title": "Teacher",
+        "submission_id": "sub-123",
     }
     tracker = AsyncMock()
     tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
@@ -141,6 +144,7 @@ async def test_process_docusign_job_uses_composite_identity_for_stage_updates() 
         location="Bronx",
         job_title="Teacher",
         status_change="",
+        submission_id="sub-123",
     )
 
 
@@ -153,6 +157,7 @@ async def test_process_docusign_job_preserves_existing_staff_roster_state_on_com
         "work_location": "Bronx",
         "job_title": "Teacher",
         "status_change": "New Hire",
+        "submission_id": "sub-123",
     }
     tracker = AsyncMock()
     tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
@@ -189,6 +194,21 @@ async def test_process_docusign_job_preserves_existing_staff_roster_state_on_com
         employee_name="Alice Example",
         position="Teacher",
     )
+    tracker.update_stage.assert_awaited_once_with(
+        "alice@example.com",
+        "Offer Letter Signed",
+        location="Bronx",
+        job_title="Teacher",
+        status_change="New Hire",
+        submission_id="sub-123",
+    )
+    tracker.find_employee_in_tracker.assert_awaited_once_with(
+        "alice@example.com",
+        location="Bronx",
+        job_title="Teacher",
+        status_change="New Hire",
+        submission_id="sub-123",
+    )
     sent_card = teams.send_channel_notification.await_args.kwargs["card"]
     add_action = next(action for action in sent_card["actions"] if action.get("title") == "\u2713 Added To Staff Roster")
     assert add_action["isEnabled"] is False
@@ -208,6 +228,7 @@ async def test_process_background_clearance_job_uses_composite_identity_for_stag
         "jobTitle": "Teacher",
     }
     tracker = AsyncMock()
+    tracker.find_employee_in_tracker.return_value = {"found": True, "name": "Alice Example"}
     tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
     teams = AsyncMock()
     teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
@@ -242,6 +263,7 @@ async def test_process_background_clearance_job_does_not_raise_when_confirmation
         "jobTitle": "Teacher",
     }
     tracker = AsyncMock()
+    tracker.find_employee_in_tracker.return_value = {"found": True, "name": "Alice Example"}
     tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
     teams = AsyncMock()
     teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
@@ -257,6 +279,36 @@ async def test_process_background_clearance_job_does_not_raise_when_confirmation
         from onboarding_agent.runtime.jobs import process_background_clearance_job
 
         await process_background_clearance_job(payload)
+
+
+@pytest.mark.asyncio
+async def test_process_background_clearance_job_prefers_tracker_name_for_confirmation_email() -> None:
+    payload = {
+        "staffEmail": "alice@example.com",
+        "staffName": "",
+        "workLocation": "Bronx",
+        "jobTitle": "Teacher",
+    }
+    tracker = AsyncMock()
+    tracker.find_employee_in_tracker.return_value = {"found": True, "name": "Alice Example"}
+    tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
+    teams = AsyncMock()
+    teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
+    send_confirmation = AsyncMock(return_value={"success": True})
+
+    with (
+        patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
+        patch(
+            "onboarding_agent.mcp_server.tools_email.send_background_clearance_confirmation_email",
+            new=send_confirmation,
+        ),
+    ):
+        from onboarding_agent.runtime.jobs import process_background_clearance_job
+
+        await process_background_clearance_job(payload)
+
+    send_confirmation.assert_awaited_once_with("alice@example.com", "Alice Example")
 
 
 @pytest.mark.asyncio
@@ -540,7 +592,7 @@ async def test_rehire_workflow_drafts_welcome_email_and_keeps_docusign_action() 
 
 
 @pytest.mark.asyncio
-async def test_promotion_workflow_creates_docusign_draft_when_missing() -> None:
+async def test_promotion_workflow_defers_docusign_draft_creation_until_card_action() -> None:
     payload = {
         "staffEmail": "alice@example.com",
         "staffName": "Alice Example",
@@ -551,15 +603,11 @@ async def test_promotion_workflow_creates_docusign_draft_when_missing() -> None:
     tracker = AsyncMock()
     tracker.find_employee_in_tracker.return_value = {"found": True}
     tracker.update_stage.return_value = {"success": True}
-    docusign = AsyncMock()
-    docusign.check_draft_exists.return_value = {"exists": False}
-    docusign.create_envelope_draft.return_value = {"success": True, "envelope_id": "env-2"}
     teams = AsyncMock()
     teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
 
     with (
         patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
-        patch("onboarding_agent.runtime.jobs.DocuSignClient", return_value=docusign),
         patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
         patch("onboarding_agent.runtime.jobs.reset_new_hire_card_actions", new=AsyncMock()),
         patch("onboarding_agent.runtime.jobs.save_new_hire_card", new=AsyncMock()),
@@ -567,11 +615,3 @@ async def test_promotion_workflow_creates_docusign_draft_when_missing() -> None:
         from onboarding_agent.runtime.jobs import process_new_hire_job
 
         await process_new_hire_job(payload)
-
-    docusign.check_draft_exists.assert_awaited_once_with(
-        "alice@example.com",
-        "Bronx",
-        "Teacher",
-        "Promotion",
-    )
-    docusign.create_envelope_draft.assert_awaited_once()

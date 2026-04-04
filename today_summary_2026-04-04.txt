@@ -1,0 +1,78 @@
+Summary for April 4, 2026
+
+Major work completed:
+
+- Extended tracker capabilities from stage-only updates to broader row-level CRUD.
+- Kept compact onboarding status as a separate concern from detailed tracker row reads.
+- Continued shifting agent capability guidance into tool docstrings while keeping the system prompt policy-oriented.
+
+Tracker and source-of-truth changes:
+
+- Added true tracker field-level update support through the workbook client and MCP tool surface.
+- Expanded tracker read responses so the agent can inspect current tracker row fields such as:
+  - requested start date
+  - work location
+  - job title
+  - status change
+  - requesting manager
+  - phone
+  - compensation
+  - other tracker columns already represented in schema aliases
+- Kept tracker stages as separate operations:
+  - `update_tracker_stage`
+  - `clear_tracker_stage`
+  - `get_employee_stages`
+- Reinforced the tracker as the source of truth for downstream draft creation and card rendering.
+
+Submission ID propagation and workflow identity:
+
+- Carried `submission_id` more broadly through:
+  - tracker row creation and lookup
+  - Teams session context
+  - tracker-backed DocuSign draft creation/deletion
+  - adaptive-card payloads
+  - DocuSign custom fields and callback parsing
+  - card-state lookup and refresh
+- Tightened the agent prompt so `submission_id` is treated as the primary workflow disambiguator when available.
+- Reduced reliance on mutable composite fields alone for in-thread follow-up actions.
+
+DocuSign draft flow improvements:
+
+- Added draft-only deletion from Teams for unsent offer letter drafts.
+- Added draft listing so HR can ask for drafts waiting to be sent.
+- Verified live DocuSign folder behavior and adjusted draft listing to use the more reliable logical search path rather than a physical folder-items listing.
+- Improved button-path draft creation so it now carries `submission_id` through the card payload and downstream deterministic handler.
+- Kept sent-envelope voiding manual; only unsent drafts are handled in-app.
+
+Teams cards and thread behavior:
+
+- Added tracker-backed card refresh behavior for relevant natural-language turns.
+- Added submission-id-aware card lookup so the app can find the correct stored card even after tracker identity fields change.
+- Improved follow-up draft/review/send card threading behavior and session seeding.
+- Formatted requested start date for card display instead of rendering the raw tracker value.
+
+Known practical decision:
+
+- The root new-hire card’s `Create Offer Letter Draft` button reset after draft deletion is still fragile because Teams card updates are inconsistent in practice.
+- Natural-language draft recreation works, so the workflow remains operational even if that specific button-reset UX is not relied on.
+- Tracker-backed card refresh/render for changed fields is still being preserved.
+
+Validation completed today:
+
+- Focused validation passed repeatedly during the work:
+  - `tests/unit/test_tracker_client.py`
+  - `tests/unit/test_mcp_tools.py`
+  - `tests/unit/test_staff_roster.py`
+  - `tests/unit/test_bot.py`
+  - `tests/unit/test_card_state.py`
+  - `tests/unit/test_docusign_client.py`
+- Static checks passed:
+  - `uv run ruff check ...`
+  - `uv run mypy src`
+
+Current state:
+
+- Tracker row CRUD is now much closer to parity with staff-roster CRUD.
+- Compact status, detailed tracker reads, and tracker row edits are cleanly separated.
+- Submission ID is now the preferred workflow key for newer deterministic flows.
+- Tracker-backed card refresh and rendering are stronger, even though the draft-button reset UX is not something to rely on.

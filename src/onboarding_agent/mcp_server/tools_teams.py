@@ -86,6 +86,7 @@ def register(mcp: FastMCP) -> None:
         envelope_id: str,
         status: str,
         summary: str,
+        employee_name: str = "",
         work_location: str = "",
         job_title: str = "",
         status_change: str = "",
@@ -98,6 +99,7 @@ def register(mcp: FastMCP) -> None:
             envelope_id,
             status,
             summary,
+            employee_name=employee_name,
             work_location=work_location,
             job_title=job_title,
             status_change=status_change,
@@ -118,6 +120,7 @@ def register(mcp: FastMCP) -> None:
         if result.get("success") and result.get("message_id") and status.lower() == "completed":
             await save_docusign_status_card(
                 employee_email=employee_email,
+                employee_name=employee_name,
                 channel_id=channel_id,
                 message_id=str(result["message_id"]),
                 envelope_id=envelope_id,
@@ -135,10 +138,18 @@ def register(mcp: FastMCP) -> None:
         employee_name: str,
         employee_email: str,
         summary: str,
+        work_location: str = "",
+        job_title: str = "",
     ) -> dict[str, object]:
         from onboarding_agent.integrations.adaptive_cards import background_clearance_card
 
-        card = background_clearance_card(employee_name, employee_email, summary)
+        card = background_clearance_card(
+            employee_name,
+            employee_email,
+            summary,
+            work_location=work_location,
+            job_title=job_title,
+        )
         return await _messenger().send_channel_notification(
             channel_id,
             summary,

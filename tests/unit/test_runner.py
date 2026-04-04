@@ -72,7 +72,7 @@ def test_format_session_context_skips_empty_values():
 def test_derive_session_context_uses_tool_results():
     messages = [
         ToolMessage(
-            content='{"found": true, "employee_email": "alice@example.com", "name": "Alice"}',
+            content='{"found": true, "employee_email": "alice@example.com", "name": "Alice", "submission_id": "sub-123"}',
             tool_call_id="1",
             name="get_onboarding_status",
         ),
@@ -85,6 +85,7 @@ def test_derive_session_context_uses_tool_results():
 
     result = derive_session_context(messages)
 
+    assert result["submission_id"] == "sub-123"
     assert result["employee_email"] == "alice@example.com"
     assert result["employee_name"] == "Alice"
     assert result["envelope_id"] == "env-123"

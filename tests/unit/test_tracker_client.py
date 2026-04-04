@@ -100,6 +100,40 @@ async def test_find_employee_in_tracker_reuses_index_with_row_verification():
 
 
 @pytest.mark.asyncio
+async def test_find_employee_in_tracker_prefers_submission_id_when_present():
+    client = TrackerClient()
+    header = ["Submission ID", *HEADER_ROW]
+    base_row = _build_row(
+        {
+            "Staff Name": "Alice Example",
+            "Staff Email": "alice@example.com",
+            "Work Location": "Bronx",
+            "Job Title": "Teacher",
+            "Status Change": "Promotion",
+        }
+    )
+    row = ["sub-123", *base_row]
+
+    with patch.object(
+        client,
+        "_graph_workbook_request",
+        AsyncMock(
+            return_value={
+                "address": "Onboarding!A1:Q2",
+                "values": [header, row],
+            }
+        ),
+    ):
+        result = await client.find_employee_in_tracker(
+            "alice@example.com",
+            submission_id="sub-123",
+        )
+
+    assert result["found"] is True
+    assert result["email"] == "alice@example.com"
+
+
+@pytest.mark.asyncio
 async def test_find_employee_in_tracker_falls_back_when_table_query_fails():
     client = TrackerClient()
     row = _build_row(
@@ -339,3 +373,67 @@ async def test_remove_employee_from_tracker_deletes_row_and_verifies():
     assert result["success"] is True
     assert mock_request.await_args_list[2].args[0] == "POST"
     assert "/range(address='A2%3AAA2')/delete" in mock_request.await_args_list[2].args[1]
+
+
+@pytest.mark.asyncio
+async def test_update_employee_in_tracker_patches_row_and_verifies():
+    client = TrackerClient()
+    row = _build_row(
+        {
+            "Staff Name": "Alice Example",
+            "Staff Email": "alice@example.com",
+            "Work Location": "Bronx",
+            "Requested Start Date": "2026-04-01",
+            "Job Title": "Teacher",
+            "Status Change": "New Hire",
+        }
+    )
+    updated_row = _build_row(
+        {
+            "Staff Name": "Alice Smith",
+            "Staff Email": "alice@example.com",
+            "Work Location": "Queens",
+            "Requested Start Date": "2026-04-15",
+            "Job Title": "Assistant Principal",
+            "Status Change": "Promotion",
+        }
+    )
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(
+                side_effect=[
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A2:AA2", "values": [row]},
+                    {},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, updated_row]},
+                ]
+            ),
+        ) as mock_request,
+    ):
+        result = await client.update_employee_in_tracker(
+            "alice@example.com",
+            location="Bronx",
+            current_job_title="Teacher",
+            current_status_change="New Hire",
+            staff_name="Alice Smith",
+            requested_start_date="2026-04-15",
+            work_location="Queens",
+            job_title="Assistant Principal",
+            status_change="Promotion",
+        )
+
+    assert result["success"] is True
+    assert result["row_id"] == "2"
+    assert result["updated_fields"] == [
+        "job_title",
+        "requested_start_date",
+        "staff_name",
+        "status_change",
+        "work_location",
+    ]
+    assert mock_request.await_args_list[2].args[0] == "PATCH"
+    assert "/range(address='A2%3AAA2')" in mock_request.await_args_list[2].args[1]

@@ -87,6 +87,38 @@ class TestGetOnboardingStatus:
         assert "job_title=Assistant Principal" in result["summary"]
 
     @pytest.mark.asyncio
+    async def test_get_onboarding_status_passes_submission_id(self):
+        self.tracker.get_employee_stages.return_value = {
+            "found": True,
+            "name": "Alice",
+            "submission_id": "sub-123",
+            "stages": {"Added to Tracker": "2026-04-01"},
+        }
+        self.docusign.check_draft_exists.return_value = {"exists": False, "envelope_id": ""}
+        self.docusign.find_latest_envelope_for_employee.return_value = {
+            "found": False,
+            "envelope_id": "",
+            "status": "",
+        }
+
+        from onboarding_agent.mcp_server.tools_onboarding import register
+        mcp = FastMCP(name="test-status-submission-id")
+        register(mcp)
+
+        with patch("onboarding_agent.mcp_server.tools_onboarding.get_docusign_status_card", new=AsyncMock(return_value=None)):
+            tool_fn = await _get_tool_fn(mcp, "get_onboarding_status")
+            result = await tool_fn(employee_email="alice@example.com", submission_id="sub-123")
+
+        self.tracker.get_employee_stages.assert_awaited_once_with(
+            "alice@example.com",
+            location="",
+            job_title="",
+            status_change="",
+            submission_id="sub-123",
+        )
+        assert result["submission_id"] == "sub-123"
+
+    @pytest.mark.asyncio
     async def test_found_with_draft_envelope(self):
         self.tracker.get_employee_stages.return_value = {
             "found": True, "row_id": "3", "name": "Alice",
@@ -189,6 +221,7 @@ class TestGetOnboardingStatus:
             location="",
             job_title="",
             status_change="",
+            submission_id="",
         )
         assert result["docusign_status"] == "completed"
         assert result["stages"]["Offer Letter Signed"] == "04/04/2026"
@@ -276,6 +309,204 @@ class TestDocuSignTools:
             "New Hire",
         )
 
+    @pytest.mark.asyncio
+    async def test_check_docusign_draft_exists_uses_submission_id_to_refresh_tracker_fields(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "email": "mdoyle@bridgeprepacademy.com",
+            "submission_id": "sub-123",
+            "location": "Collier",
+            "job_title": "Content, Teacher I (Bachelor's Degree)",
+            "status_change": "New Hire",
+        }
+        self.docusign.check_draft_exists.return_value = {"exists": True, "envelope_id": "env-123"}
+
+        from onboarding_agent.mcp_server.tools_docusign import register
+
+        mcp = FastMCP(name="test-docusign-check-from-submission-id")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "check_docusign_draft_exists")
+        result = await tool_fn(
+            employee_email="mdoyle@bridgeprepacademy.com",
+            job_title="Teacher",
+            submission_id="sub-123",
+        )
+
+        self.tracker.find_employee_in_tracker.assert_awaited_once_with(
+            "mdoyle@bridgeprepacademy.com",
+            submission_id="sub-123",
+        )
+        self.docusign.check_draft_exists.assert_awaited_once_with(
+            "mdoyle@bridgeprepacademy.com",
+            "Collier",
+            "Content, Teacher I (Bachelor's Degree)",
+            "New Hire",
+        )
+        assert result["job_title"] == "Content, Teacher I (Bachelor's Degree)"
+        assert result["submission_id"] == "sub-123"
+
+    @pytest.mark.asyncio
+    async def test_create_offer_letter_draft_from_tracker_uses_submission_id_and_tracker_fields(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "name": "Matt",
+            "email": "mdoyle@bridgeprepacademy.com",
+            "location": "Orange",
+            "job_title": "Teacher",
+            "status_change": "Transfer In",
+            "start_date": "2026-04-10",
+            "submission_id": "sub-123",
+        }
+        self.docusign.check_draft_exists.return_value = {"exists": False, "envelope_id": ""}
+        self.docusign.create_envelope_draft.return_value = {
+            "success": True,
+            "envelope_id": "env-789",
+            "status": "created",
+        }
+        self.docusign.create_envelope_edit_view.return_value = {
+            "success": True,
+            "url": "https://review.example.com/env-789",
+        }
+
+        from onboarding_agent.mcp_server.tools_docusign import register
+
+        mcp = FastMCP(name="test-docusign-create-from-tracker")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "create_offer_letter_draft_from_tracker")
+        result = await tool_fn(
+            employee_email="mdoyle@bridgeprepacademy.com",
+            submission_id="sub-123",
+        )
+
+        assert result["success"] is True
+        assert result["submission_id"] == "sub-123"
+        assert result["start_date"] == "2026-04-10"
+        assert result["review_url"] == "https://review.example.com/env-789"
+        self.tracker.find_employee_in_tracker.assert_awaited_once_with(
+            "mdoyle@bridgeprepacademy.com",
+            submission_id="sub-123",
+        )
+        self.docusign.create_envelope_draft.assert_awaited_once_with(
+            employee_name="Matt",
+            employee_email="mdoyle@bridgeprepacademy.com",
+            start_date="2026-04-10",
+            position="Teacher",
+            work_location="Orange",
+            status_change="Transfer In",
+            submission_id="sub-123",
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_offer_letter_draft_from_tracker_prefers_submission_id(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "name": "Matt",
+            "email": "mdoyle@bridgeprepacademy.com",
+            "location": "Orange",
+            "job_title": "Teacher",
+            "status_change": "Transfer In",
+            "submission_id": "sub-123",
+        }
+        self.docusign.check_draft_exists.return_value = {
+            "exists": True,
+            "envelope_id": "env-123",
+            "status": "created",
+        }
+        self.docusign.delete_draft_envelope.return_value = {
+            "success": True,
+            "envelope_id": "env-123",
+            "status": "deleted",
+        }
+
+        from onboarding_agent.mcp_server.tools_docusign import register
+
+        mcp = FastMCP(name="test-docusign-delete-from-tracker")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "delete_offer_letter_draft_from_tracker")
+        result = await tool_fn(
+            employee_email="mdoyle@bridgeprepacademy.com",
+            submission_id="sub-123",
+        )
+
+        self.tracker.find_employee_in_tracker.assert_awaited_once_with(
+            "mdoyle@bridgeprepacademy.com",
+            submission_id="sub-123",
+        )
+        self.docusign.check_draft_exists.assert_awaited_once_with(
+            "mdoyle@bridgeprepacademy.com",
+            "Orange",
+            "Teacher",
+            "Transfer In",
+        )
+        self.docusign.delete_draft_envelope.assert_awaited_once_with("env-123")
+        assert result["success"] is True
+        assert result["status"] == "deleted"
+        assert result["submission_id"] == "sub-123"
+
+    @pytest.mark.asyncio
+    async def test_list_docusign_drafts_returns_preview_and_total(self):
+        self.docusign.list_draft_envelopes.return_value = {
+            "drafts": [
+                {
+                    "envelope_id": "env-1",
+                    "employee_email": "alice@example.com",
+                    "employee_name": "Alice Example",
+                    "work_location": "Bronx",
+                    "job_title": "Teacher",
+                    "status_change": "New Hire",
+                    "created_date_time": "2026-04-03T20:00:00Z",
+                }
+            ],
+            "total_count": 7,
+        }
+
+        from onboarding_agent.mcp_server.tools_docusign import register
+
+        mcp = FastMCP(name="test-docusign-list-drafts")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "list_docusign_drafts")
+        result = await tool_fn(limit=5)
+
+        self.docusign.list_draft_envelopes.assert_awaited_once_with(
+            employee_email="",
+            work_location="",
+            job_title="",
+            status_change="",
+            limit=5,
+        )
+        assert result["total_count"] == 7
+        assert len(result["drafts"]) == 1
+        assert "Found 7 DocuSign draft(s)" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_delete_docusign_draft_by_envelope_id_bypasses_tracker(self):
+        self.docusign.delete_draft_envelope.return_value = {
+            "success": True,
+            "envelope_id": "env-123",
+            "employee_email": "alice@example.com",
+            "work_location": "Bronx",
+            "job_title": "Teacher",
+            "status_change": "New Hire",
+            "status": "deleted",
+        }
+
+        from onboarding_agent.mcp_server.tools_docusign import register
+
+        mcp = FastMCP(name="test-docusign-delete-direct")
+        register(mcp)
+
+        tool_fn = await _get_tool_fn(mcp, "delete_docusign_draft")
+        result = await tool_fn(envelope_id="env-123")
+
+        self.docusign.delete_draft_envelope.assert_awaited_once_with("env-123")
+        self.tracker.find_employee_in_tracker.assert_not_awaited()
+        assert result["success"] is True
+        assert result["status"] == "deleted"
+
 
 class TestTrackerTools:
     @pytest.fixture(autouse=True)
@@ -295,6 +526,8 @@ class TestTrackerTools:
             "start_date": "2026-04-01",
             "position": "HR",
             "manager_email": "manager@example.com",
+            "staff_phone": "555-111-2222",
+            "compensation": "60000",
             "status": "Sent Offer Letter",
             "stages": {
                 "Added to Tracker": "2026-03-01",
@@ -312,8 +545,57 @@ class TestTrackerTools:
         assert result["found"] is True
         assert result["email"] == "alice@example.com"
         assert result["status"] == "Sent Offer Letter"
+        assert result["staff_phone"] == "555-111-2222"
+        assert result["compensation"] == "60000"
         assert "stages" not in result
         assert "Alice Example" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_update_employee_in_tracker_passes_field_updates(self):
+        self.tracker.update_employee_in_tracker.return_value = {
+            "success": True,
+            "row_id": "12",
+            "updated_fields": ["job_title", "work_location"],
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-update-row-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "update_employee_in_tracker")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            current_job_title="Teacher",
+            current_status_change="New Hire",
+            job_title="Assistant Principal",
+            work_location="Queens",
+            compensation="80000",
+        )
+
+        assert result["success"] is True
+        self.tracker.update_employee_in_tracker.assert_awaited_once_with(
+            "alice@example.com",
+            location="Bronx",
+            current_job_title="Teacher",
+            current_status_change="New Hire",
+            submission_id="",
+            staff_name=None,
+            staff_email=None,
+            requested_start_date=None,
+            job_title="Assistant Principal",
+            work_location="Queens",
+            requesting_manager=None,
+            status_change=None,
+            staff_phone=None,
+            education_level=None,
+            supplements=None,
+            license_number=None,
+            uploaded_credentials=None,
+            compensation="80000",
+            employment_type=None,
+            contract_term=None,
+        )
 
     @pytest.mark.asyncio
     async def test_list_employees_returns_capped_preview(self):
@@ -457,7 +739,37 @@ class TestTrackerTools:
             location="Bronx",
             job_title="Teacher",
             status_change="New Hire",
+            submission_id="",
         )
+
+    @pytest.mark.asyncio
+    async def test_find_employee_in_tracker_passes_submission_id(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "row_id": "12",
+            "name": "Alice Example",
+            "email": "alice@example.com",
+            "submission_id": "sub-123",
+            "location": "Bronx",
+            "stages": {},
+            "status": "Added to Tracker",
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-submission-id-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "find_employee_in_tracker")
+        result = await tool_fn(employee_email="alice@example.com", submission_id="sub-123")
+
+        self.tracker.find_employee_in_tracker.assert_awaited_once_with(
+            "alice@example.com",
+            location="",
+            job_title="",
+            status_change="",
+            submission_id="sub-123",
+        )
+        assert result["submission_id"] == "sub-123"
 
     @pytest.mark.asyncio
     async def test_clear_tracker_stage_clears_value(self):
@@ -489,6 +801,7 @@ class TestTrackerTools:
             location="Bronx",
             job_title="Teacher",
             status_change="New Hire",
+            submission_id="",
         )
 
     @pytest.mark.asyncio

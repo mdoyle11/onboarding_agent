@@ -56,6 +56,7 @@ def _parse_docusign_xml(body: bytes) -> dict[str, str]:
     work_location = ""
     job_title = ""
     status_change = ""
+    submission_id = ""
 
     if env_status_el is not None:
         eid = env_status_el.find("ds:EnvelopeID", ns)
@@ -88,6 +89,8 @@ def _parse_docusign_xml(body: bytes) -> dict[str, str]:
                 job_title = field_value
             elif field_name == "status_change":
                 status_change = field_value
+            elif field_name == "submission_id":
+                submission_id = field_value
 
     return {
         "envelope_id": envelope_id,
@@ -96,6 +99,7 @@ def _parse_docusign_xml(body: bytes) -> dict[str, str]:
         "work_location": work_location,
         "job_title": job_title,
         "status_change": status_change,
+        "submission_id": submission_id,
     }
 
 
@@ -106,6 +110,7 @@ def _parse_docusign_json(payload: dict[str, Any]) -> dict[str, str]:
     work_location = ""
     job_title = ""
     status_change = ""
+    submission_id = ""
 
     custom_fields = payload.get("customFields", {})
     for field in custom_fields.get("textCustomFields", []):
@@ -119,6 +124,8 @@ def _parse_docusign_json(payload: dict[str, Any]) -> dict[str, str]:
             job_title = field_value
         elif field_name == "status_change":
             status_change = field_value
+        elif field_name == "submission_id":
+            submission_id = field_value
 
     return {
         "envelope_id": envelope_id,
@@ -127,6 +134,7 @@ def _parse_docusign_json(payload: dict[str, Any]) -> dict[str, str]:
         "work_location": work_location,
         "job_title": job_title,
         "status_change": status_change,
+        "submission_id": submission_id,
     }
 
 
@@ -178,6 +186,7 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
     work_location = parsed.get("work_location", "")
     job_title = parsed.get("job_title", "")
     status_change = parsed.get("status_change", "")
+    submission_id = parsed.get("submission_id", "")
 
     logger.info(
         "DocuSign webhook: envelope=%s status=%s email=%s",
@@ -199,6 +208,7 @@ async def handle_docusign_webhook(request: web.Request) -> web.Response:
                 "work_location": work_location,
                 "job_title": job_title,
                 "status_change": status_change,
+                "submission_id": submission_id,
             },
         )
         return _accepted_response()

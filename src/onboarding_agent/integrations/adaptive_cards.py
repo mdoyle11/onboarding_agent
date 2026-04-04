@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from onboarding_agent.domain.formatting import format_date
+
 
 def _action_button(
     action: str,
@@ -15,6 +17,7 @@ def _action_button(
     completed_title: str,
     is_complete: bool,
     employee_email: str,
+    submission_id: str = "",
     work_location: str = "",
     job_title: str = "",
     status_change: str = "",
@@ -23,6 +26,7 @@ def _action_button(
     data = {
         "action": action,
         "employee_email": employee_email,
+        "submission_id": submission_id,
         "work_location": work_location,
         "job_title": job_title,
         "status_change": status_change,
@@ -36,6 +40,7 @@ def new_hire_card(
     employee_name: str,
     employee_email: str,
     summary: str,
+    submission_id: str = "",
     title: str = "",
     status_change: str = "",
     requested_start_date: str = "",
@@ -43,18 +48,33 @@ def new_hire_card(
     work_location: str = "",
     requesting_manager: str = "",
     email_sent: bool = False,
-    docusign_sent: bool = False,
+    docusign_draft_created: bool = False,
     allow_email_action: bool = True,
     allow_docusign_action: bool = True,
 ) -> dict[str, Any]:
     """Card sent when a new hire webhook triggers the pipeline."""
     card_title = title or f"{status_change or 'Submission'} Requested"
-    identity = dict(employee_email=employee_email, work_location=work_location, job_title=job_title, status_change=status_change)
+    formatted_requested_start_date = format_date(requested_start_date) or requested_start_date
+    identity = dict(
+        employee_email=employee_email,
+        submission_id=submission_id,
+        work_location=work_location,
+        job_title=job_title,
+        status_change=status_change,
+    )
     actions: list[dict[str, Any]] = []
     if allow_email_action:
         actions.append(_action_button("send_onboarding_email", "Send Welcome Email", "\u2713 Welcome Email Sent", email_sent, **identity))
     if allow_docusign_action:
-        actions.append(_action_button("send_docusign", "Send Offer Letter", "\u2713 Offer Letter Sent", docusign_sent, **identity))
+        actions.append(
+            _action_button(
+                "create_docusign_draft",
+                "Create Offer Letter Draft",
+                "\u2713 Offer Letter Draft Created",
+                docusign_draft_created,
+                **identity,
+            )
+        )
 
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -79,7 +99,7 @@ def new_hire_card(
             {
                 "type": "FactSet",
                 "facts": [
-                    {"title": "Requested Start Date", "value": requested_start_date or "TBD"},
+                    {"title": "Requested Start Date", "value": formatted_requested_start_date or "TBD"},
                     {"title": "Job Title", "value": job_title or "N/A"},
                     {"title": "Work Location", "value": work_location or "N/A"},
                     {"title": "Requesting Manager", "value": requesting_manager or "N/A"},
@@ -100,11 +120,15 @@ def docusign_status_card(
     envelope_id: str,
     status: str,
     summary: str,
+    submission_id: str = "",
+    employee_name: str = "",
     roster_added: bool = False,
     job_category: str = "",
     work_location: str = "",
     job_title: str = "",
     status_change: str = "",
+    review_url: str = "",
+    allow_send_action: bool = False,
 ) -> dict[str, Any]:
     """Card sent when a DocuSign envelope status changes."""
     status_icon = {
@@ -133,10 +157,43 @@ def docusign_status_card(
             ],
         },
         {"type": "TextBlock", "text": " ", "separator": True},
-        {"type": "FactSet", "facts": [{"title": "Employee", "value": employee_email or "Unknown"}, {"title": "Envelope", "value": envelope_id[:8] + "..." if len(envelope_id) > 8 else envelope_id}]},
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Employee", "value": employee_name or employee_email or "Unknown"},
+                {"title": "Email", "value": employee_email or "Unknown"},
+                {"title": "Location", "value": work_location or "N/A"},
+                {"title": "Job Title", "value": job_title or "N/A"},
+                {"title": "Envelope", "value": envelope_id[:8] + "..." if len(envelope_id) > 8 else envelope_id},
+            ],
+        },
         {"type": "TextBlock", "text": " ", "separator": True},
         {"type": "TextBlock", "text": summary, "wrap": True},
     ]
+
+    if review_url:
+        actions.append(
+            {
+                "type": "Action.OpenUrl",
+                "title": "Review Offer Letter Draft",
+                "url": review_url,
+            }
+        )
+
+    if status.lower() == "created" and allow_send_action:
+        actions.append(
+            _action_button(
+                "send_docusign",
+                "Send Offer Letter",
+                "\u2713 Offer Letter Sent",
+                False,
+                employee_email=employee_email,
+                submission_id=submission_id,
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
+            )
+        )
 
     if status.lower() == "completed":
         body.extend(
@@ -154,7 +211,7 @@ def docusign_status_card(
         )
         actions.append(_action_button(
             "add_to_staff_roster", "Add To Staff Roster", "\u2713 Added To Staff Roster",
-            roster_added, employee_email=employee_email, work_location=work_location,
+            roster_added, employee_email=employee_email, submission_id=submission_id, work_location=work_location,
             job_title=job_title, status_change=status_change,
         ))
 
@@ -167,7 +224,13 @@ def docusign_status_card(
     }
 
 
-def background_clearance_card(employee_name: str, employee_email: str, summary: str) -> dict[str, Any]:
+def background_clearance_card(
+    employee_name: str,
+    employee_email: str,
+    summary: str,
+    work_location: str = "",
+    job_title: str = "",
+) -> dict[str, Any]:
     """Card sent when a background clearance form is submitted."""
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -186,6 +249,16 @@ def background_clearance_card(employee_name: str, employee_email: str, summary: 
                             {"type": "TextBlock", "text": f"{employee_name} ({employee_email})", "spacing": "None", "isSubtle": True, "wrap": True},
                         ],
                     },
+                ],
+            },
+            {"type": "TextBlock", "text": " ", "separator": True},
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Employee", "value": employee_name or employee_email or "Unknown"},
+                    {"title": "Email", "value": employee_email or "Unknown"},
+                    {"title": "Location", "value": work_location or "N/A"},
+                    {"title": "Job Title", "value": job_title or "N/A"},
                 ],
             },
             {"type": "TextBlock", "text": " ", "separator": True},

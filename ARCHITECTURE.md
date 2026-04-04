@@ -191,6 +191,10 @@ The repository uses a composite business identity where available:
 
 - `email + work_location + job_title + status_change`
 
+For newer deterministic workflow paths, the system now also carries a stable
+`submission_id` from the intake form and treats it as the preferred workflow
+key whenever it is available.
+
 This identity is used across:
 
 - tracker lookups
@@ -199,6 +203,15 @@ This identity is used across:
 - adaptive card action payloads
 - DocuSign custom fields and webhook resolution
 - Teams session-context seeding for thread continuity
+
+`submission_id` is now propagated through:
+
+- tracker row creation and lookup
+- Teams session context
+- new-hire and DocuSign card state
+- adaptive-card action payloads
+- tracker-backed DocuSign draft creation and deletion
+- DocuSign custom fields and status callbacks
 
 Email-only lookup is still allowed for interactive Teams queries, but it is a
 fallback path. If multiple rows share the email, the system returns
@@ -231,6 +244,7 @@ Shared session-context fields live in:
 
 Key stored context fields include:
 
+- `submission_id`
 - `employee_email`
 - `employee_name`
 - `work_location`
@@ -302,7 +316,10 @@ The FastMCP server is launched as a subprocess over stdio.
 Tool groups:
 
 - `tools_tracker.py`
-  - tracker lookup, row creation/removal, stage updates/clears, listing/filtering
+  - tracker row lookup
+  - tracker row create/update/delete
+  - stage updates/clears
+  - listing/filtering
 
 - `tools_staff_roster.py`
   - roster capacity
@@ -310,7 +327,10 @@ Tool groups:
   - section-aware add/remove/update operations
 
 - `tools_docusign.py`
-  - draft lookup, envelope creation, sending, status retrieval
+  - draft lookup/list/delete
+  - tracker-backed draft creation
+  - envelope sending
+  - status retrieval
 
 - `tools_email.py`
   - welcome-email drafting/sending
@@ -350,12 +370,17 @@ Key integration modules:
   - workbook row/header/stage helpers
   - workbook-specific tracker and roster adapters
   - section-aware roster insertion/deletion above per-group `Totals` rows
+  - tracker row-level CRUD for actual tracker data fields, not just stages
 
 - `integrations/docusign_client.py`
-  - draft creation, envelope sending, composite-aware envelope lookup
+  - draft creation, listing, and draft-only deletion
+  - envelope sending
+  - submission-id-aware envelope lookup and callback correlation
 
 - `integrations/card_state.py`
-  - durable adaptive card state by composite identity
+  - durable adaptive card state
+  - tracker-backed card refresh/rehydration
+  - submission-id-aware card lookup for newer workflow paths
 
 - `integrations/teams/`
   - bot handlers
@@ -375,6 +400,8 @@ When adding new functionality:
 5. Avoid reintroducing email-only identity assumptions into operational paths
 6. Keep prompt policy short; prefer tool docstrings for exact capability detail
 7. Preserve the distinction between tracker `job_title` and roster `job_category`
+8. Treat the tracker as the source of truth for downstream HR actions and card refreshes
+9. Prefer `submission_id` over mutable business fields when a workflow already has it
 
 The general direction remains:
 

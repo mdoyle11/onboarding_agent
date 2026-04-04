@@ -75,8 +75,19 @@ class StaffRosterClient(WorkbookGraphClient):
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         tracker = TrackerClient()
+        submission_id = submission_id.strip()
+        if submission_id:
+            result = await tracker.find_employee_in_tracker(
+                employee_email,
+                submission_id=submission_id,
+            )
+            if result.get("found"):
+                return result
+            if result.get("multiple_matches"):
+                return result
         attempts = [
             {"location": location, "job_title": job_title, "status_change": status_change},
             {"location": location, "job_title": "", "status_change": status_change},
@@ -530,6 +541,7 @@ class StaffRosterClient(WorkbookGraphClient):
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         try:
             employee = await self._resolve_tracker_employee_for_roster_action(
@@ -537,6 +549,7 @@ class StaffRosterClient(WorkbookGraphClient):
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
             if not employee.get("found"):
                 matches = employee.get("matches", [])
@@ -750,6 +763,7 @@ class StaffRosterClient(WorkbookGraphClient):
         job_category: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         try:
             employee = await self._resolve_tracker_employee_for_roster_action(
@@ -757,6 +771,7 @@ class StaffRosterClient(WorkbookGraphClient):
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
             if not employee.get("found"):
                 matches = employee.get("matches", [])
@@ -873,6 +888,7 @@ class StaffRosterClient(WorkbookGraphClient):
         current_job_category: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
         employee_id: str = "",
         job_category: str = "",
         position: str = "",
@@ -904,6 +920,7 @@ class StaffRosterClient(WorkbookGraphClient):
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
             if not employee.get("found"):
                 matches = employee.get("matches", [])

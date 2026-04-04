@@ -55,6 +55,7 @@ def register(mcp: FastMCP) -> None:
         location: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         """Add an employee to the section-aware staff roster for a Group.
 
@@ -70,6 +71,7 @@ def register(mcp: FastMCP) -> None:
             location=location,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
         if result.get("success"):
             await _tracker().update_stage(
@@ -78,6 +80,7 @@ def register(mcp: FastMCP) -> None:
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
 
             from onboarding_agent.domain.identity import EmployeeIdentity
@@ -115,6 +118,7 @@ def register(mcp: FastMCP) -> None:
         job_category: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
     ) -> dict[str, Any]:
         """Remove an employee from the location-specific staff roster workbook.
 
@@ -128,6 +132,7 @@ def register(mcp: FastMCP) -> None:
             job_category=job_category,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
         )
         if result.get("success"):
             await _tracker().update_stage(
@@ -137,6 +142,7 @@ def register(mcp: FastMCP) -> None:
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
+                submission_id=submission_id,
             )
             return {
                 **result,
@@ -163,6 +169,7 @@ def register(mcp: FastMCP) -> None:
         current_job_category: str = "",
         job_title: str = "",
         status_change: str = "",
+        submission_id: str = "",
         employee_id: str = "",
         job_category: str = "",
         position: str = "",
@@ -207,6 +214,7 @@ def register(mcp: FastMCP) -> None:
             current_job_category=current_job_category,
             job_title=job_title,
             status_change=status_change,
+            submission_id=submission_id,
             employee_id=employee_id,
             job_category=job_category,
             position=position,

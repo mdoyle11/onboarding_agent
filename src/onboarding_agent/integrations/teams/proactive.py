@@ -42,6 +42,14 @@ def _deserialize_ref(data: dict[str, Any]) -> ConversationReference:
     return ConversationReference.model_validate(data)
 
 
+def _thread_conversation_id(conversation_id: str, reply_to_id: str) -> str:
+    base_id = str(conversation_id or "").strip()
+    root_id = str(reply_to_id or "").strip()
+    if not base_id or not root_id or ";messageid=" in base_id:
+        return base_id
+    return f"{base_id};messageid={root_id}"
+
+
 async def save_conversation_reference(activity: Activity) -> None:
     """Extract and store the conversation reference from an incoming activity."""
     ref = activity.get_conversation_reference()
@@ -108,6 +116,7 @@ async def send_proactive_message(
     channel_id: str,
     message: str,
     card: dict[str, Any] | None = None,
+    reply_to_id: str = "",
 ) -> dict[str, Any]:
     """Send a proactive message to a Teams channel with an optional Adaptive Card."""
     started = perf_counter()
@@ -127,14 +136,21 @@ async def send_proactive_message(
 
     result: dict[str, Any] = {"success": False}
     continuation_activity = ref.get_continuation_activity()
-    # Force a fresh channel post rather than replying in an existing thread/message.
+    # Force a fresh channel post unless replying in an existing thread/message.
     if hasattr(continuation_activity, "id"):
         continuation_activity.id = None
-    if hasattr(continuation_activity, "reply_to_id"):
+    if hasattr(continuation_activity, "reply_to_id") and not reply_to_id:
         continuation_activity.reply_to_id = None
+    elif hasattr(continuation_activity, "reply_to_id") and reply_to_id:
+        continuation_activity.reply_to_id = reply_to_id
+    conversation = getattr(continuation_activity, "conversation", None)
+    if conversation is not None and hasattr(conversation, "id") and reply_to_id:
+        conversation.id = _thread_conversation_id(str(getattr(conversation, "id", "") or ""), reply_to_id)
 
     async def _callback(turn_context: TurnContext) -> None:
         outgoing = Activity(type="message", text=message)
+        if hasattr(outgoing, "reply_to_id") and reply_to_id:
+            outgoing.reply_to_id = reply_to_id
         if card is not None:
             outgoing.text = ""
             outgoing.attachments = [

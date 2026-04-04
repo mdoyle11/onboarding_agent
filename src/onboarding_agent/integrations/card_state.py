@@ -17,6 +17,11 @@ NS_DOCUSIGN = "docusign_card"
 _CARD_STATE_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
+def _submission_card_title(status_change: str) -> str:
+    label = str(status_change or "").strip()
+    return f"{label or 'Submission'} Requested"
+
+
 def _store() -> store_mod.StateStore:
     assert store_mod.store is not None, "State store not initialized"
     return store_mod.store
@@ -32,7 +37,15 @@ def _card_record(payload: dict[str, Any]) -> dict[str, Any]:
 async def _resolve_card_key(
     namespace: str,
     identity: EmployeeIdentity,
+    submission_id: str = "",
 ) -> str | None:
+    submission_key = str(submission_id or "").strip()
+    if submission_key:
+        for key in await _store().list_keys(namespace):
+            card = await _store().get(namespace, key)
+            if card is not None and str(card.get("submission_id", "") or "").strip() == submission_key:
+                return key
+
     if identity.work_location or identity.job_title or identity.status_change:
         return identity.key()
 
@@ -56,6 +69,7 @@ async def save_new_hire_card(
     employee_email: str,
     channel_id: str,
     message_id: str,
+    submission_id: str = "",
     employee_name: str,
     title: str = "",
     status_change: str = "",
@@ -71,6 +85,7 @@ async def save_new_hire_card(
     await _store().put(NS_NEW_HIRE, key, _card_record({
         "channel_id": channel_id,
         "message_id": message_id,
+        "submission_id": submission_id,
         "employee_name": employee_name,
         "employee_email": employee_email,
         "title": title,
@@ -81,7 +96,7 @@ async def save_new_hire_card(
         "requesting_manager": requesting_manager,
         "summary": summary,
         "email_sent": False,
-        "docusign_sent": False,
+        "docusign_draft_created": False,
         "allow_email_action": allow_email_action,
         "allow_docusign_action": allow_docusign_action,
     }))
@@ -96,7 +111,7 @@ async def reset_new_hire_card_actions(identity: EmployeeIdentity) -> None:
     if card is None:
         return
     card["email_sent"] = False
-    card["docusign_sent"] = False
+    card["docusign_draft_created"] = False
     await _store().put(NS_NEW_HIRE, key, _card_record(card))
 
 
@@ -107,11 +122,87 @@ async def get_new_hire_card(identity: EmployeeIdentity) -> dict[str, Any] | None
     return await _store().get(NS_NEW_HIRE, key)
 
 
+async def _get_card_and_key(
+    namespace: str,
+    identity: EmployeeIdentity,
+    submission_id: str = "",
+) -> tuple[str | None, dict[str, Any] | None]:
+    key = await _resolve_card_key(namespace, identity, submission_id=submission_id)
+    if key is None:
+        return None, None
+    return key, await _store().get(namespace, key)
+
+
+async def _refresh_new_hire_card_fields_from_tracker(key: str, card: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
+    tracker_record = await TrackerClient().find_employee_in_tracker(
+        str(card.get("employee_email", "") or ""),
+        submission_id=str(card.get("submission_id", "") or ""),
+        location=str(card.get("work_location", "") or ""),
+        job_title=str(card.get("job_title", "") or ""),
+        status_change=str(card.get("status_change", "") or ""),
+    )
+    if not tracker_record.get("found"):
+        return key, card
+
+    refreshed = dict(card)
+    refreshed["employee_name"] = str(tracker_record.get("name", "") or refreshed.get("employee_name", "") or "")
+    refreshed["requested_start_date"] = str(tracker_record.get("start_date", "") or refreshed.get("requested_start_date", "") or "")
+    refreshed["job_title"] = str(tracker_record.get("job_title", "") or refreshed.get("job_title", "") or "")
+    refreshed["work_location"] = str(tracker_record.get("location", "") or refreshed.get("work_location", "") or "")
+    refreshed["status_change"] = str(tracker_record.get("status_change", "") or refreshed.get("status_change", "") or "")
+    refreshed["submission_id"] = str(tracker_record.get("submission_id", "") or refreshed.get("submission_id", "") or "")
+    refreshed["title"] = _submission_card_title(refreshed.get("status_change", ""))
+    new_key = _card_key(
+        refreshed.get("employee_email", ""),
+        refreshed.get("work_location", ""),
+        refreshed.get("job_title", ""),
+        refreshed.get("status_change", ""),
+    )
+    if new_key != key:
+        await _store().delete(NS_NEW_HIRE, key)
+    await _store().put(NS_NEW_HIRE, new_key, _card_record(refreshed))
+    return new_key, refreshed
+
+
+async def _refresh_docusign_card_fields_from_tracker(key: str, card: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
+    tracker_record = await TrackerClient().find_employee_in_tracker(
+        str(card.get("employee_email", "") or ""),
+        submission_id=str(card.get("submission_id", "") or ""),
+        location=str(card.get("work_location", "") or ""),
+        job_title=str(card.get("job_title", "") or ""),
+        status_change=str(card.get("status_change", "") or ""),
+    )
+    if not tracker_record.get("found"):
+        return key, card
+
+    refreshed = dict(card)
+    refreshed["employee_name"] = str(tracker_record.get("name", "") or refreshed.get("employee_name", "") or "")
+    refreshed["work_location"] = str(tracker_record.get("location", "") or refreshed.get("work_location", "") or "")
+    refreshed["job_title"] = str(tracker_record.get("job_title", "") or refreshed.get("job_title", "") or "")
+    refreshed["status_change"] = str(tracker_record.get("status_change", "") or refreshed.get("status_change", "") or "")
+    refreshed["submission_id"] = str(tracker_record.get("submission_id", "") or refreshed.get("submission_id", "") or "")
+    new_key = _card_key(
+        refreshed.get("employee_email", ""),
+        refreshed.get("work_location", ""),
+        refreshed.get("job_title", ""),
+        refreshed.get("status_change", ""),
+    )
+    if new_key != key:
+        await _store().delete(NS_DOCUSIGN, key)
+    await _store().put(NS_DOCUSIGN, new_key, _card_record(refreshed))
+    return new_key, refreshed
+
+
 async def mark_new_hire_action_complete(
     identity: EmployeeIdentity,
     action: str,
+    submission_id: str = "",
 ) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_NEW_HIRE, identity)
+    key = await _resolve_card_key(NS_NEW_HIRE, identity, submission_id=submission_id)
     if key is None:
         return None
     card = await _store().get(NS_NEW_HIRE, key)
@@ -120,25 +211,48 @@ async def mark_new_hire_action_complete(
 
     if action == "send_onboarding_email":
         card["email_sent"] = True
-    elif action == "send_docusign":
-        card["docusign_sent"] = True
+    elif action == "create_docusign_draft":
+        card["docusign_draft_created"] = True
 
     await _store().put(NS_NEW_HIRE, key, _card_record(card))
     return card
 
 
-async def refresh_new_hire_card(identity: EmployeeIdentity) -> dict[str, Any]:
+async def clear_new_hire_action_complete(
+    identity: EmployeeIdentity,
+    action: str,
+    submission_id: str = "",
+) -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_NEW_HIRE, identity, submission_id=submission_id)
+    if key is None:
+        return None
+    card = await _store().get(NS_NEW_HIRE, key)
+    if card is None:
+        return None
+
+    if action == "send_onboarding_email":
+        card["email_sent"] = False
+    elif action == "create_docusign_draft":
+        card["docusign_draft_created"] = False
+
+    await _store().put(NS_NEW_HIRE, key, _card_record(card))
+    return card
+
+
+async def refresh_new_hire_card(identity: EmployeeIdentity, submission_id: str = "") -> dict[str, Any]:
     from onboarding_agent.integrations.adaptive_cards import new_hire_card
     from onboarding_agent.integrations.teams.proactive import update_proactive_card
 
-    card = await get_new_hire_card(identity)
-    if card is None:
+    key, card = await _get_card_and_key(NS_NEW_HIRE, identity, submission_id=submission_id)
+    if card is None or key is None:
         return {"success": False, "error": f"No stored card state for {identity.email}"}
+    _, card = await _refresh_new_hire_card_fields_from_tracker(key, card)
 
     updated_card = new_hire_card(
         employee_name=card.get("employee_name", ""),
         employee_email=card.get("employee_email", ""),
         summary=card.get("summary", ""),
+        submission_id=card.get("submission_id", ""),
         title=card.get("title", ""),
         status_change=card.get("status_change", ""),
         requested_start_date=card.get("requested_start_date", ""),
@@ -146,7 +260,7 @@ async def refresh_new_hire_card(identity: EmployeeIdentity) -> dict[str, Any]:
         work_location=card.get("work_location", ""),
         requesting_manager=card.get("requesting_manager", ""),
         email_sent=bool(card.get("email_sent")),
-        docusign_sent=bool(card.get("docusign_sent")),
+        docusign_draft_created=bool(card.get("docusign_draft_created")),
         allow_email_action=bool(card.get("allow_email_action", True)),
         allow_docusign_action=bool(card.get("allow_docusign_action", True)),
     )
@@ -160,30 +274,38 @@ async def refresh_new_hire_card(identity: EmployeeIdentity) -> dict[str, Any]:
 async def save_docusign_status_card(
     *,
     employee_email: str,
+    employee_name: str = "",
     channel_id: str,
     message_id: str,
     envelope_id: str,
     status: str,
     summary: str,
+    submission_id: str = "",
     work_location: str = "",
     job_title: str = "",
     status_change: str = "",
     roster_added: bool = False,
     job_category: str = "",
+    review_url: str = "",
+    allow_send_action: bool = False,
 ) -> None:
     key = _card_key(employee_email, work_location, job_title, status_change)
     await _store().put(NS_DOCUSIGN, key, _card_record({
         "channel_id": channel_id,
         "message_id": message_id,
         "employee_email": employee_email,
+        "employee_name": employee_name,
         "envelope_id": envelope_id,
         "status": status,
         "summary": summary,
+        "submission_id": submission_id,
         "work_location": work_location,
         "job_title": job_title,
         "status_change": status_change,
         "roster_added": roster_added,
         "job_category": job_category,
+        "review_url": review_url,
+        "allow_send_action": allow_send_action,
     }))
 
 
@@ -192,6 +314,14 @@ async def get_docusign_status_card(identity: EmployeeIdentity) -> dict[str, Any]
     if key is None:
         return None
     return await _store().get(NS_DOCUSIGN, key)
+
+
+async def delete_docusign_status_card(identity: EmployeeIdentity, submission_id: str = "") -> bool:
+    key = await _resolve_card_key(NS_DOCUSIGN, identity, submission_id=submission_id)
+    if key is None:
+        return False
+    await _store().delete(NS_DOCUSIGN, key)
+    return True
 
 
 async def mark_docusign_roster_complete(
@@ -211,24 +341,29 @@ async def mark_docusign_roster_complete(
     return card
 
 
-async def refresh_docusign_status_card(identity: EmployeeIdentity) -> dict[str, Any]:
+async def refresh_docusign_status_card(identity: EmployeeIdentity, submission_id: str = "") -> dict[str, Any]:
     from onboarding_agent.integrations.adaptive_cards import docusign_status_card
     from onboarding_agent.integrations.teams.proactive import update_proactive_card
 
-    card = await get_docusign_status_card(identity)
-    if card is None:
+    key, card = await _get_card_and_key(NS_DOCUSIGN, identity, submission_id=submission_id)
+    if card is None or key is None:
         return {"success": False, "error": f"No stored DocuSign card state for {identity.email}"}
+    _, card = await _refresh_docusign_card_fields_from_tracker(key, card)
 
     updated_card = docusign_status_card(
         employee_email=card.get("employee_email", ""),
         envelope_id=card.get("envelope_id", ""),
         status=card.get("status", ""),
         summary=card.get("summary", ""),
+        submission_id=card.get("submission_id", ""),
+        employee_name=card.get("employee_name", ""),
         roster_added=bool(card.get("roster_added")),
         job_category=card.get("job_category", ""),
         work_location=card.get("work_location", ""),
         job_title=card.get("job_title", ""),
         status_change=card.get("status_change", ""),
+        review_url=card.get("review_url", ""),
+        allow_send_action=bool(card.get("allow_send_action", False)),
     )
     return await update_proactive_card(
         channel_id=card.get("channel_id", ""),

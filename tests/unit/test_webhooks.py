@@ -8,7 +8,8 @@ def test_parse_docusign_json_payload_extracts_custom_field() -> None:
         b'{"envelopeId":"env-123","status":"completed","customFields":{"textCustomFields":['
         b'{"name":"employee_email","value":"alice@example.com"},'
         b'{"name":"work_location","value":"Bronx"},'
-        b'{"name":"job_title","value":"Teacher"}]}}'
+        b'{"name":"job_title","value":"Teacher"},'
+        b'{"name":"submission_id","value":"sub-123"}]}}'
     )
 
     parsed = parse_docusign_payload(body, "application/json")
@@ -20,6 +21,7 @@ def test_parse_docusign_json_payload_extracts_custom_field() -> None:
         "work_location": "Bronx",
         "job_title": "Teacher",
         "status_change": "",
+        "submission_id": "sub-123",
     }
 
 
@@ -42,6 +44,10 @@ def test_parse_docusign_xml_payload_extracts_custom_field() -> None:
         <Name>job_title</Name>
         <Value>Assistant Principal</Value>
       </CustomField>
+      <CustomField>
+        <Name>submission_id</Name>
+        <Value>sub-456</Value>
+      </CustomField>
     </CustomFields>
   </EnvelopeStatus>
 </DocuSignEnvelopeInformation>
@@ -56,4 +62,5 @@ def test_parse_docusign_xml_payload_extracts_custom_field() -> None:
         "work_location": "Queens",
         "job_title": "Assistant Principal",
         "status_change": "",
+        "submission_id": "sub-456",
     }
