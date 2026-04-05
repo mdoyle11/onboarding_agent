@@ -236,6 +236,56 @@ class TrackerClient(WorkbookGraphClient):
             ),
         }
 
+    async def resolve_employee_relaxed(
+        self,
+        employee_email: str,
+        *,
+        location: str = "",
+        job_title: str = "",
+        status_change: str = "",
+        submission_id: str = "",
+    ) -> dict[str, Any]:
+        """Find an employee by progressively relaxing identity fields.
+
+        Tries submission_id first (if given), then the full identity composite,
+        then drops job_title, then status_change, then location.  Each attempt
+        that yields ``found`` or ``multiple_matches`` is returned immediately so
+        the caller can surface duplicates to the user.
+        """
+        submission_id = submission_id.strip()
+        if submission_id:
+            result = await self.find_employee_in_tracker(employee_email, submission_id=submission_id)
+            if result.get("found") or result.get("multiple_matches"):
+                return result
+
+        attempts = [
+            {"location": location, "job_title": job_title, "status_change": status_change},
+            {"location": location, "job_title": "", "status_change": status_change},
+            {"location": location, "job_title": "", "status_change": ""},
+            {"location": "", "job_title": "", "status_change": ""},
+        ]
+        seen: set[tuple[str, str, str]] = set()
+        last_result: dict[str, Any] = {}
+        for attempt in attempts:
+            key = (
+                attempt["location"].strip().lower(),
+                attempt["job_title"].strip().lower(),
+                attempt["status_change"].strip().lower(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            result = await self.find_employee_in_tracker(
+                employee_email,
+                location=attempt["location"],
+                job_title=attempt["job_title"],
+                status_change=attempt["status_change"],
+            )
+            if result.get("found") or result.get("multiple_matches"):
+                return result
+            last_result = result
+        return last_result or {"found": False, "error": f"Tracker row not found for {employee_email}."}
+
     async def find_employee_in_tracker(
         self,
         employee_email: str,

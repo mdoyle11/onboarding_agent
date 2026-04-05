@@ -56,74 +56,20 @@ async def _submission_id_for_identity(identity: EmployeeIdentity) -> str:
     return str((card_state or {}).get("submission_id", "") or "").strip()
 
 
-async def _resolve_tracker_record_for_docusign(identity: EmployeeIdentity) -> dict[str, Any]:
+async def _resolve_tracker_record_for_docusign_action(card_action: dict[str, str]) -> dict[str, Any]:
     from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 
-    tracker_client = TrackerClient()
-    submission_id = await _submission_id_for_identity(identity)
-    if submission_id:
-        result = await tracker_client.find_employee_in_tracker(
-            identity.email,
-            submission_id=submission_id,
-        )
-        if result.get("found") or result.get("multiple_matches"):
-            return result
-
-    attempts = [
-        {
-            "location": identity.work_location,
-            "job_title": identity.job_title,
-            "status_change": identity.status_change,
-        },
-        {
-            "location": identity.work_location,
-            "job_title": "",
-            "status_change": identity.status_change,
-        },
-        {
-            "location": identity.work_location,
-            "job_title": "",
-            "status_change": "",
-        },
-        {
-            "location": "",
-            "job_title": "",
-            "status_change": "",
-        },
-    ]
-    seen: set[tuple[str, str, str]] = set()
-    for attempt in attempts:
-        key = (
-            attempt["location"].strip().lower(),
-            attempt["job_title"].strip().lower(),
-            attempt["status_change"].strip().lower(),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        result = await tracker_client.find_employee_in_tracker(
-            identity.email,
-            location=attempt["location"],
-            job_title=attempt["job_title"],
-            status_change=attempt["status_change"],
-        )
-        if result.get("found") or result.get("multiple_matches"):
-            return result
-    return {"found": False, "row_id": "", "stages": {}}
-
-
-async def _resolve_tracker_record_for_docusign_action(card_action: dict[str, str]) -> dict[str, Any]:
+    identity = _identity_from_action(card_action)
     submission_id = str(card_action.get("submission_id", "") or "").strip()
-    if submission_id:
-        from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
-
-        result = await TrackerClient().find_employee_in_tracker(
-            str(card_action.get("employee_email", "") or "").strip(),
-            submission_id=submission_id,
-        )
-        if result.get("found") or result.get("multiple_matches"):
-            return result
-    return await _resolve_tracker_record_for_docusign(_identity_from_action(card_action))
+    if not submission_id:
+        submission_id = await _submission_id_for_identity(identity)
+    return await TrackerClient().resolve_employee_relaxed(
+        identity.email,
+        location=identity.work_location,
+        job_title=identity.job_title,
+        status_change=identity.status_change,
+        submission_id=submission_id,
+    )
 
 
 async def card_action_already_completed(card_action: dict[str, str] | None) -> bool:

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import json
 import logging
 from typing import Any
 
@@ -12,6 +10,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 from microsoft_agents.hosting.core import TurnContext, TurnState
 
 from onboarding_agent.agent import runner
+from onboarding_agent.agent.runner import _decode_tool_content
 from onboarding_agent.domain.identity import EmployeeIdentity
 from onboarding_agent.integrations.card_state import (
     clear_new_hire_action_complete,
@@ -68,26 +67,6 @@ def _should_refresh_cards(messages: list[BaseMessage]) -> bool:
         isinstance(message, ToolMessage) and (message.name or "").strip() in _CARD_REFRESH_TOOL_NAMES
         for message in messages
     )
-
-
-def _decode_tool_content(content: Any) -> dict[str, Any]:
-    if isinstance(content, dict):
-        return content
-    if not isinstance(content, str):
-        return {}
-
-    raw = content.strip()
-    if not raw:
-        return {}
-
-    for parser in (json.loads, ast.literal_eval):
-        try:
-            parsed = parser(raw)
-        except (ValueError, SyntaxError, json.JSONDecodeError):
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return {}
 
 
 async def _apply_card_side_effects_from_tool_results(messages: list[BaseMessage]) -> None:

@@ -244,7 +244,7 @@ async def test_execute_new_hire_card_action_without_context_creates_docusign_dra
     docusign.create_envelope_draft.return_value = {"success": True, "envelope_id": "env-123", "status": "created"}
     docusign.create_envelope_edit_view.return_value = {"success": True, "url": "https://review.example.com/env-123"}
     tracker = AsyncMock()
-    tracker.find_employee_in_tracker.return_value = {
+    tracker.resolve_employee_relaxed.return_value = {
         "found": True,
         "name": "Alice Example",
         "email": "alice@example.com",
@@ -271,7 +271,7 @@ async def test_execute_new_hire_card_action_without_context_creates_docusign_dra
         result = await execute_new_hire_card_action_without_context(card_action)
 
     assert result is True
-    tracker.find_employee_in_tracker.assert_awaited_once_with("alice@example.com", submission_id="sub-123")
+    tracker.resolve_employee_relaxed.assert_awaited_once()
     docusign.create_envelope_draft.assert_awaited_once_with(
         employee_name="Alice Example",
         employee_email="alice@example.com",
@@ -308,7 +308,7 @@ async def test_execute_new_hire_card_action_without_context_tolerates_missing_re
     docusign.create_envelope_draft.return_value = {"success": True, "envelope_id": "env-123", "status": "created"}
     docusign.create_envelope_edit_view.return_value = {"success": True, "url": "https://review.example.com/env-123"}
     tracker = AsyncMock()
-    tracker.find_employee_in_tracker.return_value = {
+    tracker.resolve_employee_relaxed.return_value = {
         "found": True,
         "name": "Alice Example",
         "email": "alice@example.com",
@@ -560,19 +560,16 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
     ]
     capacity_rows = [["Group", "Capacity"], ["Teacher", "2"]]
     tracker = AsyncMock()
-    tracker.find_employee_in_tracker.side_effect = [
-        {"found": False, "row_id": "", "stages": {}},
-        {
-            "found": True,
-            "name": "Matt",
-            "email": "mdoyle@bridgeprepacademy.com",
-            "location": "Collier",
-            "job_title": "Teacher",
-            "position": "Teacher",
-            "start_date": "",
-            "manager_email": "",
-        },
-    ]
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Matt",
+        "email": "mdoyle@bridgeprepacademy.com",
+        "location": "Collier",
+        "job_title": "Teacher",
+        "position": "Teacher",
+        "start_date": "",
+        "manager_email": "",
+    }
 
     with (
         patch("onboarding_agent.integrations.workbook.staff_roster_client.TrackerClient", return_value=tracker),
@@ -612,8 +609,13 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
         )
 
     assert result["success"] is True
-    assert tracker.find_employee_in_tracker.await_args_list[0].kwargs["job_title"] == "Instructional Coach"
-    assert tracker.find_employee_in_tracker.await_args_list[1].kwargs["job_title"] == ""
+    tracker.resolve_employee_relaxed.assert_awaited_once_with(
+        "mdoyle@bridgeprepacademy.com",
+        location="Collier",
+        job_title="Instructional Coach",
+        status_change="New Hire",
+        submission_id="",
+    )
 
 
 @patch("onboarding_agent.mcp_server.tools_staff_roster._tracker")

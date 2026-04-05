@@ -48,64 +48,6 @@ async def _resolve_unsent_offer_letter_match(employee_email: str) -> dict[str, A
     return {"resolved": False, "matches": matches}
 
 
-async def _resolve_tracker_record_for_offer_letter(
-    *,
-    employee_email: str,
-    work_location: str = "",
-    job_title: str = "",
-    status_change: str = "",
-    submission_id: str = "",
-) -> dict[str, Any]:
-    tracker = _tracker()
-    submission_id = submission_id.strip()
-    if submission_id:
-        result = await tracker.find_employee_in_tracker(employee_email, submission_id=submission_id)
-        if result.get("found") or result.get("multiple_matches"):
-            return result
-
-    attempts = [
-        {
-            "location": work_location,
-            "job_title": job_title,
-            "status_change": status_change,
-        },
-        {
-            "location": work_location,
-            "job_title": "",
-            "status_change": status_change,
-        },
-        {
-            "location": work_location,
-            "job_title": "",
-            "status_change": "",
-        },
-        {
-            "location": "",
-            "job_title": "",
-            "status_change": "",
-        },
-    ]
-    seen: set[tuple[str, str, str]] = set()
-    for attempt in attempts:
-        key = (
-            attempt["location"].strip().lower(),
-            attempt["job_title"].strip().lower(),
-            attempt["status_change"].strip().lower(),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        result = await tracker.find_employee_in_tracker(
-            employee_email,
-            location=attempt["location"],
-            job_title=attempt["job_title"],
-            status_change=attempt["status_change"],
-        )
-        if result.get("found") or result.get("multiple_matches"):
-            return result
-    return {"found": False, "error": f"Tracker row not found for {employee_email}."}
-
-
 def register(mcp: FastMCP) -> None:
     """Register all DocuSign tools on the given FastMCP instance."""
 
@@ -128,9 +70,9 @@ def register(mcp: FastMCP) -> None:
         ambiguity error instead of guessing.
         """
         if submission_id or work_location or job_title or status_change:
-            tracker_record = await _resolve_tracker_record_for_offer_letter(
-                employee_email=employee_email,
-                work_location=work_location,
+            tracker_record = await _tracker().resolve_employee_relaxed(
+                employee_email,
+                location=work_location,
                 job_title=job_title,
                 status_change=status_change,
                 submission_id=submission_id,
@@ -220,9 +162,9 @@ def register(mcp: FastMCP) -> None:
         the most stable workflow key. If a matching draft already exists, this
         tool returns it instead of creating a duplicate.
         """
-        tracker_record = await _resolve_tracker_record_for_offer_letter(
-            employee_email=employee_email,
-            work_location=work_location,
+        tracker_record = await _tracker().resolve_employee_relaxed(
+            employee_email,
+            location=work_location,
             job_title=job_title,
             status_change=status_change,
             submission_id=submission_id,
@@ -415,9 +357,9 @@ def register(mcp: FastMCP) -> None:
         DocuSign envelope in `created` status and deletes it. This tool refuses
         sent or completed envelopes; only unsent drafts can be removed.
         """
-        tracker_record = await _resolve_tracker_record_for_offer_letter(
-            employee_email=employee_email,
-            work_location=work_location,
+        tracker_record = await _tracker().resolve_employee_relaxed(
+            employee_email,
+            location=work_location,
             job_title=job_title,
             status_change=status_change,
             submission_id=submission_id,

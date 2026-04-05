@@ -71,7 +71,6 @@ class DocuSignClient:
         encoded_jwt = pyjwt.encode(payload, private_key, algorithm="RS256")
 
         import urllib.parse
-        import urllib.request
 
         data = urllib.parse.urlencode(
             {"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": encoded_jwt}
@@ -84,7 +83,6 @@ class DocuSignClient:
             method="POST",
         )
         with urllib.request.urlopen(req) as resp:  # noqa: S310
-            import json
             token_data = json.loads(resp.read())
 
         _cache.access_token = token_data["access_token"]

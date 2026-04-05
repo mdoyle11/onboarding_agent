@@ -16,6 +16,7 @@ from onboarding_agent.domain.onboard.policies import (
     normalize_workflow_type,
 )
 from onboarding_agent.integrations.card_state import (
+    _submission_card_title,
     reset_new_hire_card_actions,
     save_docusign_status_card,
     save_new_hire_card,
@@ -37,11 +38,6 @@ JOB_BACKGROUND_CLEARANCE = "background_clearance_webhook"
 
 def _notification_channel() -> str:
     return settings.notification_channel()
-
-
-def _submission_card_title(status_change: str) -> str:
-    label = str(status_change or "").strip()
-    return f"{label or 'Submission'} Requested"
 
 
 def _employee_thread_context(

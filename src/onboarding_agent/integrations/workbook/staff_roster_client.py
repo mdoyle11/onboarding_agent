@@ -69,59 +69,6 @@ class StaffRosterClient(WorkbookGraphClient):
         return resolved_by_key or requested
 
     @staticmethod
-    async def _resolve_tracker_employee_for_roster_action(
-        *,
-        employee_email: str,
-        location: str = "",
-        job_title: str = "",
-        status_change: str = "",
-        submission_id: str = "",
-    ) -> dict[str, Any]:
-        tracker = TrackerClient()
-        submission_id = submission_id.strip()
-        if submission_id:
-            result = await tracker.find_employee_in_tracker(
-                employee_email,
-                submission_id=submission_id,
-            )
-            if result.get("found"):
-                return result
-            if result.get("multiple_matches"):
-                return result
-        attempts = [
-            {"location": location, "job_title": job_title, "status_change": status_change},
-            {"location": location, "job_title": "", "status_change": status_change},
-            {"location": location, "job_title": "", "status_change": ""},
-            {"location": "", "job_title": "", "status_change": ""},
-        ]
-
-        seen: set[tuple[str, str, str]] = set()
-        last_result: dict[str, Any] = {"found": False, "row_id": "", "stages": {}}
-        for attempt in attempts:
-            key = (
-                attempt["location"].strip().lower(),
-                attempt["job_title"].strip().lower(),
-                attempt["status_change"].strip().lower(),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-
-            result = await tracker.find_employee_in_tracker(
-                employee_email,
-                location=attempt["location"],
-                job_title=attempt["job_title"],
-                status_change=attempt["status_change"],
-            )
-            if result.get("found"):
-                return result
-            last_result = result
-            if result.get("multiple_matches"):
-                return result
-
-        return last_result
-
-    @staticmethod
     def _is_totals_row(row: list[Any], roster_header: dict[str, int]) -> bool:
         return _cell(row, roster_header.get("name")).strip().lower() == "totals"
 
@@ -544,8 +491,8 @@ class StaffRosterClient(WorkbookGraphClient):
         submission_id: str = "",
     ) -> dict[str, Any]:
         try:
-            employee = await self._resolve_tracker_employee_for_roster_action(
-                employee_email=employee_email,
+            employee = await TrackerClient().resolve_employee_relaxed(
+                employee_email,
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
@@ -766,8 +713,8 @@ class StaffRosterClient(WorkbookGraphClient):
         submission_id: str = "",
     ) -> dict[str, Any]:
         try:
-            employee = await self._resolve_tracker_employee_for_roster_action(
-                employee_email=employee_email,
+            employee = await TrackerClient().resolve_employee_relaxed(
+                employee_email,
                 location=location,
                 job_title=job_title,
                 status_change=status_change,
@@ -915,8 +862,8 @@ class StaffRosterClient(WorkbookGraphClient):
         cc_3: str = "",
     ) -> dict[str, Any]:
         try:
-            employee = await self._resolve_tracker_employee_for_roster_action(
-                employee_email=employee_email,
+            employee = await TrackerClient().resolve_employee_relaxed(
+                employee_email,
                 location=location,
                 job_title=job_title,
                 status_change=status_change,

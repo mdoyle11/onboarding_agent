@@ -311,7 +311,7 @@ class TestDocuSignTools:
 
     @pytest.mark.asyncio
     async def test_check_docusign_draft_exists_uses_submission_id_to_refresh_tracker_fields(self):
-        self.tracker.find_employee_in_tracker.return_value = {
+        self.tracker.resolve_employee_relaxed.return_value = {
             "found": True,
             "email": "mdoyle@bridgeprepacademy.com",
             "submission_id": "sub-123",
@@ -333,8 +333,11 @@ class TestDocuSignTools:
             submission_id="sub-123",
         )
 
-        self.tracker.find_employee_in_tracker.assert_awaited_once_with(
+        self.tracker.resolve_employee_relaxed.assert_awaited_once_with(
             "mdoyle@bridgeprepacademy.com",
+            location="",
+            job_title="Teacher",
+            status_change="",
             submission_id="sub-123",
         )
         self.docusign.check_draft_exists.assert_awaited_once_with(
@@ -348,7 +351,7 @@ class TestDocuSignTools:
 
     @pytest.mark.asyncio
     async def test_create_offer_letter_draft_from_tracker_uses_submission_id_and_tracker_fields(self):
-        self.tracker.find_employee_in_tracker.return_value = {
+        self.tracker.resolve_employee_relaxed.return_value = {
             "found": True,
             "name": "Matt",
             "email": "mdoyle@bridgeprepacademy.com",
@@ -384,8 +387,11 @@ class TestDocuSignTools:
         assert result["submission_id"] == "sub-123"
         assert result["start_date"] == "2026-04-10"
         assert result["review_url"] == "https://review.example.com/env-789"
-        self.tracker.find_employee_in_tracker.assert_awaited_once_with(
+        self.tracker.resolve_employee_relaxed.assert_awaited_once_with(
             "mdoyle@bridgeprepacademy.com",
+            location="",
+            job_title="",
+            status_change="",
             submission_id="sub-123",
         )
         self.docusign.create_envelope_draft.assert_awaited_once_with(
@@ -400,7 +406,7 @@ class TestDocuSignTools:
 
     @pytest.mark.asyncio
     async def test_delete_offer_letter_draft_from_tracker_prefers_submission_id(self):
-        self.tracker.find_employee_in_tracker.return_value = {
+        self.tracker.resolve_employee_relaxed.return_value = {
             "found": True,
             "name": "Matt",
             "email": "mdoyle@bridgeprepacademy.com",
@@ -431,8 +437,11 @@ class TestDocuSignTools:
             submission_id="sub-123",
         )
 
-        self.tracker.find_employee_in_tracker.assert_awaited_once_with(
+        self.tracker.resolve_employee_relaxed.assert_awaited_once_with(
             "mdoyle@bridgeprepacademy.com",
+            location="",
+            job_title="",
+            status_change="",
             submission_id="sub-123",
         )
         self.docusign.check_draft_exists.assert_awaited_once_with(
