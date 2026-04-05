@@ -134,6 +134,57 @@ async def test_find_employee_in_tracker_prefers_submission_id_when_present():
 
 
 @pytest.mark.asyncio
+async def test_find_employee_in_tracker_uses_submission_id_before_cached_duplicate_email_matches():
+    client = TrackerClient()
+    header = ["Submission ID", *HEADER_ROW]
+    base_row1 = _build_row(
+        {
+            "Staff Name": "Matt One",
+            "Staff Email": "matt@example.com",
+            "Work Location": "Collier",
+            "Job Title": "Counselor",
+            "Status Change": "New Hire",
+        }
+    )
+    base_row2 = _build_row(
+        {
+            "Staff Name": "Matt Two",
+            "Staff Email": "matt@example.com",
+            "Work Location": "Orange",
+            "Job Title": "Assistant Principal",
+            "Status Change": "New Hire",
+        }
+    )
+    row1 = ["sub-111", *base_row1]
+    row2 = ["sub-222", *base_row2]
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(
+                side_effect=[
+                    {"address": "Onboarding!A1:Q3", "values": [header, row1, row2]},
+                    {"address": "Onboarding!A1:Q3", "values": [header, row1, row2]},
+                ]
+            ),
+        ),
+    ):
+        ambiguous = await client.find_employee_in_tracker("matt@example.com")
+        resolved = await client.find_employee_in_tracker(
+            "matt@example.com",
+            submission_id="sub-222",
+        )
+
+    assert ambiguous["found"] is False
+    assert ambiguous["multiple_matches"] is True
+    assert resolved["found"] is True
+    assert resolved["submission_id"] == "sub-222"
+    assert resolved["location"] == "Orange"
+
+
+@pytest.mark.asyncio
 async def test_find_employee_in_tracker_falls_back_when_table_query_fails():
     client = TrackerClient()
     row = _build_row(

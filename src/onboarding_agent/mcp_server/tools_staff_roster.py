@@ -90,9 +90,9 @@ def register(mcp: FastMCP) -> None:
             )
 
             identity = EmployeeIdentity(employee_email, location, job_title, status_change)
-            card = await mark_docusign_roster_complete(identity, job_category)
+            card = await mark_docusign_roster_complete(identity, job_category, submission_id=submission_id)
             if card is not None:
-                await refresh_docusign_status_card(identity)
+                await refresh_docusign_status_card(identity, submission_id=submission_id)
             detail = "already existed" if result.get("already_exists") else "was added"
             return {
                 **result,

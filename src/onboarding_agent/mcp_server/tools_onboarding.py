@@ -72,7 +72,10 @@ async def _reconcile_completed_docusign(
     if not channel_id:
         return updated_stages
 
-    existing_card = await get_docusign_status_card(EmployeeIdentity(employee_email, location, job_title, status_change))
+    existing_card = await get_docusign_status_card(
+        EmployeeIdentity(employee_email, location, job_title, status_change),
+        submission_id=submission_id,
+    )
     if existing_card and str(existing_card.get("status", "")).lower() == "completed":
         return updated_stages
 
@@ -219,7 +222,10 @@ def register(mcp: FastMCP) -> None:
                     docusign_status = str(ds_result.get("status", "") or docusign_status)
 
         if not envelope_id:
-            stored_card = await get_docusign_status_card(EmployeeIdentity(employee_email, location, job_title, status_change))
+            stored_card = await get_docusign_status_card(
+                EmployeeIdentity(employee_email, location, job_title, status_change),
+                submission_id=submission_id,
+            )
             if stored_card:
                 envelope_id = str(stored_card.get("envelope_id", "") or "")
                 docusign_status = str(stored_card.get("status", "") or "")

@@ -6,6 +6,8 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from onboarding_agent.integrations.teams.bot import (
     _apply_card_side_effects_from_tool_results,
     _refresh_cards_from_session_context,
+    _refresh_draft_result_surfaces,
+    _run_deterministic_card_action_in_background,
     _should_refresh_cards,
 )
 
@@ -123,3 +125,58 @@ async def test_apply_card_side_effects_clears_offer_letter_draft_completion_on_d
     assert clear_complete.await_args.kwargs["submission_id"] == "sub-123"
     assert delete_card.await_args.args[0].email == "alice@example.com"
     assert delete_card.await_args.kwargs["submission_id"] == "sub-123"
+
+
+@pytest.mark.asyncio
+async def test_refresh_draft_result_surfaces_prefers_docusign_card() -> None:
+    refresh_new_hire = AsyncMock(return_value={"success": True})
+    refresh_docusign = AsyncMock(return_value={"success": True})
+
+    with (
+        patch("onboarding_agent.integrations.teams.bot.refresh_new_hire_card", new=refresh_new_hire),
+        patch("onboarding_agent.integrations.teams.bot.refresh_docusign_status_card", new=refresh_docusign),
+    ):
+        await _refresh_draft_result_surfaces(
+            {
+                "employee_email": "alice@example.com",
+                "submission_id": "sub-123",
+                "work_location": "Bronx",
+                "job_title": "Teacher",
+                "status_change": "New Hire",
+            }
+        )
+
+    refresh_docusign.assert_awaited_once()
+    refresh_new_hire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_background_draft_action_suppresses_failure_when_completion_can_be_reconfirmed() -> None:
+    with (
+        patch(
+            "onboarding_agent.integrations.teams.bot.execute_new_hire_card_action_without_context",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "onboarding_agent.integrations.teams.bot.card_action_already_completed",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "onboarding_agent.integrations.teams.bot._refresh_draft_result_surfaces",
+            new=AsyncMock(),
+        ) as refresh_surfaces,
+        patch("onboarding_agent.integrations.teams.bot.notify_card_action_failure", new=AsyncMock()) as notify_failure,
+    ):
+        await _run_deterministic_card_action_in_background(
+            card_action={
+                "action": "create_docusign_draft",
+                "employee_email": "alice@example.com",
+                "submission_id": "sub-123",
+                "work_location": "Bronx",
+                "job_title": "Teacher",
+                "status_change": "New Hire",
+            }
+        )
+
+    refresh_surfaces.assert_awaited_once()
+    notify_failure.assert_not_awaited()

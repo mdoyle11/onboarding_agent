@@ -166,6 +166,7 @@ async def _send_submission_notification(
         employee_name=employee_name or employee_email,
         employee_email=employee_email,
         summary=summary,
+        submission_id=fields["submission_id"],
         title=_submission_card_title(fields["status_change"]),
         status_change=fields["status_change"],
         requested_start_date=fields["requested_start_date"],

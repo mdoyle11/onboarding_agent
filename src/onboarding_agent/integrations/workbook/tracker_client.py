@@ -303,7 +303,9 @@ class TrackerClient(WorkbookGraphClient):
             requested_identity = self._identity_key(email_key, location_key, job_title_key, status_change_key)
 
             candidate_row_ids: list[str] = []
-            if location_key or job_title_key or status_change_key:
+            if submission_id_key:
+                candidate_row_ids = []
+            elif location_key or job_title_key or status_change_key:
                 exact_row_id = self._cache_identity_to_row_id.get(requested_identity, "")
                 if exact_row_id:
                     candidate_row_ids = [exact_row_id]
@@ -313,7 +315,18 @@ class TrackerClient(WorkbookGraphClient):
             verified_matches: list[tuple[str, list[Any]]] = []
             for row_id in candidate_row_ids:
                 row = await self._get_row_by_row_id(row_id)
-                if row is not None and self._row_matches_identity(
+                if row is None:
+                    continue
+                if submission_id_key:
+                    submission_idx = self._tracker_columns.get("submission_id")
+                    row_submission_id = (
+                        str(row[submission_idx] or "").strip()
+                        if submission_idx is not None and len(row) > submission_idx
+                        else ""
+                    )
+                    if row_submission_id != submission_id_key:
+                        continue
+                if self._row_matches_identity(
                     row,
                     email_key,
                     location_key,

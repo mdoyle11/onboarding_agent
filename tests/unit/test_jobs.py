@@ -88,6 +88,41 @@ async def test_process_new_hire_job_formats_multiple_uploaded_credential_links_s
 
 
 @pytest.mark.asyncio
+async def test_process_new_hire_job_passes_submission_id_into_new_hire_card_payload() -> None:
+    payload = {
+        "submissionId": "sub-123",
+        "staffName": "Alice Example",
+        "staffEmail": "alice@example.com",
+        "workLocation": "Bronx",
+        "jobTitle": "Teacher",
+        "statusChange": "New Hire",
+    }
+    tracker = AsyncMock()
+    tracker.find_employee_in_tracker.return_value = {"found": False}
+    tracker.add_employee_to_tracker.return_value = {"success": True, "row_id": "10"}
+    docusign = AsyncMock()
+    docusign.check_draft_exists.return_value = {"exists": False, "envelope_id": ""}
+    teams = AsyncMock()
+    teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
+
+    with (
+        patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.runtime.jobs.DocuSignClient", return_value=docusign),
+        patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
+        patch("onboarding_agent.runtime.jobs.draft_onboarding_email_for_employee", new=AsyncMock(return_value={"success": True})),
+        patch("onboarding_agent.runtime.jobs.reset_new_hire_card_actions", new=AsyncMock()),
+        patch("onboarding_agent.runtime.jobs.save_new_hire_card", new=AsyncMock()),
+        patch("onboarding_agent.integrations.adaptive_cards.new_hire_card", return_value={"type": "AdaptiveCard"}) as build_card,
+    ):
+        from onboarding_agent.runtime.jobs import process_new_hire_job
+
+        await process_new_hire_job(payload)
+
+    assert build_card.call_count == 1
+    assert build_card.call_args.kwargs["submission_id"] == "sub-123"
+
+
+@pytest.mark.asyncio
 async def test_process_job_invokes_agent_for_new_hire() -> None:
     mock_process = AsyncMock(return_value=None)
     payload = {"employeeEmail": "alice@example.com"}

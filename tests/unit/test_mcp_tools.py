@@ -14,6 +14,43 @@ async def _get_tool_fn(mcp: FastMCP, tool_name: str):
     return tool.fn
 
 
+@pytest.mark.asyncio
+async def test_send_new_hire_card_propagates_submission_id_into_card_and_state():
+    from onboarding_agent.mcp_server.tools_teams import register
+
+    messenger = AsyncMock()
+    messenger.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
+
+    mcp = FastMCP(name="test-teams-new-hire-card")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_teams._messenger", return_value=messenger),
+        patch("onboarding_agent.integrations.card_state.reset_new_hire_card_actions", new=AsyncMock()),
+        patch("onboarding_agent.integrations.card_state.save_new_hire_card", new=AsyncMock()) as save_card,
+        patch("onboarding_agent.integrations.adaptive_cards.new_hire_card", return_value={"type": "AdaptiveCard"}) as build_card,
+    ):
+        tool_fn = await _get_tool_fn(mcp, "send_new_hire_card")
+        await tool_fn(
+            channel_id="channel-1",
+            employee_name="Alice Example",
+            employee_email="alice@example.com",
+            summary="Summary",
+            submission_id="sub-123",
+            title="New Hire Requested",
+            status_change="New Hire",
+            requested_start_date="2026-04-10",
+            job_title="Teacher",
+            work_location="Bronx",
+            requesting_manager="Manager",
+        )
+
+    assert build_card.call_count == 1
+    assert build_card.call_args.kwargs["submission_id"] == "sub-123"
+    assert messenger.send_channel_notification.await_args.kwargs["session_context"]["submission_id"] == "sub-123"
+    assert save_card.await_args.kwargs["submission_id"] == "sub-123"
+
+
 # ---------------------------------------------------------------------------
 # tools_onboarding.get_onboarding_status
 # ---------------------------------------------------------------------------

@@ -223,10 +223,18 @@ async def _run_deterministic_card_action_in_background(
     try:
         updated = await execute_new_hire_card_action_without_context(card_action)
         if not updated:
+            if card_action["action"] == "create_docusign_draft" and await card_action_already_completed(card_action):
+                await _refresh_draft_result_surfaces(card_action)
+                return
             logger.warning(
-                "Deterministic Teams card action completed without a card update: action=%s employee=%s",
+                "Deterministic Teams card action completed without a card update: action=%s employee=%s submission_id=%s message_id=%s location=%s job_title=%s status_change=%s",
                 card_action["action"],
                 card_action["employee_email"],
+                card_action.get("submission_id", "") or "<missing>",
+                card_action.get("message_id", "") or "<missing>",
+                card_action.get("work_location", "") or "<missing>",
+                card_action.get("job_title", "") or "<missing>",
+                card_action.get("status_change", "") or "<missing>",
             )
             await notify_card_action_failure(card_action)
     except Exception:
@@ -236,3 +244,26 @@ async def _run_deterministic_card_action_in_background(
             card_action["employee_email"],
         )
         await notify_card_action_failure(card_action)
+
+
+async def _refresh_draft_result_surfaces(card_action: dict[str, str]) -> None:
+    identity = EmployeeIdentity(
+        email=str(card_action.get("employee_email", "") or "").strip(),
+        work_location=str(card_action.get("work_location", "") or "").strip(),
+        job_title=str(card_action.get("job_title", "") or "").strip(),
+        status_change=str(card_action.get("status_change", "") or "").strip(),
+    )
+    submission_id = str(card_action.get("submission_id", "") or "").strip()
+
+    docusign_result = await refresh_docusign_status_card(identity, submission_id=submission_id)
+    if docusign_result.get("success"):
+        return
+
+    root_result = await refresh_new_hire_card(identity, submission_id=submission_id)
+    if not root_result.get("success"):
+        logger.info(
+            "Draft action fallback refresh skipped for %s: docusign=%s root=%s",
+            identity.email,
+            docusign_result.get("error", "unknown"),
+            root_result.get("error", "unknown"),
+        )

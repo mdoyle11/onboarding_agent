@@ -41,18 +41,56 @@ async def _resolve_card_key(
 ) -> str | None:
     submission_key = str(submission_id or "").strip()
     if submission_key:
+        logger.info(
+            "Resolving card key by submission_id: namespace=%s submission_id=%s email=%s location=%s job_title=%s status_change=%s",
+            namespace,
+            submission_key,
+            identity.email or "<missing>",
+            identity.work_location or "<missing>",
+            identity.job_title or "<missing>",
+            identity.status_change or "<missing>",
+        )
         for key in await _store().list_keys(namespace):
             card = await _store().get(namespace, key)
             if card is not None and str(card.get("submission_id", "") or "").strip() == submission_key:
+                logger.info(
+                    "Resolved card key by submission_id: namespace=%s submission_id=%s key=%s message_id=%s",
+                    namespace,
+                    submission_key,
+                    key,
+                    str(card.get("message_id", "") or "").strip() or "<missing>",
+                )
                 return key
+        logger.warning(
+            "No card state matched submission_id: namespace=%s submission_id=%s email=%s location=%s job_title=%s status_change=%s",
+            namespace,
+            submission_key,
+            identity.email or "<missing>",
+            identity.work_location or "<missing>",
+            identity.job_title or "<missing>",
+            identity.status_change or "<missing>",
+        )
+        return None
 
     if identity.work_location or identity.job_title or identity.status_change:
-        return identity.key()
+        key = identity.key()
+        logger.info(
+            "Resolving card key by composite identity: namespace=%s key=%s",
+            namespace,
+            key,
+        )
+        return key
 
     email_key = normalize_identity_part(identity.email)
     exact_key = _card_key(identity.email)
     exact_card = await _store().get(namespace, exact_key)
     if exact_card is not None:
+        logger.info(
+            "Resolved card key by exact email: namespace=%s key=%s message_id=%s",
+            namespace,
+            exact_key,
+            str(exact_card.get("message_id", "") or "").strip() or "<missing>",
+        )
         return exact_key
 
     matching_keys = [
@@ -60,7 +98,19 @@ async def _resolve_card_key(
         if key.split("|", 1)[0] == email_key
     ]
     if len(matching_keys) == 1:
+        logger.info(
+            "Resolved card key by single email match: namespace=%s key=%s",
+            namespace,
+            matching_keys[0],
+        )
         return matching_keys[0]
+    if matching_keys:
+        logger.warning(
+            "Ambiguous email-only card lookup: namespace=%s email=%s candidate_keys=%s",
+            namespace,
+            identity.email or "<missing>",
+            matching_keys,
+        )
     return None
 
 
@@ -115,8 +165,8 @@ async def reset_new_hire_card_actions(identity: EmployeeIdentity) -> None:
     await _store().put(NS_NEW_HIRE, key, _card_record(card))
 
 
-async def get_new_hire_card(identity: EmployeeIdentity) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_NEW_HIRE, identity)
+async def get_new_hire_card(identity: EmployeeIdentity, submission_id: str = "") -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_NEW_HIRE, identity, submission_id=submission_id)
     if key is None:
         return None
     return await _store().get(NS_NEW_HIRE, key)
@@ -309,8 +359,8 @@ async def save_docusign_status_card(
     }))
 
 
-async def get_docusign_status_card(identity: EmployeeIdentity) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_DOCUSIGN, identity)
+async def get_docusign_status_card(identity: EmployeeIdentity, submission_id: str = "") -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_DOCUSIGN, identity, submission_id=submission_id)
     if key is None:
         return None
     return await _store().get(NS_DOCUSIGN, key)
@@ -327,8 +377,9 @@ async def delete_docusign_status_card(identity: EmployeeIdentity, submission_id:
 async def mark_docusign_roster_complete(
     identity: EmployeeIdentity,
     job_category: str,
+    submission_id: str = "",
 ) -> dict[str, Any] | None:
-    key = await _resolve_card_key(NS_DOCUSIGN, identity)
+    key = await _resolve_card_key(NS_DOCUSIGN, identity, submission_id=submission_id)
     if key is None:
         return None
     card = await _store().get(NS_DOCUSIGN, key)

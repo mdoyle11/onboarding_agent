@@ -8,8 +8,10 @@ from fastmcp import FastMCP
 
 from onboarding_agent.integrations.adaptive_cards import docusign_status_card, new_hire_card
 from onboarding_agent.integrations.teams.card_actions import (
+    card_action_already_completed,
     execute_new_hire_card_action_without_context,
     handle_staff_roster_card_action,
+    refresh_card_from_context,
 )
 from onboarding_agent.integrations.workbook.helpers import column_letter as _column_letter
 from onboarding_agent.integrations.workbook.helpers import header_map as _header_map
@@ -338,6 +340,100 @@ async def test_execute_new_hire_card_action_without_context_tolerates_missing_re
     save_card.assert_awaited_once()
     assert save_card.await_args.kwargs["message_id"] == ""
     mark_complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_new_hire_card_action_without_context_keeps_draft_success_when_root_refresh_fails():
+    card_action = {
+        "action": "create_docusign_draft",
+        "employee_email": "alice@example.com",
+        "submission_id": "sub-123",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+    }
+    docusign = AsyncMock()
+    docusign.check_draft_exists.return_value = {"exists": False, "envelope_id": ""}
+    docusign.create_envelope_draft.return_value = {"success": True, "envelope_id": "env-123", "status": "created"}
+    docusign.create_envelope_edit_view.return_value = {"success": True, "url": "https://review.example.com/env-123"}
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+        "start_date": "2026-04-10",
+    }
+    card_state = {"channel_id": "channel-1", "message_id": "root-msg", "employee_name": "Alice Example", "submission_id": "sub-123"}
+
+    with (
+        patch("onboarding_agent.integrations.teams.card_actions.mark_new_hire_action_complete", new=AsyncMock()) as mark_complete,
+        patch("onboarding_agent.integrations.teams.card_actions.refresh_new_hire_card", new=AsyncMock(return_value={"success": False, "error": "stale root"})),
+        patch("onboarding_agent.integrations.teams.card_actions.get_new_hire_card", new=AsyncMock(return_value=card_state)),
+        patch("onboarding_agent.integrations.teams.card_actions.save_docusign_status_card", new=AsyncMock()) as save_card,
+        patch(
+            "onboarding_agent.integrations.teams.messenger.TeamsMessenger.send_channel_notification",
+            new=AsyncMock(return_value={"success": True, "message_id": "reply-msg"}),
+        ),
+        patch("onboarding_agent.integrations.teams.card_actions.DocuSignClient", create=True),
+        patch("onboarding_agent.integrations.docusign_client.DocuSignClient", return_value=docusign),
+        patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
+    ):
+        result = await execute_new_hire_card_action_without_context(card_action)
+
+    assert result is True
+    save_card.assert_awaited_once()
+    mark_complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_card_action_already_completed_uses_docusign_card_for_draft_actions():
+    card_action = {
+        "action": "create_docusign_draft",
+        "employee_email": "alice@example.com",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+    }
+
+    with (
+        patch("onboarding_agent.integrations.teams.card_actions.get_new_hire_card", new=AsyncMock(return_value=None)),
+        patch(
+            "onboarding_agent.integrations.teams.card_actions.get_docusign_status_card",
+            new=AsyncMock(return_value={"status": "created", "message_id": "reply-msg"}),
+        ),
+    ):
+        result = await card_action_already_completed(card_action)
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_card_from_context_prefers_docusign_card_for_draft_actions():
+    card_action = {
+        "action": "create_docusign_draft",
+        "employee_email": "alice@example.com",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+    }
+    context = AsyncMock()
+
+    with (
+        patch(
+            "onboarding_agent.integrations.teams.card_actions.get_docusign_status_card",
+            new=AsyncMock(return_value={"message_id": "reply-msg", "channel_id": "channel-1"}),
+        ),
+        patch("onboarding_agent.integrations.teams.card_actions._update_docusign_status_card", new=AsyncMock(return_value=True)) as update_docusign,
+        patch("onboarding_agent.integrations.teams.card_actions.get_new_hire_card", new=AsyncMock(return_value={"message_id": "root-msg"})) as get_root,
+    ):
+        result = await refresh_card_from_context(context, card_action)
+
+    assert result is True
+    update_docusign.assert_awaited_once()
+    get_root.assert_not_awaited()
 
 
 @pytest.mark.asyncio
