@@ -757,7 +757,7 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
                 roster_rows,
                 [
                     roster_rows[0],
-                    ["Matt", "mdoyle@bridgeprepacademy.com", "mdoyle@bridgeprepacademy.com", "Teacher", "Teacher", "Collier"],
+                    ["Matt", "", "mdoyle@bridgeprepacademy.com", "Teacher", "Teacher", "Collier"],
                     ["Totals", "1", "", "Teacher", "", "Collier"],
                 ],
             ]),

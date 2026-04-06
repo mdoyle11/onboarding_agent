@@ -114,7 +114,9 @@ class SeparationsClient(WorkbookGraphClient):
             if "name" in header:
                 new_row[header["name"]] = str(rd.get("employee_name", "") or employee_name or "")
             if "email" in header:
-                new_row[header["email"]] = employee_email
+                new_row[header["email"]] = str(rd.get("employee_email", "") or "")
+            if "personal_email" in header:
+                new_row[header["personal_email"]] = str(rd.get("personal_email", "") or employee_email)
 
             # Explicit overrides
             if "group" in header:

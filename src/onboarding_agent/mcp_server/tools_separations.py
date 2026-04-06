@@ -38,6 +38,24 @@ def register(mcp: FastMCP) -> None:
             location=location,
             job_category=job_category,
         )
+        if roster_result.get("multiple_matches"):
+            return {
+                "success": False,
+                "employee_email": employee_email,
+                "location": location,
+                "multiple_matches": True,
+                "matches": roster_result.get("matches", []),
+                "action": "failed",
+                "error": (
+                    "Multiple staff roster rows matched this employee. "
+                    "Please specify the exact group/job category or position."
+                ),
+                "summary": (
+                    f"Failed to record separation for {employee_email}: "
+                    "Multiple staff roster rows matched this employee. "
+                    "Please specify the exact group/job category or position."
+                ),
+            }
         roster_data = roster_result if roster_result.get("found") else None
 
         sep_result = await _separations().add_separation_record(
@@ -174,6 +192,16 @@ def register(mcp: FastMCP) -> None:
                 **result,
                 "action": "updated",
                 "summary": f"Leave status updated for {employee_email} at {location}: {status}.",
+            }
+        if result.get("multiple_matches"):
+            return {
+                **result,
+                "action": "failed",
+                "summary": (
+                    f"Leave status update failed for {employee_email}: "
+                    "Multiple staff roster rows matched this employee. "
+                    "Please specify the exact group/job category or position."
+                ),
             }
         return {
             **result,

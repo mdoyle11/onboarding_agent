@@ -51,6 +51,77 @@ async def test_send_new_hire_card_propagates_submission_id_into_card_and_state()
     assert save_card.await_args.kwargs["submission_id"] == "sub-123"
 
 
+@pytest.mark.asyncio
+async def test_record_separation_surfaces_roster_multiple_matches() -> None:
+    from onboarding_agent.mcp_server.tools_separations import register
+
+    roster = AsyncMock()
+    roster.find_employee_in_staff_roster.return_value = {
+        "found": False,
+        "multiple_matches": True,
+        "matches": [
+            {"row_id": "10", "job_category": "Teacher", "position": "Teacher"},
+            {"row_id": "11", "job_category": "Teacher Assistant", "position": "Teacher"},
+        ],
+    }
+
+    mcp = FastMCP(name="test-separation-ambiguous")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+        patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=AsyncMock()),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=AsyncMock()),
+    ):
+        tool_fn = await _get_tool_fn(mcp, "record_separation")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            status_change="Separation",
+        )
+
+    assert result["success"] is False
+    assert result["multiple_matches"] is True
+    assert len(result["matches"]) == 2
+    assert "Multiple staff roster rows matched this employee" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_leave_status_surfaces_roster_multiple_matches() -> None:
+    from onboarding_agent.mcp_server.tools_separations import register
+
+    roster = AsyncMock()
+    roster.update_employee_leave_status.return_value = {
+        "success": False,
+        "multiple_matches": True,
+        "matches": [
+            {"row_id": "10", "job_category": "Teacher", "position": "Teacher"},
+            {"row_id": "11", "job_category": "Teacher Assistant", "position": "Teacher"},
+        ],
+        "error": "Multiple staff roster rows matched this employee.",
+    }
+
+    mcp = FastMCP(name="test-leave-ambiguous")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=AsyncMock()),
+    ):
+        tool_fn = await _get_tool_fn(mcp, "update_leave_status")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            status="On Leave",
+            status_change="Leave Start",
+        )
+
+    assert result["success"] is False
+    assert result["multiple_matches"] is True
+    assert len(result["matches"]) == 2
+    assert "Multiple staff roster rows matched this employee" in result["summary"]
+
+
 # ---------------------------------------------------------------------------
 # tools_onboarding.get_onboarding_status
 # ---------------------------------------------------------------------------

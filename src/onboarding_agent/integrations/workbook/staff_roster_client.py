@@ -590,7 +590,6 @@ class StaffRosterClient(WorkbookGraphClient):
             row_width = max(len(roster_rows[0]), max(roster_header.values()) + 1)
             new_row = [""] * row_width
             new_row[roster_header["name"]] = str(employee.get("name", "") or "")
-            new_row[roster_header["email"]] = employee_email
             new_row[roster_header["group"]] = resolved_job_category or job_category
 
             optional_values = {
@@ -875,6 +874,8 @@ class StaffRosterClient(WorkbookGraphClient):
                     "employee_email": employee_email,
                     "location": location,
                     "error": str(match.get("error", f"{employee_email} is not in the staff roster")),
+                    "multiple_matches": bool(match.get("multiple_matches", False)),
+                    "matches": match.get("matches", []),
                 }
 
             row_id = int(str(match.get("row_id", "0") or "0"))
