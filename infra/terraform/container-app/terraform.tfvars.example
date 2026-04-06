@@ -119,6 +119,7 @@ outlook_sender_email = "hr@example.com"
 # Example:
 # staff_roster_locations_json = "{\"collier\":{\"drive_id\":\"...\",\"item_id\":\"...\",\"roster_sheet_name\":\"Roster_Data\",\"capacity_sheet_name\":\"Capacity\"}}"
 # staff_roster_locations_json = "{}"
+# staff_roster_default_separations_sheet_name = "Separations"
 
 # Optional custom tags for resources Terraform creates.
 # tags = {

@@ -36,6 +36,7 @@ locals {
     CONVERSATION_SESSION_COSMOS_CONTAINER_NAME = var.conversation_session_cosmos_container_name
     JOB_QUEUE_BACKEND                          = "azure"
     AZURE_STORAGE_QUEUE_NAME                   = var.azure_storage_queue_name
+    STAFF_ROSTER_DEFAULT_SEPARATIONS_SHEET_NAME = var.staff_roster_default_separations_sheet_name
   }
 
   required_secret_env_vars = {

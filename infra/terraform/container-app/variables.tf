@@ -253,6 +253,12 @@ variable "staff_roster_locations_json" {
   default     = "{}"
 }
 
+variable "staff_roster_default_separations_sheet_name" {
+  description = "Default separations sheet name for all staff roster workbooks."
+  type        = string
+  default     = "Separations"
+}
+
 variable "storage_account_connection_string" {
   description = "Connection string for the existing Azure Storage Account."
   type        = string
