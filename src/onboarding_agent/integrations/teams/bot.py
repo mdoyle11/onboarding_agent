@@ -18,12 +18,14 @@ from onboarding_agent.integrations.card_state import (
     mark_new_hire_action_complete,
     refresh_docusign_status_card,
     refresh_new_hire_card,
+    refresh_separation_card,
 )
 from onboarding_agent.integrations.teams.card_actions import (
     already_completed_message,
     card_action_already_completed,
     execute_new_hire_card_action_without_context,
     extract_card_action,
+    handle_separation_card_action,
     handle_staff_roster_card_action,
     notify_card_action_failure,
     refresh_card_from_context,
@@ -59,6 +61,9 @@ _CARD_REFRESH_TOOL_NAMES = {
     "add_employee_to_staff_roster",
     "remove_employee_from_staff_roster",
     "update_employee_in_staff_roster",
+    "record_separation",
+    "find_separation_record",
+    "update_leave_status",
 }
 
 
@@ -113,7 +118,7 @@ async def _refresh_cards_from_session_context(session_context: dict[str, Any] | 
     )
     submission_id = str(session_context.get("submission_id", "") or "").strip()
 
-    for refresh in (refresh_new_hire_card, refresh_docusign_status_card):
+    for refresh in (refresh_new_hire_card, refresh_docusign_status_card, refresh_separation_card):
         try:
             result = await refresh(identity, submission_id=submission_id)
             if not result.get("success"):
@@ -151,6 +156,13 @@ def register_handlers(agent_app: Any) -> None:
         card_action = extract_card_action(activity)
         if card_action and card_action["action"] == "add_to_staff_roster":
             await handle_staff_roster_card_action(context, card_action)
+            return
+        if card_action and card_action["action"] in {"record_separation", "update_leave_start", "update_leave_end"}:
+            if await card_action_already_completed(card_action):
+                await refresh_card_from_context(context, card_action)
+                await context.send_activity(already_completed_message(card_action))
+                return
+            await handle_separation_card_action(context, card_action)
             return
         if card_action and card_action["action"] in {"send_onboarding_email", "create_docusign_draft", "send_docusign"}:
             if await card_action_already_completed(card_action):

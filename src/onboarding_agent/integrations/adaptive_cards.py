@@ -267,6 +267,97 @@ def background_clearance_card(
     }
 
 
+def separation_card(
+    employee_name: str,
+    employee_email: str,
+    summary: str,
+    submission_id: str = "",
+    title: str = "",
+    status_change: str = "",
+    requested_start_date: str = "",
+    job_title: str = "",
+    work_location: str = "",
+    requesting_manager: str = "",
+    action_name: str = "",
+    action_label: str = "",
+    action_completed_label: str = "",
+    action_completed: bool = False,
+    job_category: str = "",
+) -> dict[str, Any]:
+    """Card sent when a separation-category webhook triggers the pipeline."""
+    card_title = title or f"{status_change or 'Submission'} Requested"
+    formatted_date = format_date(requested_start_date) or requested_start_date
+    identity = dict(
+        employee_email=employee_email,
+        submission_id=submission_id,
+        work_location=work_location,
+        job_title=job_title,
+        status_change=status_change,
+    )
+
+    body: list[dict[str, Any]] = [
+        {
+            "type": "ColumnSet",
+            "columns": [
+                {"type": "Column", "width": "auto", "items": [{"type": "TextBlock", "text": "\U0001f4cb", "size": "Large"}]},
+                {
+                    "type": "Column",
+                    "width": "stretch",
+                    "items": [
+                        {"type": "TextBlock", "text": card_title, "weight": "Bolder", "size": "Medium", "wrap": True},
+                        {"type": "TextBlock", "text": f"{employee_name} ({employee_email})", "spacing": "None", "isSubtle": True, "wrap": True},
+                    ],
+                },
+            ],
+        },
+        {"type": "TextBlock", "text": " ", "separator": True},
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Effective Date", "value": formatted_date or "TBD"},
+                {"title": "Status Change", "value": status_change or "N/A"},
+                {"title": "Job Title", "value": job_title or "N/A"},
+                {"title": "Work Location", "value": work_location or "N/A"},
+                {"title": "Requesting Manager", "value": requesting_manager or "N/A"},
+                {"title": "Staff Name", "value": employee_name or "N/A"},
+                {"title": "Staff Email", "value": employee_email or "N/A"},
+            ],
+        },
+        {"type": "TextBlock", "text": " ", "separator": True},
+        {"type": "TextBlock", "text": summary, "wrap": True},
+    ]
+
+    actions: list[dict[str, Any]] = []
+    if action_name:
+        if action_name == "add_to_staff_roster":
+            body.extend([
+                {"type": "TextBlock", "text": " ", "separator": True},
+                {
+                    "type": "Input.Text",
+                    "id": "job_category",
+                    "label": "Staff roster job category",
+                    "placeholder": "Enter the exact Group/category value",
+                    "value": job_category,
+                    "isRequired": not action_completed,
+                },
+            ])
+        actions.append(_action_button(
+            action_name,
+            action_label or "Process",
+            action_completed_label or "\u2713 Processed",
+            action_completed,
+            **identity,
+        ))
+
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": body,
+        "actions": actions,
+    }
+
+
 def generic_notification_card(title: str, message: str) -> dict[str, Any]:
     """Fallback card for general notifications."""
     return {

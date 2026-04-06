@@ -827,6 +827,91 @@ class StaffRosterClient(WorkbookGraphClient):
                 "error": str(exc),
             }
 
+    async def update_employee_leave_status(
+        self,
+        employee_email: str,
+        *,
+        location: str,
+        status: str,
+        note: str = "",
+        job_category: str = "",
+        job_title: str = "",
+        status_change: str = "",
+        submission_id: str = "",
+    ) -> dict[str, Any]:
+        """Update the status and notes columns on an existing roster row."""
+        try:
+            employee = await TrackerClient().resolve_employee_relaxed(
+                employee_email,
+                location=location,
+                job_title=job_title,
+                status_change=status_change,
+                submission_id=submission_id,
+            )
+
+            workbook = self._staff_roster_workbook(location)
+            roster_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["roster_sheet_name"],
+            )
+            if not roster_rows:
+                return {"success": False, "employee_email": employee_email, "location": location, "error": "Roster sheet is empty"}
+
+            roster_aliases = {**ROSTER_REQUIRED_ALIASES, **ROSTER_OPTIONAL_ALIASES}
+            roster_header = _header_map(roster_rows[0], roster_aliases)
+
+            match = await self.find_employee_in_staff_roster(
+                employee_email,
+                location=location,
+                job_category=job_category,
+                personal_email=employee_email,
+                employee_name=str(employee.get("name", "") or "") if employee.get("found") else "",
+                position=str(employee.get("position", "") or employee.get("job_title", "") or "") if employee.get("found") else "",
+            )
+            if not match.get("found"):
+                return {
+                    "success": False,
+                    "employee_email": employee_email,
+                    "location": location,
+                    "error": str(match.get("error", f"{employee_email} is not in the staff roster")),
+                }
+
+            row_id = int(str(match.get("row_id", "0") or "0"))
+            if row_id <= 1:
+                return {"success": False, "employee_email": employee_email, "location": location, "error": "Resolved roster row is invalid"}
+
+            current_row = list(roster_rows[row_id - 1])
+            row_width = max(len(roster_rows[0]), max(roster_header.values()) + 1)
+            while len(current_row) < row_width:
+                current_row.append("")
+
+            if "status" in roster_header:
+                current_row[roster_header["status"]] = status
+            if "notes" in roster_header and note:
+                existing = str(current_row[roster_header["notes"]] or "").strip()
+                current_row[roster_header["notes"]] = f"{existing}; {note}".lstrip("; ") if existing else note
+
+            range_address = f"A{row_id}:{_column_letter(row_width - 1)}{row_id}"
+            await self._graph_workbook_request(
+                "PATCH",
+                f"/worksheets/{quote(workbook['roster_sheet_name'])}/range(address='{quote(range_address)}')",
+                {"values": [current_row]},
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+            )
+
+            return {
+                "success": True,
+                "employee_email": employee_email,
+                "location": location,
+                "status": status,
+                "employee_name": str(match.get("employee_name", "") or ""),
+            }
+        except Exception as exc:
+            logger.exception("update_employee_leave_status failed")
+            return {"success": False, "employee_email": employee_email, "location": location, "error": str(exc)}
+
     async def update_employee_in_staff_roster(
         self,
         employee_email: str,

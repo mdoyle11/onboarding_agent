@@ -8,6 +8,7 @@ from onboarding_agent.config import settings
 from onboarding_agent.mcp_server.tools_docusign import register as register_docusign
 from onboarding_agent.mcp_server.tools_email import register as register_email
 from onboarding_agent.mcp_server.tools_onboarding import register as register_onboarding
+from onboarding_agent.mcp_server.tools_separations import register as register_separations
 from onboarding_agent.mcp_server.tools_staff_roster import register as register_staff_roster
 from onboarding_agent.mcp_server.tools_teams import register as register_teams
 from onboarding_agent.mcp_server.tools_tracker import register as register_tracker
@@ -34,7 +35,7 @@ mcp = FastMCP(
     name="onboarding-tools",
     instructions=(
         "Tools for HR onboarding: Microsoft Graph Excel tracker, "
-        "staff roster capacity and roster CRUD, "
+        "staff roster capacity and roster CRUD, separations sheet, "
         "DocuSign (draft, send, status), Outlook email (draft, send), and "
         "Teams notifications. "
         "Use get_onboarding_status for composite queries."
@@ -47,6 +48,7 @@ register_staff_roster(mcp)
 register_docusign(mcp)
 register_email(mcp)
 register_teams(mcp)
+register_separations(mcp)
 register_onboarding(mcp)
 
 
