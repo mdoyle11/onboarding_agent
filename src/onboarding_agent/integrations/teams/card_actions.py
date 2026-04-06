@@ -133,6 +133,8 @@ def already_completed_message(card_action: dict[str, str]) -> str:
         return f"Staff roster was already updated for {card_action['employee_email']}."
     if card_action["action"] == "create_docusign_draft":
         return f"Offer letter draft was already created for {card_action['employee_email']}."
+    if card_action["action"] == "refresh_review_link":
+        return f"Review link was already refreshed for {card_action['employee_email']}."
     return f"Offer letter was already sent for {card_action['employee_email']}."
 
 
@@ -510,6 +512,62 @@ async def _run_new_hire_card_action(card_action: dict[str, str]) -> dict[str, An
             await refresh_docusign_status_card(identity, submission_id=submission_id)
         return result
 
+    if action == "refresh_review_link":
+        from onboarding_agent.integrations.docusign_client import DocuSignClient
+
+        submission_id = action_submission_id or await _submission_id_for_identity(identity)
+        docusign_card = await get_docusign_status_card(identity, submission_id=submission_id)
+        if not docusign_card:
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "error": f"No stored DocuSign status card found for {identity.email}.",
+            }
+
+        envelope_id = str(docusign_card.get("envelope_id", "") or "").strip()
+        if not envelope_id:
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "error": f"No DocuSign envelope is stored for {identity.email}.",
+            }
+
+        review_result = await DocuSignClient().create_envelope_edit_view(envelope_id)
+        review_url = str(review_result.get("url", "") or "").strip()
+        if not review_result.get("success") or not review_url:
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "error": (
+                    f"Unable to refresh the review link for {identity.email}: "
+                    f"{review_result.get('error', 'missing edit view URL')}"
+                ),
+            }
+
+        await save_docusign_status_card(
+            employee_email=identity.email,
+            employee_name=str(docusign_card.get("employee_name", "") or identity.email),
+            channel_id=docusign_card.get("channel_id", ""),
+            message_id=docusign_card.get("message_id", ""),
+            envelope_id=envelope_id,
+            status=str(docusign_card.get("status", "") or "created"),
+            summary=str(docusign_card.get("summary", "") or ""),
+            submission_id=str(docusign_card.get("submission_id", "") or submission_id or ""),
+            work_location=str(docusign_card.get("work_location", "") or identity.work_location or ""),
+            job_title=str(docusign_card.get("job_title", "") or identity.job_title or ""),
+            status_change=str(docusign_card.get("status_change", "") or identity.status_change or ""),
+            roster_added=bool(docusign_card.get("roster_added", False)),
+            job_category=str(docusign_card.get("job_category", "") or ""),
+            review_url=review_url,
+            allow_send_action=bool(docusign_card.get("allow_send_action", False)),
+        )
+        return {
+            "success": True,
+            "employee_email": identity.email,
+            "envelope_id": envelope_id,
+            "review_url": review_url,
+        }
+
     return {"success": False, "employee_email": identity.email, "error": f"Unsupported card action: {action}"}
 
 
@@ -534,6 +592,10 @@ async def execute_new_hire_card_action_without_context(card_action: dict[str, st
                 identity.email,
                 refresh_result.get("error", "unknown error"),
             )
+    elif card_action["action"] == "refresh_review_link":
+        refresh_result = await refresh_docusign_status_card(identity, submission_id=submission_id)
+        if not refresh_result.get("success"):
+            return False
 
     warning = str(result.get("warning", "") or "").strip()
     if warning:
@@ -556,11 +618,12 @@ async def notify_card_action_failure(card_action: dict[str, str]) -> None:
     action_labels = {
         "send_onboarding_email": "send the welcome email",
         "create_docusign_draft": "create the offer letter draft",
+        "refresh_review_link": "refresh the review link",
         "send_docusign": "send the offer letter",
         "add_to_staff_roster": "add the employee to the staff roster",
     }
     action_label = action_labels.get(card_action["action"], "complete the requested action")
-    if card_action["action"] == "create_docusign_draft":
+    if card_action["action"] in {"create_docusign_draft", "refresh_review_link"}:
         message = (
             f"The draft action could not refresh the original card for {identity.email}. "
             "Reply `Create the offer draft` to run the draft workflow directly."
@@ -576,11 +639,11 @@ async def notify_card_action_failure(card_action: dict[str, str]) -> None:
 async def refresh_card_from_context(context: TurnContext, card_action: dict[str, str]) -> bool:
     identity = _identity_from_action(card_action)
     submission_id = str(card_action.get("submission_id", "") or "").strip()
-    if card_action["action"] in {"add_to_staff_roster", "send_docusign", "create_docusign_draft"}:
+    if card_action["action"] in {"add_to_staff_roster", "send_docusign", "create_docusign_draft", "refresh_review_link"}:
         card = await get_docusign_status_card(identity, submission_id=submission_id)
         if card:
             return await _update_docusign_status_card(context, card)
-        if card_action["action"] != "create_docusign_draft":
+        if card_action["action"] not in {"create_docusign_draft", "refresh_review_link"}:
             return False
     card = await get_new_hire_card(identity, submission_id=submission_id)
     if not card:

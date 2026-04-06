@@ -180,6 +180,21 @@ def docusign_status_card(
             }
         )
 
+    if status.lower() == "created":
+        actions.append(
+            _action_button(
+                "refresh_review_link",
+                "Refresh Review Link",
+                "Refresh Review Link",
+                False,
+                employee_email=employee_email,
+                submission_id=submission_id,
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
+            )
+        )
+
     if status.lower() == "created" and allow_send_action:
         actions.append(
             _action_button(

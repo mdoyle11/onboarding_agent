@@ -74,6 +74,29 @@ def test_completed_docusign_card_includes_staff_roster_action():
     assert roster_action["data"]["job_title"] == "Teacher"
 
 
+def test_created_docusign_card_includes_refresh_review_link_action():
+    card = docusign_status_card(
+        employee_email="alice@example.com",
+        envelope_id="env-123",
+        status="created",
+        summary="Draft ready.",
+        submission_id="sub-123",
+        employee_name="Alice Example",
+        work_location="Bronx",
+        job_title="Teacher",
+        status_change="New Hire",
+        review_url="https://review.example.com/env-123",
+        allow_send_action=True,
+    )
+
+    action_data = {action["title"]: action for action in card["actions"]}
+    assert "Review Offer Letter Draft" in action_data
+    assert "Refresh Review Link" in action_data
+    assert "Send Offer Letter" in action_data
+    assert action_data["Refresh Review Link"]["data"]["submission_id"] == "sub-123"
+    assert action_data["Refresh Review Link"]["data"]["work_location"] == "Bronx"
+
+
 def test_new_hire_card_actions_include_composite_identity():
     card = new_hire_card(
         employee_name="Alice Example",
@@ -469,6 +492,52 @@ async def test_execute_new_hire_card_action_sends_existing_docusign_reply_card()
     assert result is True
     docusign.send_envelope.assert_awaited_once_with("env-456")
     save_card.assert_awaited_once()
+    refresh_card.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_new_hire_card_action_refreshes_review_link_on_docusign_card():
+    card_action = {
+        "action": "refresh_review_link",
+        "employee_email": "alice@example.com",
+        "submission_id": "sub-123",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+    }
+    docusign = AsyncMock()
+    docusign.create_envelope_edit_view.return_value = {
+        "success": True,
+        "url": "https://review.example.com/env-456?refresh=1",
+    }
+    docusign_card = {
+        "channel_id": "channel-1",
+        "message_id": "reply-msg",
+        "employee_name": "Alice Example",
+        "envelope_id": "env-456",
+        "status": "created",
+        "summary": "Draft ready.",
+        "submission_id": "sub-123",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+        "review_url": "https://review.example.com/env-456",
+        "allow_send_action": True,
+    }
+
+    with (
+        patch("onboarding_agent.integrations.teams.card_actions.get_docusign_status_card", new=AsyncMock(return_value=docusign_card)),
+        patch("onboarding_agent.integrations.teams.card_actions.save_docusign_status_card", new=AsyncMock()) as save_card,
+        patch("onboarding_agent.integrations.teams.card_actions.refresh_docusign_status_card", new=AsyncMock(return_value={"success": True})) as refresh_card,
+        patch("onboarding_agent.integrations.teams.card_actions.DocuSignClient", create=True),
+        patch("onboarding_agent.integrations.docusign_client.DocuSignClient", return_value=docusign),
+    ):
+        result = await execute_new_hire_card_action_without_context(card_action)
+
+    assert result is True
+    docusign.create_envelope_edit_view.assert_awaited_once_with("env-456")
+    save_card.assert_awaited_once()
+    assert save_card.await_args.kwargs["review_url"] == "https://review.example.com/env-456?refresh=1"
     refresh_card.assert_awaited_once()
 
 

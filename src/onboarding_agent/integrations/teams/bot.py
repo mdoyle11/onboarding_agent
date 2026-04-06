@@ -152,7 +152,7 @@ def register_handlers(agent_app: Any) -> None:
         if card_action and card_action["action"] == "add_to_staff_roster":
             await handle_staff_roster_card_action(context, card_action)
             return
-        if card_action and card_action["action"] in {"send_onboarding_email", "create_docusign_draft", "send_docusign"}:
+        if card_action and card_action["action"] in {"send_onboarding_email", "create_docusign_draft", "refresh_review_link", "send_docusign"}:
             if await card_action_already_completed(card_action):
                 await refresh_card_from_context(context, card_action)
                 await context.send_activity(already_completed_message(card_action))
