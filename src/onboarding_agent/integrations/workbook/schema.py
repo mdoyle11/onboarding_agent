@@ -102,3 +102,39 @@ CAPACITY_ALIASES = {
     "group": {"group", "job category", "category"},
     "capacity": {"capacity", "max capacity", "maxcapacity"},
 }
+
+SEPARATIONS_REQUIRED_ALIASES = {
+    "name": {"employee name", "name"},
+    "email": {"employee email", "work email", "email"},
+}
+
+SEPARATIONS_OPTIONAL_ALIASES = {
+    "employee_id": {"employee id", "employeeid"},
+    "group": {"group", "job category", "category"},
+    "position": {"position"},
+    "grade_level": {"grade level", "gradelevel"},
+    "subject": {"subject"},
+    "supplements": {"supplements"},
+    "talent": {"talent"},
+    "background_eligibility": {"background eligibility", "backgroundeligibility"},
+    "date_approved": {"date approved", "dateapproved"},
+    "license": {"license", "license #", "license#"},
+    "personal_email": {"personal email", "personalemail", "personal e-mail"},
+    "nine_cell": {"9-cell", "9 cell", "9cell"},
+    "notes": {"notes"},
+    "location": {"location"},
+    "status": {"status"},
+    "nti_culture": {"nti culture"},
+    "nti_content": {"nti content"},
+    "mupd_culture": {"mupd culture"},
+    "mupd_content": {"mupd content"},
+    "rt_boy_pd_content": {"rt boy pd content", "rt boy pd content ", "rt boy pd content\t"},
+    "cc_1": {"cc 1", "cc1"},
+    "cc_2": {"cc 2", "cc2"},
+    "cc_3": {"cc 3", "cc3"},
+    "start_date": {"start date", "startdate"},
+    "manager_email": {"manager email", "manageremail"},
+    "separation_type": {"separation type", "change type", "status change"},
+    "separation_date": {"separation date", "effective date"},
+    "date_processed": {"date processed", "processed date"},
+}

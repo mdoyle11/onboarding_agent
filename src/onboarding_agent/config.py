@@ -51,13 +51,15 @@ class Settings(BaseSettings):
     #     "drive_id": "...",
     #     "item_id": "...",
     #     "roster_sheet_name": "Roster_Data",
-    #     "capacity_sheet_name": "Capacity"
+    #     "capacity_sheet_name": "Capacity",
+    #     "separations_sheet_name": "Separations"
     #   }
     # }
     staff_roster_locations_file: str = ""
     staff_roster_locations_json: str = "{}"
     staff_roster_default_sheet_name: str = "Roster_Data"
     staff_roster_default_capacity_sheet_name: str = "Capacity"
+    staff_roster_default_separations_sheet_name: str = "Separations"
 
     # ---------------------------------------------------------------------------
     # DocuSign (JWT Grant — server-to-server)
@@ -151,6 +153,10 @@ class Settings(BaseSettings):
                 "capacity_sheet_name": str(
                     raw_value.get("capacity_sheet_name", self.staff_roster_default_capacity_sheet_name)
                     or self.staff_roster_default_capacity_sheet_name
+                ),
+                "separations_sheet_name": str(
+                    raw_value.get("separations_sheet_name", self.staff_roster_default_separations_sheet_name)
+                    or self.staff_roster_default_separations_sheet_name
                 ),
             }
             normalized[key] = value

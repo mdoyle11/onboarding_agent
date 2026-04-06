@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 NS_NEW_HIRE = "new_hire_card"
 NS_DOCUSIGN = "docusign_card"
+NS_SEPARATION = "separation_card"
 _CARD_STATE_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
@@ -415,6 +416,107 @@ async def refresh_docusign_status_card(identity: EmployeeIdentity, submission_id
         status_change=card.get("status_change", ""),
         review_url=card.get("review_url", ""),
         allow_send_action=bool(card.get("allow_send_action", False)),
+    )
+    return await update_proactive_card(
+        channel_id=card.get("channel_id", ""),
+        message_id=card.get("message_id", ""),
+        card=updated_card,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Separation card state
+# ---------------------------------------------------------------------------
+
+
+async def save_separation_card(
+    *,
+    employee_email: str,
+    channel_id: str,
+    message_id: str,
+    submission_id: str = "",
+    employee_name: str,
+    title: str = "",
+    status_change: str = "",
+    requested_start_date: str = "",
+    job_title: str = "",
+    work_location: str = "",
+    requesting_manager: str = "",
+    summary: str = "",
+    action_name: str = "",
+    action_label: str = "",
+    action_completed_label: str = "",
+    action_completed: bool = False,
+    job_category: str = "",
+) -> None:
+    key = _card_key(employee_email, work_location, job_title, status_change)
+    await _store().put(NS_SEPARATION, key, _card_record({
+        "channel_id": channel_id,
+        "message_id": message_id,
+        "submission_id": submission_id,
+        "employee_name": employee_name,
+        "employee_email": employee_email,
+        "title": title,
+        "status_change": status_change,
+        "requested_start_date": requested_start_date,
+        "job_title": job_title,
+        "work_location": work_location,
+        "requesting_manager": requesting_manager,
+        "summary": summary,
+        "action_name": action_name,
+        "action_label": action_label,
+        "action_completed_label": action_completed_label,
+        "action_completed": action_completed,
+        "job_category": job_category,
+    }))
+
+
+async def get_separation_card(identity: EmployeeIdentity, submission_id: str = "") -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_SEPARATION, identity, submission_id=submission_id)
+    if key is None:
+        return None
+    return await _store().get(NS_SEPARATION, key)
+
+
+async def mark_separation_action_complete(
+    identity: EmployeeIdentity,
+    submission_id: str = "",
+) -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_SEPARATION, identity, submission_id=submission_id)
+    if key is None:
+        return None
+    card = await _store().get(NS_SEPARATION, key)
+    if card is None:
+        return None
+    card["action_completed"] = True
+    await _store().put(NS_SEPARATION, key, _card_record(card))
+    return card
+
+
+async def refresh_separation_card(identity: EmployeeIdentity, submission_id: str = "") -> dict[str, Any]:
+    from onboarding_agent.integrations.adaptive_cards import separation_card
+    from onboarding_agent.integrations.teams.proactive import update_proactive_card
+
+    key, card = await _get_card_and_key(NS_SEPARATION, identity, submission_id=submission_id)
+    if card is None or key is None:
+        return {"success": False, "error": f"No stored separation card state for {identity.email}"}
+
+    updated_card = separation_card(
+        employee_name=card.get("employee_name", ""),
+        employee_email=card.get("employee_email", ""),
+        summary=card.get("summary", ""),
+        submission_id=card.get("submission_id", ""),
+        title=card.get("title", ""),
+        status_change=card.get("status_change", ""),
+        requested_start_date=card.get("requested_start_date", ""),
+        job_title=card.get("job_title", ""),
+        work_location=card.get("work_location", ""),
+        requesting_manager=card.get("requesting_manager", ""),
+        action_name=card.get("action_name", ""),
+        action_label=card.get("action_label", ""),
+        action_completed_label=card.get("action_completed_label", ""),
+        action_completed=bool(card.get("action_completed")),
+        job_category=card.get("job_category", ""),
     )
     return await update_proactive_card(
         channel_id=card.get("channel_id", ""),

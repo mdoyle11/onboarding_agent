@@ -10,9 +10,14 @@ from typing import Any
 from onboarding_agent.config import settings
 from onboarding_agent.domain.identity import EmployeeIdentity
 from onboarding_agent.domain.onboard.policies import (
+    WORKFLOW_LEAVE_START,
     WORKFLOW_NEW_HIRE,
     WORKFLOW_REHIRE,
+    WORKFLOW_SECOND_POSITION,
     excluded_stages_for,
+    is_leave_workflow,
+    is_separation_workflow,
+    is_separations_sheet_workflow,
     normalize_workflow_type,
 )
 from onboarding_agent.integrations.card_state import (
@@ -20,6 +25,7 @@ from onboarding_agent.integrations.card_state import (
     reset_new_hire_card_actions,
     save_docusign_status_card,
     save_new_hire_card,
+    save_separation_card,
 )
 from onboarding_agent.integrations.docusign_client import DocuSignClient
 from onboarding_agent.integrations.teams.messenger import TeamsMessenger
@@ -255,6 +261,9 @@ async def process_new_hire_job(payload: dict[str, Any]) -> None:
     if workflow_type == WORKFLOW_NEW_HIRE:
         await _process_new_hire_submission(payload)
         return
+    if is_separation_workflow(workflow_type):
+        await _process_separation_submission(payload, workflow_type)
+        return
     await _process_non_new_hire_submission(payload, workflow_type)
 
 
@@ -376,6 +385,160 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
     except Exception:
         logger.exception("Queued %s job failed for %s", workflow_type, employee_email or "unknown")
         raise
+
+
+async def _process_separation_submission(payload: dict[str, Any], workflow_type: str) -> None:
+    """Handle separation-category workflows deterministically (no LLM)."""
+    started = time.perf_counter()
+    tracker_client = TrackerClient()
+    teams_messenger = TeamsMessenger()
+    fields = _new_hire_fields(payload)
+
+    employee_email = fields["staff_email"].strip()
+    employee_name = fields["staff_name"].strip()
+    _require_composite_identity(fields, label="Separation")
+
+    workflow_label = workflow_type.replace("_", " ").title()
+    try:
+        tracker_text = await _ensure_tracker_record(tracker_client, fields)
+
+        excluded_stages = excluded_stages_for(workflow_type)
+        policy_text = ""
+        if excluded_stages:
+            stage_results: list[str] = []
+            for stage_name in excluded_stages:
+                stage_result = await tracker_client.update_stage(
+                    employee_email,
+                    stage_name,
+                    value="N/A",
+                    location=fields["work_location"],
+                    job_title=fields["job_title"],
+                    status_change=fields["status_change"],
+                    submission_id=fields["submission_id"],
+                )
+                if stage_result.get("success"):
+                    stage_results.append(stage_name)
+            if stage_results:
+                policy_text = (
+                    f" {workflow_label} workflow applied: marked non-applicable stages as N/A: "
+                    + ", ".join(stage_results)
+                    + "."
+                )
+
+        # Determine action button for the card
+        if is_separations_sheet_workflow(workflow_type):
+            action_name = "record_separation"
+            action_label = "Record on Separations Sheet"
+            action_completed_label = "\u2713 Recorded on Separations Sheet"
+            instruction = "Record on the Separations sheet using the button below."
+        elif is_leave_workflow(workflow_type):
+            if workflow_type == WORKFLOW_LEAVE_START:
+                action_name = "update_leave_start"
+                action_label = "Mark On Leave"
+                action_completed_label = "\u2713 Marked On Leave"
+                instruction = "Update the staff roster leave status using the button below."
+            else:
+                action_name = "update_leave_end"
+                action_label = "Mark Active"
+                action_completed_label = "\u2713 Marked Active"
+                instruction = "Update the staff roster leave status using the button below."
+        elif workflow_type == WORKFLOW_SECOND_POSITION:
+            action_name = "add_to_staff_roster"
+            action_label = "Add to Staff Roster"
+            action_completed_label = "\u2713 Added to Staff Roster"
+            instruction = "Add the employee to the staff roster using the button below."
+        else:
+            action_name = ""
+            action_label = ""
+            action_completed_label = ""
+            instruction = ""
+
+        summary = (
+            f"{workflow_label} submission received for {employee_name or employee_email} "
+            f"({employee_email}). {tracker_text}{policy_text}"
+            f" {instruction} This workflow is running in deterministic mode."
+        )
+        await _send_separation_notification(
+            teams_messenger,
+            employee_email=employee_email,
+            employee_name=employee_name,
+            fields=fields,
+            summary=summary,
+            action_name=action_name,
+            action_label=action_label,
+            action_completed_label=action_completed_label,
+        )
+        logger.info(
+            "Processed queued %s job for %s in %.3fs",
+            workflow_type,
+            employee_email or "unknown",
+            time.perf_counter() - started,
+        )
+    except Exception:
+        logger.exception("Queued %s job failed for %s", workflow_type, employee_email or "unknown")
+        raise
+
+
+async def _send_separation_notification(
+    teams_messenger: TeamsMessenger,
+    *,
+    employee_email: str,
+    employee_name: str,
+    fields: dict[str, str],
+    summary: str,
+    action_name: str = "",
+    action_label: str = "",
+    action_completed_label: str = "",
+) -> None:
+    from onboarding_agent.integrations.adaptive_cards import separation_card
+
+    card = separation_card(
+        employee_name=employee_name or employee_email,
+        employee_email=employee_email,
+        summary=summary,
+        submission_id=fields["submission_id"],
+        title=_submission_card_title(fields["status_change"]),
+        status_change=fields["status_change"],
+        requested_start_date=fields["requested_start_date"],
+        job_title=fields["job_title"],
+        work_location=fields["work_location"],
+        requesting_manager=fields["requesting_manager"],
+        action_name=action_name,
+        action_label=action_label,
+        action_completed_label=action_completed_label,
+    )
+    teams_result = await _send_or_raise(
+        teams_messenger,
+        summary=summary,
+        card=card,
+        session_context=_employee_thread_context(
+            submission_id=fields["submission_id"],
+            employee_email=employee_email,
+            employee_name=employee_name or employee_email,
+            work_location=fields["work_location"],
+            job_title=fields["job_title"],
+            status_change=fields["status_change"],
+            intent="check_onboarding_status",
+        ),
+    )
+    if teams_result.get("message_id"):
+        await save_separation_card(
+            employee_email=employee_email,
+            channel_id=_notification_channel(),
+            message_id=str(teams_result["message_id"]),
+            submission_id=fields["submission_id"],
+            employee_name=employee_name or employee_email,
+            title=_submission_card_title(fields["status_change"]),
+            status_change=fields["status_change"],
+            requested_start_date=fields["requested_start_date"],
+            job_title=fields["job_title"],
+            work_location=fields["work_location"],
+            requesting_manager=fields["requesting_manager"],
+            summary=summary,
+            action_name=action_name,
+            action_label=action_label,
+            action_completed_label=action_completed_label,
+        )
 
 
 async def process_docusign_job(payload: dict[str, Any]) -> None:

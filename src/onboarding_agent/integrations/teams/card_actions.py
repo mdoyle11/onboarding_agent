@@ -9,14 +9,21 @@ from microsoft_agents.activity import Activity, Attachment
 from microsoft_agents.hosting.core import TurnContext
 
 from onboarding_agent.domain.identity import EmployeeIdentity
-from onboarding_agent.integrations.adaptive_cards import docusign_status_card, new_hire_card
+from onboarding_agent.integrations.adaptive_cards import (
+    docusign_status_card,
+    new_hire_card,
+    separation_card,
+)
 from onboarding_agent.integrations.card_state import (
     get_docusign_status_card,
     get_new_hire_card,
+    get_separation_card,
     mark_docusign_roster_complete,
     mark_new_hire_action_complete,
+    mark_separation_action_complete,
     refresh_docusign_status_card,
     refresh_new_hire_card,
+    refresh_separation_card,
     save_docusign_status_card,
 )
 from onboarding_agent.integrations.teams.proactive import send_proactive_message
@@ -123,6 +130,9 @@ async def card_action_already_completed(card_action: dict[str, str] | None) -> b
             position=str(employee.get("position", "") or employee.get("job_title", "") or ""),
         )
         return bool(membership.get("found"))
+    if card_action["action"] in {"record_separation", "update_leave_start", "update_leave_end"}:
+        sep_card = await get_separation_card(identity, submission_id=submission_id)
+        return bool(sep_card and sep_card.get("action_completed"))
     return False
 
 
@@ -135,6 +145,10 @@ def already_completed_message(card_action: dict[str, str]) -> str:
         return f"Offer letter draft was already created for {card_action['employee_email']}."
     if card_action["action"] == "refresh_review_link":
         return f"Review link was already refreshed for {card_action['employee_email']}."
+    if card_action["action"] == "record_separation":
+        return f"Separation was already recorded for {card_action['employee_email']}."
+    if card_action["action"] in {"update_leave_start", "update_leave_end"}:
+        return f"Leave status was already updated for {card_action['employee_email']}."
     return f"Offer letter was already sent for {card_action['employee_email']}."
 
 
@@ -235,6 +249,121 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
         logger.exception("Staff roster card action failed")
         await context.send_activity(
             f"Staff roster update failed for {identity.email} as {job_category}. {exc}"
+        )
+
+
+async def handle_separation_card_action(context: TurnContext, card_action: dict[str, str]) -> None:
+    """Handle record_separation, update_leave_start, and update_leave_end card actions."""
+    identity = _identity_from_action(card_action)
+    action = card_action["action"]
+    submission_id = str(card_action.get("submission_id", "") or "").strip()
+
+    try:
+        from onboarding_agent.integrations.workbook.separations_client import SeparationsClient
+        from onboarding_agent.integrations.workbook.staff_roster_client import StaffRosterClient
+        from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
+        tracker_client = TrackerClient()
+        staff_roster_client = StaffRosterClient()
+
+        if action == "record_separation":
+            # Find employee in roster to copy data
+            roster_result = await staff_roster_client.find_employee_in_staff_roster(
+                identity.email,
+                location=identity.work_location,
+            )
+            roster_data = roster_result if roster_result.get("found") else None
+
+            # Add to separations sheet
+            sep_result = await SeparationsClient().add_separation_record(
+                identity.email,
+                location=identity.work_location,
+                employee_name=str((roster_data or {}).get("employee_name", "") or ""),
+                status_change=identity.status_change,
+                job_title=identity.job_title,
+                job_category=str((roster_data or {}).get("job_category", "") or ""),
+                roster_data=roster_data,
+            )
+
+            if not sep_result.get("success"):
+                await context.send_activity(
+                    f"Failed to record separation for {identity.email}: {sep_result.get('error', 'unknown error')}"
+                )
+                return
+
+            # Remove from staff roster
+            removal_summary = ""
+            if roster_data and not sep_result.get("already_exists"):
+                remove_result = await staff_roster_client.remove_employee_from_staff_roster(
+                    identity.email,
+                    location=identity.work_location,
+                    job_title=identity.job_title,
+                    status_change=identity.status_change,
+                    submission_id=submission_id,
+                )
+                if remove_result.get("success"):
+                    removal_summary = f" Removed from Staff Roster ({identity.work_location})."
+                else:
+                    removal_summary = f" Staff Roster removal failed: {remove_result.get('error', 'unknown')}."
+
+            # Mark tracker stage complete
+            await tracker_client.update_stage(
+                identity.email,
+                "Added to Staff Roster",
+                location=identity.work_location,
+                job_title=identity.job_title,
+                status_change=identity.status_change,
+                submission_id=submission_id,
+            )
+
+            await mark_separation_action_complete(identity, submission_id=submission_id)
+            await refresh_separation_card(identity, submission_id=submission_id)
+            await context.send_activity(
+                f"Separation recorded for {identity.email} at {identity.work_location or 'the selected location'}.{removal_summary}"
+            )
+
+        elif action in {"update_leave_start", "update_leave_end"}:
+            status = "On Leave" if action == "update_leave_start" else "Active"
+            note_prefix = "Leave started" if action == "update_leave_start" else "Leave ended"
+
+            result = await staff_roster_client.update_employee_leave_status(
+                identity.email,
+                location=identity.work_location,
+                status=status,
+                note=note_prefix,
+                job_title=identity.job_title,
+                status_change=identity.status_change,
+                submission_id=submission_id,
+            )
+
+            if not result.get("success"):
+                await context.send_activity(
+                    f"Leave status update failed for {identity.email}: {result.get('error', 'unknown error')}"
+                )
+                return
+
+            await tracker_client.update_stage(
+                identity.email,
+                "Added to Staff Roster",
+                location=identity.work_location,
+                job_title=identity.job_title,
+                status_change=identity.status_change,
+                submission_id=submission_id,
+            )
+
+            await mark_separation_action_complete(identity, submission_id=submission_id)
+            await refresh_separation_card(identity, submission_id=submission_id)
+            await context.send_activity(
+                f"Leave status updated for {identity.email} at {identity.work_location or 'the selected location'}: {status}."
+            )
+
+        else:
+            await context.send_activity(f"Unknown separation action: {action}")
+
+    except Exception as exc:
+        logger.exception("Separation card action failed")
+        await context.send_activity(
+            f"Separation action failed for {identity.email}. {exc}"
         )
 
 
@@ -639,6 +768,11 @@ async def notify_card_action_failure(card_action: dict[str, str]) -> None:
 async def refresh_card_from_context(context: TurnContext, card_action: dict[str, str]) -> bool:
     identity = _identity_from_action(card_action)
     submission_id = str(card_action.get("submission_id", "") or "").strip()
+    if card_action["action"] in {"record_separation", "update_leave_start", "update_leave_end"}:
+        sep_card = await get_separation_card(identity, submission_id=submission_id)
+        if sep_card:
+            return await _update_separation_card(context, sep_card)
+        return False
     if card_action["action"] in {"add_to_staff_roster", "send_docusign", "create_docusign_draft", "refresh_review_link"}:
         card = await get_docusign_status_card(identity, submission_id=submission_id)
         if card:
@@ -715,3 +849,24 @@ async def _update_docusign_status_card(context: TurnContext, card: dict[str, Any
         allow_send_action=bool(card.get("allow_send_action", False)),
     )
     return await _update_card_via_context(context, card, updated, "DocuSign status")
+
+
+async def _update_separation_card(context: TurnContext, card: dict[str, Any]) -> bool:
+    updated = separation_card(
+        employee_name=card.get("employee_name", ""),
+        employee_email=card.get("employee_email", ""),
+        summary=card.get("summary", ""),
+        submission_id=card.get("submission_id", ""),
+        title=card.get("title", ""),
+        status_change=card.get("status_change", ""),
+        requested_start_date=card.get("requested_start_date", ""),
+        job_title=card.get("job_title", ""),
+        work_location=card.get("work_location", ""),
+        requesting_manager=card.get("requesting_manager", ""),
+        action_name=card.get("action_name", ""),
+        action_label=card.get("action_label", ""),
+        action_completed_label=card.get("action_completed_label", ""),
+        action_completed=bool(card.get("action_completed")),
+        job_category=card.get("job_category", ""),
+    )
+    return await _update_card_via_context(context, card, updated, "separation")
