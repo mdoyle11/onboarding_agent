@@ -114,6 +114,30 @@ def test_derive_session_context_uses_source_driven_employee_name_and_job_categor
     assert result["intent"] == "check_onboarding_status"
 
 
+def test_derive_session_context_preserves_separation_follow_up_identity() -> None:
+    messages = [
+        ToolMessage(
+            content=(
+                '{"success": false, "employee_email": "alice@example.com", "location": "Orange", '
+                '"job_category": "Support Staff", "job_title": "Teacher", '
+                '"status_change": "Separation", "submission_id": "sub-123"}'
+            ),
+            tool_call_id="1",
+            name="record_separation",
+        ),
+    ]
+
+    result = derive_session_context(messages)
+
+    assert result["employee_email"] == "alice@example.com"
+    assert result["work_location"] == "Orange"
+    assert result["job_category"] == "Support Staff"
+    assert result["job_title"] == "Teacher"
+    assert result["status_change"] == "Separation"
+    assert result["submission_id"] == "sub-123"
+    assert result["intent"] == "staff_roster"
+
+
 @pytest.mark.asyncio
 async def test_run_agent_returns_messages_when_no_tool_calls():
     mock_response = AIMessage(content="Done!")

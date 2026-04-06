@@ -10,6 +10,7 @@ from onboarding_agent.integrations.adaptive_cards import docusign_status_card, n
 from onboarding_agent.integrations.teams.card_actions import (
     card_action_already_completed,
     execute_new_hire_card_action_without_context,
+    handle_separation_card_action,
     handle_staff_roster_card_action,
     refresh_card_from_context,
 )
@@ -1332,3 +1333,148 @@ async def test_handle_staff_roster_card_action_marks_second_position_card_comple
     refresh_card.assert_awaited_once()
     context.send_activity.assert_awaited()
     assert "was added" in context.send_activity.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_handle_separation_card_action_prefers_roster_identity_and_personal_email() -> None:
+    context = AsyncMock()
+    card_action = {
+        "action": "record_separation",
+        "employee_email": "alice@example.com",
+        "submission_id": "sub-123",
+        "job_category": "",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "Separation",
+    }
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
+    tracker.update_stage.return_value = {"success": True}
+    staff_roster = AsyncMock()
+    staff_roster.find_employee_in_staff_roster.return_value = {
+        "found": True,
+        "employee_name": "Alice Example",
+        "employee_email": "",
+        "personal_email": "alice@example.com",
+        "job_category": "Teacher",
+        "position": "Teacher",
+    }
+    staff_roster.remove_employee_from_staff_roster.return_value = {"success": True}
+    separations_client = AsyncMock()
+    separations_client.add_separation_record.return_value = {"success": True, "action": "added"}
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.StaffRosterClient", return_value=staff_roster),
+        patch("onboarding_agent.integrations.workbook.separations_client.SeparationsClient", return_value=separations_client),
+        patch("onboarding_agent.integrations.teams.card_actions.mark_separation_action_complete", new=AsyncMock()),
+        patch("onboarding_agent.integrations.teams.card_actions.refresh_separation_card", new=AsyncMock()),
+    ):
+        await handle_separation_card_action(context, card_action)
+
+    staff_roster.find_employee_in_staff_roster.assert_awaited_once_with(
+        "alice@example.com",
+        location="Bronx",
+        job_category="",
+        personal_email="alice@example.com",
+        position="Teacher",
+    )
+    tracker.resolve_employee_relaxed.assert_not_awaited()
+    separations_client.add_separation_record.assert_awaited_once()
+    staff_roster.remove_employee_from_staff_roster.assert_awaited_once()
+    context.send_activity.assert_awaited()
+    assert "Separation recorded" in context.send_activity.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_handle_separation_card_action_does_not_create_partial_record_when_roster_match_is_missing() -> None:
+    context = AsyncMock()
+    card_action = {
+        "action": "record_separation",
+        "employee_email": "alice@example.com",
+        "submission_id": "sub-123",
+        "job_category": "",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "Separation",
+    }
+    tracker = AsyncMock()
+    staff_roster = AsyncMock()
+    staff_roster.find_employee_in_staff_roster.return_value = {"found": False}
+    staff_roster._resolve_roster_match.return_value = {"found": False}
+    separations_client = AsyncMock()
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.StaffRosterClient", return_value=staff_roster),
+        patch("onboarding_agent.integrations.workbook.separations_client.SeparationsClient", return_value=separations_client),
+    ):
+        await handle_separation_card_action(context, card_action)
+
+    tracker.resolve_employee_relaxed.assert_not_awaited()
+    separations_client.add_separation_record.assert_not_awaited()
+    staff_roster.remove_employee_from_staff_roster.assert_not_awaited()
+    context.send_activity.assert_awaited()
+    assert "No separation record was created" in context.send_activity.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_remove_employee_from_staff_roster_prefers_roster_group_and_position_before_tracker_fallback():
+    client = StaffRosterClient()
+    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_rows = [
+        roster_header,
+        ["Alice Example", "", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Totals", "", "", "Teacher", "", "Bronx"],
+    ]
+    graph = AsyncMock(return_value={})
+    tracker = AsyncMock()
+
+    with (
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(return_value=roster_rows),
+        ),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "find_employee_in_staff_roster",
+            new=AsyncMock(
+                side_effect=[
+                    {"found": True, "row_id": "2", "job_category": "Teacher", "position": "Teacher"},
+                    {"found": False},
+                ]
+            ),
+        ) as find_roster,
+        patch.object(client, "_graph_workbook_request", new=graph),
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.TrackerClient", return_value=tracker),
+    ):
+        result = await client.remove_employee_from_staff_roster(
+            "alice@example.com",
+            location="Bronx",
+            job_category="Teacher",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    assert result["success"] is True
+    tracker.resolve_employee_relaxed.assert_not_awaited()
+    first_lookup = find_roster.await_args_list[0]
+    assert first_lookup.args[0] == "alice@example.com"
+    assert first_lookup.kwargs["job_category"] == "Teacher"
+    assert first_lookup.kwargs["position"] == "Teacher"

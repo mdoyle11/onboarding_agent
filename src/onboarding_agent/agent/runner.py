@@ -53,6 +53,7 @@ For trigger_source=teams_query:
 - For staff-roster capacity questions, reuse work_location from session context when available instead of asking again.
 - Do not ask the user to repeat work_location, employee_email, employee_name, or job_category if they are already present in session context, unless the user is clearly changing them or a tool result indicates real ambiguity.
 - For staff-roster follow-ups, treat job_category from session context as the last referenced roster group when the user does not restate it.
+- Treat "Group", "category", and phrases like "Support Staff category" as the staff-roster `job_category` field when the user is clarifying which roster entry they mean.
 - Ask for clarification instead of guessing when duplicate tracker rows may exist, especially for offer-letter actions.
 """
 
@@ -211,6 +212,8 @@ def derive_session_context(
             "find_employee_in_staff_roster",
             "remove_employee_from_staff_roster",
             "update_employee_in_staff_roster",
+            "record_separation",
+            "update_leave_status",
         }:
             job_category = str(payload.get("job_category", "")).strip()
             if job_category:
@@ -218,9 +221,21 @@ def derive_session_context(
             work_location = str(payload.get("work_location") or payload.get("location") or "").strip()
             if work_location:
                 context["work_location"] = work_location
+            employee_email = str(payload.get("employee_email") or payload.get("email") or "").strip()
+            if employee_email:
+                context["employee_email"] = employee_email
             employee_name = str(payload.get("employee_name") or payload.get("name", "")).strip()
             if employee_name:
                 context["employee_name"] = employee_name
+            job_title = str(payload.get("job_title") or payload.get("position") or "").strip()
+            if job_title:
+                context["job_title"] = job_title
+            status_change = str(payload.get("status_change") or "").strip()
+            if status_change:
+                context["status_change"] = status_change
+            submission_id = str(payload.get("submission_id", "")).strip()
+            if submission_id:
+                context["submission_id"] = submission_id
             context["intent"] = "staff_roster"
 
     return context

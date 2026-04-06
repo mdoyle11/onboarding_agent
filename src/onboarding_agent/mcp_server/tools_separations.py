@@ -37,7 +37,18 @@ def register(mcp: FastMCP) -> None:
             employee_email,
             location=location,
             job_category=job_category,
+            personal_email=employee_email,
+            position=job_title,
         )
+        if not roster_result.get("found") and not roster_result.get("multiple_matches"):
+            roster_result = await roster_client._resolve_roster_match(
+                employee_email,
+                location=location,
+                job_category=job_category,
+                job_title=job_title,
+                status_change=status_change,
+                submission_id=submission_id,
+            )
         if roster_result.get("multiple_matches"):
             return {
                 "success": False,
@@ -56,7 +67,23 @@ def register(mcp: FastMCP) -> None:
                     "Please specify the exact group/job category or position."
                 ),
             }
-        roster_data = roster_result if roster_result.get("found") else None
+        if not roster_result.get("found"):
+            return {
+                "success": False,
+                "employee_email": employee_email,
+                "location": location,
+                "action": "failed",
+                "error": (
+                    f"Employee {employee_email} was not found in Staff Roster at {location}. "
+                    "No separation record was created."
+                ),
+                "summary": (
+                    f"Failed to record separation for {employee_email}: "
+                    f"Employee was not found in Staff Roster at {location}. "
+                    "No separation record was created."
+                ),
+            }
+        roster_data = roster_result
 
         sep_result = await _separations().add_separation_record(
             employee_email,
@@ -75,12 +102,6 @@ def register(mcp: FastMCP) -> None:
                 **sep_result,
                 "action": "failed",
                 "summary": f"Failed to record separation for {employee_email}: {sep_result.get('error', 'unknown error')}",
-            }
-
-        if sep_result.get("already_exists"):
-            return {
-                **sep_result,
-                "summary": f"Separation record already exists for {employee_email} at {location}.",
             }
 
         # Remove from Staff Roster
@@ -121,9 +142,14 @@ def register(mcp: FastMCP) -> None:
         if card is not None:
             await refresh_separation_card(identity, submission_id=submission_id)
 
+        summary_prefix = (
+            f"Separation record already existed for {employee_email} at {location}."
+            if sep_result.get("already_exists")
+            else f"Separation recorded for {employee_email} at {location}."
+        )
         return {
             **sep_result,
-            "summary": f"Separation recorded for {employee_email} at {location}.{removal_summary}",
+            "summary": f"{summary_prefix}{removal_summary}",
         }
 
     @mcp.tool()

@@ -293,8 +293,33 @@ async def handle_separation_card_action(context: TurnContext, card_action: dict[
             roster_result = await staff_roster_client.find_employee_in_staff_roster(
                 identity.email,
                 location=identity.work_location,
+                job_category=str(card_action.get("job_category", "") or ""),
+                personal_email=identity.email,
+                position=identity.job_title,
             )
-            roster_data = roster_result if roster_result.get("found") else None
+            if not roster_result.get("found") and not roster_result.get("multiple_matches"):
+                roster_result = await staff_roster_client._resolve_roster_match(
+                    identity.email,
+                    location=identity.work_location,
+                    job_category=str(card_action.get("job_category", "") or ""),
+                    job_title=identity.job_title,
+                    status_change=identity.status_change,
+                    submission_id=submission_id,
+                )
+            if roster_result.get("multiple_matches"):
+                await context.send_activity(
+                    "Multiple staff roster rows matched this employee. "
+                    "Please specify the exact group/job category or position."
+                )
+                return
+            if not roster_result.get("found"):
+                await context.send_activity(
+                    f"Failed to record separation for {identity.email}: "
+                    f"Employee was not found in Staff Roster at {identity.work_location or 'the selected location'}. "
+                    "No separation record was created."
+                )
+                return
+            roster_data = roster_result
 
             # Add to separations sheet
             sep_result = await SeparationsClient().add_separation_record(
@@ -313,9 +338,9 @@ async def handle_separation_card_action(context: TurnContext, card_action: dict[
                 )
                 return
 
-            # Remove from staff roster
+            # Remove from staff roster even if the separations entry already exists.
             removal_summary = ""
-            if roster_data and not sep_result.get("already_exists"):
+            if roster_data:
                 remove_result = await staff_roster_client.remove_employee_from_staff_roster(
                     identity.email,
                     location=identity.work_location,
@@ -340,8 +365,13 @@ async def handle_separation_card_action(context: TurnContext, card_action: dict[
 
             await mark_separation_action_complete(identity, submission_id=submission_id)
             await refresh_separation_card(identity, submission_id=submission_id)
+            summary_prefix = (
+                f"Separation record already existed for {identity.email} at {identity.work_location or 'the selected location'}."
+                if sep_result.get("already_exists")
+                else f"Separation recorded for {identity.email} at {identity.work_location or 'the selected location'}."
+            )
             await context.send_activity(
-                f"Separation recorded for {identity.email} at {identity.work_location or 'the selected location'}.{removal_summary}"
+                f"{summary_prefix}{removal_summary}"
             )
 
         elif action in {"update_leave_start", "update_leave_end"}:

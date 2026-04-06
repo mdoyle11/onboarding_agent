@@ -32,6 +32,10 @@ _ALL_ALIASES = {**SEPARATIONS_REQUIRED_ALIASES, **SEPARATIONS_OPTIONAL_ALIASES}
 class SeparationsClient(WorkbookGraphClient):
     """Append-only client for the Separations sheet in staff roster workbooks."""
 
+    @staticmethod
+    def _normalized(value: str) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
     async def add_separation_record(
         self,
         employee_email: str,
@@ -80,11 +84,25 @@ class SeparationsClient(WorkbookGraphClient):
                     "error": f"Separations sheet is missing required columns: {', '.join(missing)}",
                 }
 
-            # Duplicate check
+            incoming_email = self._normalized(employee_email)
+            incoming_personal_email = self._normalized(str((roster_data or {}).get("personal_email", "") or employee_email))
+            incoming_group = self._normalized(str((roster_data or {}).get("job_category", "") or job_category))
+            incoming_position = self._normalized(str((roster_data or {}).get("position", "") or job_title))
+
+            # Duplicate check: allow multiple separation records for the same
+            # employee when they refer to different roles/categories.
             for row in rows[1:]:
-                row_email = _cell(row, header.get("email")).lower()
-                row_type = _cell(row, header.get("separation_type")).lower()
-                if row_email == employee_email.strip().lower() and row_type == status_change.strip().lower():
+                row_email = self._normalized(_cell(row, header.get("email")))
+                row_personal_email = self._normalized(_cell(row, header.get("personal_email")))
+                row_type = self._normalized(_cell(row, header.get("separation_type")))
+                row_group = self._normalized(_cell(row, header.get("group")))
+                row_position = self._normalized(_cell(row, header.get("position")))
+                if (
+                    (row_email in {incoming_email, incoming_personal_email} or row_personal_email in {incoming_email, incoming_personal_email})
+                    and row_type == self._normalized(status_change)
+                    and row_group == incoming_group
+                    and row_position == incoming_position
+                ):
                     return {
                         "success": True,
                         "employee_email": employee_email,

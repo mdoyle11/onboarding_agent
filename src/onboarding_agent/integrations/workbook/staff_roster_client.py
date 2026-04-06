@@ -480,6 +480,49 @@ class StaffRosterClient(WorkbookGraphClient):
                 "error": str(exc),
             }
 
+    async def _resolve_roster_match(
+        self,
+        employee_email: str,
+        *,
+        location: str,
+        job_category: str = "",
+        job_title: str = "",
+        status_change: str = "",
+        submission_id: str = "",
+    ) -> dict[str, Any]:
+        """Resolve a roster row, preferring live roster identity over tracker identity."""
+        direct_match = await self.find_employee_in_staff_roster(
+            employee_email,
+            location=location,
+            job_category=job_category,
+            personal_email=employee_email,
+            position=job_title,
+        )
+        if direct_match.get("found") or direct_match.get("multiple_matches"):
+            return direct_match
+
+        employee = await TrackerClient().resolve_employee_relaxed(
+            employee_email,
+            location=location,
+            job_title=job_title,
+            status_change=status_change,
+            submission_id=submission_id,
+        )
+        if not employee.get("found"):
+            return direct_match
+
+        fallback_match = await self.find_employee_in_staff_roster(
+            employee_email,
+            location=location,
+            job_category=job_category,
+            personal_email=employee_email,
+            employee_name=str(employee.get("name", "") or ""),
+            position=str(employee.get("position", "") or employee.get("job_title", "") or job_title),
+        )
+        if fallback_match.get("found") or fallback_match.get("multiple_matches"):
+            return fallback_match
+        return direct_match
+
     async def add_employee_to_staff_roster(
         self,
         employee_email: str,
@@ -712,34 +755,6 @@ class StaffRosterClient(WorkbookGraphClient):
         submission_id: str = "",
     ) -> dict[str, Any]:
         try:
-            employee = await TrackerClient().resolve_employee_relaxed(
-                employee_email,
-                location=location,
-                job_title=job_title,
-                status_change=status_change,
-                submission_id=submission_id,
-            )
-            if not employee.get("found"):
-                matches = employee.get("matches", [])
-                if employee.get("multiple_matches") and isinstance(matches, list) and matches:
-                    return {
-                        "success": False,
-                        "employee_email": employee_email,
-                        "location": location,
-                        "multiple_matches": True,
-                        "matches": matches,
-                        "error": (
-                            f"Multiple onboarding tracker rows matched {employee_email}. "
-                            "Pass location, job_title, and status_change to disambiguate."
-                        ),
-                    }
-                return {
-                    "success": False,
-                    "employee_email": employee_email,
-                    "location": location,
-                    "error": f"Employee {employee_email} not found in onboarding tracker",
-                }
-
             workbook = self._staff_roster_workbook(location)
             roster_rows = await self._used_range_rows(
                 drive_id=workbook["drive_id"],
@@ -756,13 +771,13 @@ class StaffRosterClient(WorkbookGraphClient):
                 missing_list = ", ".join(missing)
                 return {"success": False, "error": f"Roster sheet is missing required columns: {missing_list}"}
 
-            match = await self.find_employee_in_staff_roster(
+            match = await self._resolve_roster_match(
                 employee_email,
                 location=location,
                 job_category=job_category,
-                personal_email=employee_email,
-                employee_name=str(employee.get("name", "") or ""),
-                position=str(employee.get("position", "") or employee.get("job_title", "") or ""),
+                job_title=job_title,
+                status_change=status_change,
+                submission_id=submission_id,
             )
             if not match.get("found"):
                 return {
@@ -770,6 +785,8 @@ class StaffRosterClient(WorkbookGraphClient):
                     "employee_email": employee_email,
                     "location": location,
                     "job_category": job_category,
+                    "multiple_matches": bool(match.get("multiple_matches", False)),
+                    "matches": match.get("matches", []),
                     "error": str(match.get("error", f"{employee_email} is not in the staff roster")),
                 }
 
@@ -797,8 +814,7 @@ class StaffRosterClient(WorkbookGraphClient):
                 location=location,
                 job_category=job_category or str(match.get("job_category", "") or ""),
                 personal_email=employee_email,
-                employee_name=str(employee.get("name", "") or ""),
-                position=str(employee.get("position", "") or employee.get("job_title", "") or ""),
+                position=job_title or str(match.get("position", "") or ""),
             )
             if refreshed.get("found"):
                 return {
@@ -840,14 +856,6 @@ class StaffRosterClient(WorkbookGraphClient):
     ) -> dict[str, Any]:
         """Update the status and notes columns on an existing roster row."""
         try:
-            employee = await TrackerClient().resolve_employee_relaxed(
-                employee_email,
-                location=location,
-                job_title=job_title,
-                status_change=status_change,
-                submission_id=submission_id,
-            )
-
             workbook = self._staff_roster_workbook(location)
             roster_rows = await self._used_range_rows(
                 drive_id=workbook["drive_id"],
@@ -860,13 +868,13 @@ class StaffRosterClient(WorkbookGraphClient):
             roster_aliases = {**ROSTER_REQUIRED_ALIASES, **ROSTER_OPTIONAL_ALIASES}
             roster_header = _header_map(roster_rows[0], roster_aliases)
 
-            match = await self.find_employee_in_staff_roster(
+            match = await self._resolve_roster_match(
                 employee_email,
                 location=location,
                 job_category=job_category,
-                personal_email=employee_email,
-                employee_name=str(employee.get("name", "") or "") if employee.get("found") else "",
-                position=str(employee.get("position", "") or employee.get("job_title", "") or "") if employee.get("found") else "",
+                job_title=job_title,
+                status_change=status_change,
+                submission_id=submission_id,
             )
             if not match.get("found"):
                 return {

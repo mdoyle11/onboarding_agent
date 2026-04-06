@@ -64,6 +64,13 @@ async def test_record_separation_surfaces_roster_multiple_matches() -> None:
             {"row_id": "11", "job_category": "Teacher Assistant", "position": "Teacher"},
         ],
     }
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
 
     mcp = FastMCP(name="test-separation-ambiguous")
     register(mcp)
@@ -71,7 +78,7 @@ async def test_record_separation_surfaces_roster_multiple_matches() -> None:
     with (
         patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
         patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=AsyncMock()),
-        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=AsyncMock()),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
     ):
         tool_fn = await _get_tool_fn(mcp, "record_separation")
         result = await tool_fn(
@@ -120,6 +127,163 @@ async def test_update_leave_status_surfaces_roster_multiple_matches() -> None:
     assert result["multiple_matches"] is True
     assert len(result["matches"]) == 2
     assert "Multiple staff roster rows matched this employee" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_record_separation_continues_when_separation_entry_already_exists() -> None:
+    from onboarding_agent.mcp_server.tools_separations import register
+
+    roster = AsyncMock()
+    roster.find_employee_in_staff_roster.return_value = {
+        "found": True,
+        "employee_name": "Alice Example",
+        "employee_email": "alice@company.org",
+        "personal_email": "alice@example.com",
+        "job_category": "Teacher",
+        "position": "Teacher",
+    }
+    roster.remove_employee_from_staff_roster.return_value = {"success": True}
+    separations = AsyncMock()
+    separations.add_separation_record.return_value = {
+        "success": True,
+        "already_exists": True,
+        "action": "already_exists",
+    }
+    tracker = AsyncMock()
+    tracker.update_stage.return_value = {"success": True}
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
+
+    mcp = FastMCP(name="test-separation-existing")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+        patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=separations),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
+        patch("onboarding_agent.integrations.card_state.mark_separation_action_complete", new=AsyncMock(return_value=None)),
+        patch("onboarding_agent.integrations.card_state.refresh_separation_card", new=AsyncMock()),
+    ):
+        tool_fn = await _get_tool_fn(mcp, "record_separation")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="Separation",
+            submission_id="sub-123",
+        )
+
+    assert result["success"] is True
+    assert result["already_exists"] is True
+    roster.remove_employee_from_staff_roster.assert_awaited_once()
+    tracker.update_stage.assert_awaited_once_with(
+        "alice@example.com",
+        "Added to Staff Roster",
+        location="Bronx",
+        job_title="Teacher",
+        status_change="Separation",
+        submission_id="sub-123",
+    )
+    assert "already existed" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_record_separation_uses_tracker_identity_to_match_roster_personal_email() -> None:
+    from onboarding_agent.mcp_server.tools_separations import register
+
+    roster = AsyncMock()
+    roster.find_employee_in_staff_roster.return_value = {
+        "found": True,
+        "employee_name": "Alice Example",
+        "employee_email": "",
+        "personal_email": "alice@example.com",
+        "job_category": "Teacher",
+        "position": "Teacher",
+    }
+    roster.remove_employee_from_staff_roster.return_value = {"success": True}
+    separations = AsyncMock()
+    separations.add_separation_record.return_value = {"success": True, "action": "added"}
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
+    tracker.update_stage.return_value = {"success": True}
+
+    mcp = FastMCP(name="test-separation-personal-email")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+        patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=separations),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
+        patch("onboarding_agent.integrations.card_state.mark_separation_action_complete", new=AsyncMock(return_value=None)),
+        patch("onboarding_agent.integrations.card_state.refresh_separation_card", new=AsyncMock()),
+    ):
+        tool_fn = await _get_tool_fn(mcp, "record_separation")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="Separation",
+            submission_id="sub-123",
+        )
+
+    assert result["success"] is True
+    roster.find_employee_in_staff_roster.assert_awaited_once_with(
+        "alice@example.com",
+        location="Bronx",
+        job_category="",
+        personal_email="alice@example.com",
+        position="Teacher",
+    )
+    separations.add_separation_record.assert_awaited_once()
+    roster.remove_employee_from_staff_roster.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_record_separation_fails_when_staff_roster_row_is_not_found() -> None:
+    from onboarding_agent.mcp_server.tools_separations import register
+
+    roster = AsyncMock()
+    roster.find_employee_in_staff_roster.return_value = {"found": False}
+    roster._resolve_roster_match.return_value = {"found": False}
+    separations = AsyncMock()
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
+
+    mcp = FastMCP(name="test-separation-roster-miss")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+        patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=separations),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
+    ):
+        tool_fn = await _get_tool_fn(mcp, "record_separation")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="Separation",
+            submission_id="sub-123",
+        )
+
+    assert result["success"] is False
+    assert "No separation record was created" in result["error"]
+    separations.add_separation_record.assert_not_awaited()
+    roster.remove_employee_from_staff_roster.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
