@@ -410,14 +410,18 @@ async def test_process_new_hire_job_routes_to_new_hire_executor_by_default() -> 
     payload = {"staffEmail": "alice@example.com"}
     with (
         patch("onboarding_agent.runtime.jobs._process_new_hire_submission", new=AsyncMock()) as new_hire,
-        patch("onboarding_agent.runtime.jobs._process_non_new_hire_submission", new=AsyncMock()) as non_new_hire,
+        patch("onboarding_agent.runtime.jobs._process_onboarding_submission", new=AsyncMock()) as onboarding,
+        patch("onboarding_agent.runtime.jobs._process_offboarding_submission", new=AsyncMock()) as offboarding,
+        patch("onboarding_agent.runtime.jobs._process_temporary_submission", new=AsyncMock()) as temporary,
     ):
         from onboarding_agent.runtime.jobs import process_new_hire_job
 
         await process_new_hire_job(payload)
 
     new_hire.assert_awaited_once_with(payload)
-    non_new_hire.assert_not_called()
+    onboarding.assert_not_called()
+    offboarding.assert_not_called()
+    temporary.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -428,14 +432,18 @@ async def test_process_new_hire_job_routes_to_status_change_workflow() -> None:
     }
     with (
         patch("onboarding_agent.runtime.jobs._process_new_hire_submission", new=AsyncMock()) as new_hire,
-        patch("onboarding_agent.runtime.jobs._process_non_new_hire_submission", new=AsyncMock()) as non_new_hire,
+        patch("onboarding_agent.runtime.jobs._process_onboarding_submission", new=AsyncMock()) as onboarding,
+        patch("onboarding_agent.runtime.jobs._process_offboarding_submission", new=AsyncMock()) as offboarding,
+        patch("onboarding_agent.runtime.jobs._process_temporary_submission", new=AsyncMock()) as temporary,
     ):
         from onboarding_agent.runtime.jobs import process_new_hire_job
 
         await process_new_hire_job(payload)
 
     new_hire.assert_not_called()
-    non_new_hire.assert_awaited_once_with(payload, "promotion")
+    onboarding.assert_awaited_once_with(payload, "promotion")
+    offboarding.assert_not_called()
+    temporary.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -446,14 +454,62 @@ async def test_process_new_hire_job_routes_unknown_status_change_to_non_new_hire
     }
     with (
         patch("onboarding_agent.runtime.jobs._process_new_hire_submission", new=AsyncMock()) as new_hire,
-        patch("onboarding_agent.runtime.jobs._process_non_new_hire_submission", new=AsyncMock()) as non_new_hire,
+        patch("onboarding_agent.runtime.jobs._process_onboarding_submission", new=AsyncMock()) as onboarding,
+        patch("onboarding_agent.runtime.jobs._process_offboarding_submission", new=AsyncMock()) as offboarding,
+        patch("onboarding_agent.runtime.jobs._process_temporary_submission", new=AsyncMock()) as temporary,
     ):
         from onboarding_agent.runtime.jobs import process_new_hire_job
 
         await process_new_hire_job(payload)
 
     new_hire.assert_not_called()
-    non_new_hire.assert_awaited_once_with(payload, "other")
+    onboarding.assert_awaited_once_with(payload, "other")
+    offboarding.assert_not_called()
+    temporary.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_new_hire_job_routes_offboarding_workflow_to_offboard_executor() -> None:
+    payload = {
+        "staffEmail": "alice@example.com",
+        "statusChange": "Transfer Out",
+    }
+    with (
+        patch("onboarding_agent.runtime.jobs._process_new_hire_submission", new=AsyncMock()) as new_hire,
+        patch("onboarding_agent.runtime.jobs._process_onboarding_submission", new=AsyncMock()) as onboarding,
+        patch("onboarding_agent.runtime.jobs._process_offboarding_submission", new=AsyncMock()) as offboarding,
+        patch("onboarding_agent.runtime.jobs._process_temporary_submission", new=AsyncMock()) as temporary,
+    ):
+        from onboarding_agent.runtime.jobs import process_new_hire_job
+
+        await process_new_hire_job(payload)
+
+    new_hire.assert_not_called()
+    onboarding.assert_not_called()
+    temporary.assert_not_called()
+    offboarding.assert_awaited_once_with(payload, "transfer_out")
+
+
+@pytest.mark.asyncio
+async def test_process_new_hire_job_routes_temporary_workflow_to_temp_executor() -> None:
+    payload = {
+        "staffEmail": "alice@example.com",
+        "statusChange": "Leave Start",
+    }
+    with (
+        patch("onboarding_agent.runtime.jobs._process_new_hire_submission", new=AsyncMock()) as new_hire,
+        patch("onboarding_agent.runtime.jobs._process_onboarding_submission", new=AsyncMock()) as onboarding,
+        patch("onboarding_agent.runtime.jobs._process_offboarding_submission", new=AsyncMock()) as offboarding,
+        patch("onboarding_agent.runtime.jobs._process_temporary_submission", new=AsyncMock()) as temporary,
+    ):
+        from onboarding_agent.runtime.jobs import process_new_hire_job
+
+        await process_new_hire_job(payload)
+
+    new_hire.assert_not_called()
+    onboarding.assert_not_called()
+    offboarding.assert_not_called()
+    temporary.assert_awaited_once_with(payload, "leave_start")
 
 
 @pytest.mark.asyncio
@@ -624,6 +680,40 @@ async def test_rehire_workflow_drafts_welcome_email_and_keeps_docusign_action() 
     assert save_kwargs["allow_email_action"] is True
     assert save_kwargs["allow_docusign_action"] is True
     assert save_kwargs["title"] == "Rehire Requested"
+
+
+@pytest.mark.asyncio
+async def test_second_position_workflow_uses_action_card_instead_of_new_hire_card() -> None:
+    payload = {
+        "submissionId": "sub-789",
+        "staffEmail": "alice@example.com",
+        "staffName": "Alice Example",
+        "jobTitle": "Teacher",
+        "workLocation": "Bronx",
+        "statusChange": "Second Position",
+    }
+    tracker = AsyncMock()
+    tracker.find_employee_in_tracker.return_value = {"found": True}
+    tracker.update_stage.return_value = {"success": True}
+    teams = AsyncMock()
+    teams.send_channel_notification.return_value = {"success": True, "message_id": "msg-1"}
+
+    with (
+        patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
+        patch("onboarding_agent.runtime.jobs.save_new_hire_card", new=AsyncMock()) as save_new_hire,
+        patch("onboarding_agent.runtime.jobs.save_separation_card", new=AsyncMock()) as save_workflow,
+        patch("onboarding_agent.integrations.adaptive_cards.separation_card", return_value={"type": "AdaptiveCard"}) as build_action_card,
+    ):
+        from onboarding_agent.runtime.jobs import process_new_hire_job
+
+        await process_new_hire_job(payload)
+
+    save_new_hire.assert_not_awaited()
+    build_action_card.assert_called_once()
+    assert build_action_card.call_args.kwargs["submission_id"] == "sub-789"
+    assert build_action_card.call_args.kwargs["action_name"] == "add_to_staff_roster"
+    save_workflow.assert_awaited_once()
 
 
 @pytest.mark.asyncio

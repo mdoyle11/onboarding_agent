@@ -1287,3 +1287,48 @@ async def test_handle_staff_roster_card_action_uses_existing_roster_membership_a
     staff_roster.add_employee_to_staff_roster.assert_not_awaited()
     context.send_activity.assert_awaited()
     assert "already contains" in context.send_activity.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_handle_staff_roster_card_action_marks_second_position_card_complete() -> None:
+    context = AsyncMock()
+    context.activity = SimpleNamespace(reply_to_id="reply-2")
+    card_action = {
+        "action": "add_to_staff_roster",
+        "employee_email": "alice@example.com",
+        "submission_id": "sub-123",
+        "job_category": "Teacher",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "Second Position",
+    }
+    tracker = AsyncMock()
+    tracker.find_employee_in_tracker.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
+    tracker.update_stage.return_value = {"success": True}
+    staff_roster = AsyncMock()
+    staff_roster.find_employee_in_staff_roster.return_value = {"found": False}
+    staff_roster.add_employee_to_staff_roster.return_value = {"success": True}
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.StaffRosterClient", return_value=staff_roster),
+        patch(
+            "onboarding_agent.integrations.teams.card_actions.get_separation_card",
+            new=AsyncMock(return_value={"message_id": "workflow-msg", "submission_id": "sub-123", "action_completed": False}),
+        ),
+        patch("onboarding_agent.integrations.teams.card_actions.mark_separation_action_complete", new=AsyncMock()) as mark_complete,
+        patch("onboarding_agent.integrations.teams.card_actions.refresh_card_from_context", new=AsyncMock(return_value=True)) as refresh_card,
+        patch("onboarding_agent.integrations.teams.card_actions.mark_docusign_roster_complete", new=AsyncMock()) as mark_docusign,
+    ):
+        await handle_staff_roster_card_action(context, card_action)
+
+    mark_complete.assert_awaited_once()
+    mark_docusign.assert_not_awaited()
+    refresh_card.assert_awaited_once()
+    context.send_activity.assert_awaited()
+    assert "was added" in context.send_activity.await_args.args[0]

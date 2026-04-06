@@ -75,6 +75,17 @@ async def _submission_id_for_identity(identity: EmployeeIdentity) -> str:
     return str((card_state or {}).get("submission_id", "") or "").strip()
 
 
+async def _separation_card_for_identity(
+    identity: EmployeeIdentity,
+    *,
+    submission_id: str = "",
+) -> dict[str, Any] | None:
+    try:
+        return await get_separation_card(identity, submission_id=submission_id)
+    except AssertionError:
+        return None
+
+
 async def _resolve_tracker_record_for_docusign_action(card_action: dict[str, str]) -> dict[str, Any]:
     from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 
@@ -110,7 +121,10 @@ async def card_action_already_completed(card_action: dict[str, str] | None) -> b
         ds_card = await get_docusign_status_card(identity, submission_id=submission_id)
         return bool(ds_card and str(ds_card.get("status", "")).lower() in {"sent", "completed", "delivered"})
     if card_action["action"] == "add_to_staff_roster":
-        if not card:
+        sep_card = await _separation_card_for_identity(identity, submission_id=submission_id)
+        if sep_card and sep_card.get("action_completed"):
+            return True
+        if not card and not sep_card:
             return False
         from onboarding_agent.integrations.workbook.staff_roster_client import StaffRosterClient
         from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
@@ -163,6 +177,7 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
         staff_roster_client = StaffRosterClient()
         tracker_client = TrackerClient()
         submission_id = str(card_action.get("submission_id", "") or "").strip() or await _submission_id_for_identity(identity)
+        separation_backed_card = await _separation_card_for_identity(identity, submission_id=submission_id)
         employee = await tracker_client.find_employee_in_tracker(
             identity.email,
             location=identity.work_location,
@@ -187,9 +202,12 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
                 status_change=identity.status_change,
                 submission_id=submission_id,
             )
-            docusign_card = await mark_docusign_roster_complete(identity, existing_job_category, submission_id=submission_id)
-            if docusign_card:
-                await _update_docusign_status_card(context, docusign_card)
+            if separation_backed_card:
+                await mark_separation_action_complete(identity, submission_id=submission_id)
+            else:
+                docusign_card = await mark_docusign_roster_complete(identity, existing_job_category, submission_id=submission_id)
+                if docusign_card:
+                    await _update_docusign_status_card(context, docusign_card)
             await refresh_card_from_context(context, card_action)
             await context.send_activity(
                 f"Staff roster already contains {identity.email} in {identity.work_location or 'the selected location'} as {existing_job_category or 'the saved group'}."
@@ -219,9 +237,13 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
                 status_change=identity.status_change,
                 submission_id=submission_id,
             )
-            docusign_card = await mark_docusign_roster_complete(identity, job_category, submission_id=submission_id)
-            if docusign_card:
-                await _update_docusign_status_card(context, docusign_card)
+            if separation_backed_card:
+                await mark_separation_action_complete(identity, submission_id=submission_id)
+            else:
+                docusign_card = await mark_docusign_roster_complete(identity, job_category, submission_id=submission_id)
+                if docusign_card:
+                    await _update_docusign_status_card(context, docusign_card)
+            await refresh_card_from_context(context, card_action)
             detail = "already existed" if result.get("already_exists") else "was added"
             await context.send_activity(
                 f"Staff roster update succeeded: {identity.email} {detail} in {identity.work_location or 'the selected location'} as {job_category}."
@@ -768,11 +790,12 @@ async def notify_card_action_failure(card_action: dict[str, str]) -> None:
 async def refresh_card_from_context(context: TurnContext, card_action: dict[str, str]) -> bool:
     identity = _identity_from_action(card_action)
     submission_id = str(card_action.get("submission_id", "") or "").strip()
-    if card_action["action"] in {"record_separation", "update_leave_start", "update_leave_end"}:
-        sep_card = await get_separation_card(identity, submission_id=submission_id)
+    if card_action["action"] in {"record_separation", "update_leave_start", "update_leave_end", "add_to_staff_roster"}:
+        sep_card = await _separation_card_for_identity(identity, submission_id=submission_id)
         if sep_card:
             return await _update_separation_card(context, sep_card)
-        return False
+        if card_action["action"] in {"record_separation", "update_leave_start", "update_leave_end"}:
+            return False
     if card_action["action"] in {"add_to_staff_roster", "send_docusign", "create_docusign_draft", "refresh_review_link"}:
         card = await get_docusign_status_card(identity, submission_id=submission_id)
         if card:

@@ -9,15 +9,25 @@ from typing import Any
 
 from onboarding_agent.config import settings
 from onboarding_agent.domain.identity import EmployeeIdentity
+from onboarding_agent.domain.offboard.policies import (
+    is_offboarding_workflow,
+    offboarding_excluded_stages_for,
+    uses_separations_sheet,
+)
 from onboarding_agent.domain.onboard.policies import (
-    WORKFLOW_LEAVE_START,
+    allows_email_action,
+    allows_offer_letter_action,
+    onboarding_excluded_stages_for,
+    uses_second_position_roster_action,
+)
+from onboarding_agent.domain.temp.policies import (
+    is_temporary_workflow,
+    leave_status_for_workflow,
+    temporary_excluded_stages_for,
+)
+from onboarding_agent.domain.workflows import (
     WORKFLOW_NEW_HIRE,
     WORKFLOW_REHIRE,
-    WORKFLOW_SECOND_POSITION,
-    excluded_stages_for,
-    is_leave_workflow,
-    is_separation_workflow,
-    is_separations_sheet_workflow,
     normalize_workflow_type,
 )
 from onboarding_agent.integrations.card_state import (
@@ -159,6 +169,7 @@ async def _send_submission_notification(
     fields: dict[str, str],
     summary: str,
     allow_email_action: bool,
+    allow_docusign_action: bool,
 ) -> None:
     from onboarding_agent.integrations.adaptive_cards import new_hire_card
 
@@ -182,7 +193,7 @@ async def _send_submission_notification(
         email_sent=False,
         docusign_draft_created=False,
         allow_email_action=allow_email_action,
-        allow_docusign_action=True,
+        allow_docusign_action=allow_docusign_action,
     )
     teams_result = await _send_or_raise(
         teams_messenger,
@@ -213,7 +224,7 @@ async def _send_submission_notification(
             requesting_manager=fields["requesting_manager"],
             summary=summary,
             allow_email_action=allow_email_action,
-            allow_docusign_action=True,
+            allow_docusign_action=allow_docusign_action,
         )
 
 
@@ -261,10 +272,13 @@ async def process_new_hire_job(payload: dict[str, Any]) -> None:
     if workflow_type == WORKFLOW_NEW_HIRE:
         await _process_new_hire_submission(payload)
         return
-    if is_separation_workflow(workflow_type):
-        await _process_separation_submission(payload, workflow_type)
+    if is_offboarding_workflow(workflow_type):
+        await _process_offboarding_submission(payload, workflow_type)
         return
-    await _process_non_new_hire_submission(payload, workflow_type)
+    if is_temporary_workflow(workflow_type):
+        await _process_temporary_submission(payload, workflow_type)
+        return
+    await _process_onboarding_submission(payload, workflow_type)
 
 
 async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
@@ -300,6 +314,7 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
             fields=fields,
             summary=summary,
             allow_email_action=True,
+            allow_docusign_action=True,
         )
 
         logger.info(
@@ -312,8 +327,8 @@ async def _process_new_hire_submission(payload: dict[str, Any]) -> None:
         raise
 
 
-async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_type: str) -> None:
-    """Handle non-new-hire HR workflows deterministically (no LLM orchestration)."""
+async def _process_onboarding_submission(payload: dict[str, Any], workflow_type: str) -> None:
+    """Handle non-new-hire onboarding workflows deterministically."""
     started = time.perf_counter()
     tracker_client = TrackerClient()
     teams_messenger = TeamsMessenger()
@@ -327,7 +342,7 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
     try:
         tracker_text = await _ensure_tracker_record(tracker_client, fields)
 
-        excluded_stages = excluded_stages_for(workflow_type)
+        excluded_stages = onboarding_excluded_stages_for(workflow_type)
 
         policy_text = ""
         if excluded_stages:
@@ -363,19 +378,41 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
                 else f" Welcome email draft failed: {email_result.get('error', 'unknown error')}."
             )
 
-        summary = (
-            f"{workflow_label} submission received for {employee_name or employee_email} ({employee_email}). "
-            f"{tracker_text}{policy_text} Offer letter draft can be created from the current tracker fields.{email_text} This workflow is running in deterministic mode."
-        )
-        allow_email_action = workflow_type in {WORKFLOW_NEW_HIRE, WORKFLOW_REHIRE}
-        await _send_submission_notification(
-            teams_messenger,
-            employee_email=employee_email,
-            employee_name=employee_name,
-            fields=fields,
-            summary=summary,
-            allow_email_action=allow_email_action,
-        )
+        if uses_second_position_roster_action(workflow_type):
+            summary = (
+                f"{workflow_label} submission received for {employee_name or employee_email} ({employee_email}). "
+                f"{tracker_text}{policy_text} Add the employee to the staff roster using the button below. "
+                "This workflow is running in deterministic mode."
+            )
+            await _send_workflow_action_notification(
+                teams_messenger,
+                employee_email=employee_email,
+                employee_name=employee_name,
+                fields=fields,
+                summary=summary,
+                action_name="add_to_staff_roster",
+                action_label="Add to Staff Roster",
+                action_completed_label="\u2713 Added to Staff Roster",
+            )
+        else:
+            offer_letter_text = (
+                " Offer letter draft can be created from the current tracker fields."
+                if allows_offer_letter_action(workflow_type)
+                else ""
+            )
+            summary = (
+                f"{workflow_label} submission received for {employee_name or employee_email} ({employee_email}). "
+                f"{tracker_text}{policy_text}{offer_letter_text}{email_text} This workflow is running in deterministic mode."
+            )
+            await _send_submission_notification(
+                teams_messenger,
+                employee_email=employee_email,
+                employee_name=employee_name,
+                fields=fields,
+                summary=summary,
+                allow_email_action=allows_email_action(workflow_type),
+                allow_docusign_action=allows_offer_letter_action(workflow_type),
+            )
         logger.info(
             "Processed queued %s job for %s in %.3fs",
             workflow_type,
@@ -387,8 +424,8 @@ async def _process_non_new_hire_submission(payload: dict[str, Any], workflow_typ
         raise
 
 
-async def _process_separation_submission(payload: dict[str, Any], workflow_type: str) -> None:
-    """Handle separation-category workflows deterministically (no LLM)."""
+async def _process_offboarding_submission(payload: dict[str, Any], workflow_type: str) -> None:
+    """Handle offboarding workflows deterministically."""
     started = time.perf_counter()
     tracker_client = TrackerClient()
     teams_messenger = TeamsMessenger()
@@ -402,7 +439,7 @@ async def _process_separation_submission(payload: dict[str, Any], workflow_type:
     try:
         tracker_text = await _ensure_tracker_record(tracker_client, fields)
 
-        excluded_stages = excluded_stages_for(workflow_type)
+        excluded_stages = offboarding_excluded_stages_for(workflow_type)
         policy_text = ""
         if excluded_stages:
             stage_results: list[str] = []
@@ -426,27 +463,11 @@ async def _process_separation_submission(payload: dict[str, Any], workflow_type:
                 )
 
         # Determine action button for the card
-        if is_separations_sheet_workflow(workflow_type):
+        if uses_separations_sheet(workflow_type):
             action_name = "record_separation"
             action_label = "Record on Separations Sheet"
             action_completed_label = "\u2713 Recorded on Separations Sheet"
             instruction = "Record on the Separations sheet using the button below."
-        elif is_leave_workflow(workflow_type):
-            if workflow_type == WORKFLOW_LEAVE_START:
-                action_name = "update_leave_start"
-                action_label = "Mark On Leave"
-                action_completed_label = "\u2713 Marked On Leave"
-                instruction = "Update the staff roster leave status using the button below."
-            else:
-                action_name = "update_leave_end"
-                action_label = "Mark Active"
-                action_completed_label = "\u2713 Marked Active"
-                instruction = "Update the staff roster leave status using the button below."
-        elif workflow_type == WORKFLOW_SECOND_POSITION:
-            action_name = "add_to_staff_roster"
-            action_label = "Add to Staff Roster"
-            action_completed_label = "\u2713 Added to Staff Roster"
-            instruction = "Add the employee to the staff roster using the button below."
         else:
             action_name = ""
             action_label = ""
@@ -458,7 +479,7 @@ async def _process_separation_submission(payload: dict[str, Any], workflow_type:
             f"({employee_email}). {tracker_text}{policy_text}"
             f" {instruction} This workflow is running in deterministic mode."
         )
-        await _send_separation_notification(
+        await _send_workflow_action_notification(
             teams_messenger,
             employee_email=employee_email,
             employee_name=employee_name,
@@ -479,7 +500,72 @@ async def _process_separation_submission(payload: dict[str, Any], workflow_type:
         raise
 
 
-async def _send_separation_notification(
+async def _process_temporary_submission(payload: dict[str, Any], workflow_type: str) -> None:
+    """Handle temporary-status workflows deterministically."""
+    started = time.perf_counter()
+    tracker_client = TrackerClient()
+    teams_messenger = TeamsMessenger()
+    fields = _new_hire_fields(payload)
+
+    employee_email = fields["staff_email"].strip()
+    employee_name = fields["staff_name"].strip()
+    _require_composite_identity(fields, label="Temporary-status")
+
+    workflow_label = workflow_type.replace("_", " ").title()
+    try:
+        tracker_text = await _ensure_tracker_record(tracker_client, fields)
+
+        excluded_stages = temporary_excluded_stages_for(workflow_type)
+        policy_text = ""
+        if excluded_stages:
+            stage_results: list[str] = []
+            for stage_name in excluded_stages:
+                stage_result = await tracker_client.update_stage(
+                    employee_email,
+                    stage_name,
+                    value="N/A",
+                    location=fields["work_location"],
+                    job_title=fields["job_title"],
+                    status_change=fields["status_change"],
+                    submission_id=fields["submission_id"],
+                )
+                if stage_result.get("success"):
+                    stage_results.append(stage_name)
+            if stage_results:
+                policy_text = (
+                    f" {workflow_label} workflow applied: marked non-applicable stages as N/A: "
+                    + ", ".join(stage_results)
+                    + "."
+                )
+
+        next_status, _ = leave_status_for_workflow(workflow_type)
+        summary = (
+            f"{workflow_label} submission received for {employee_name or employee_email} ({employee_email}). "
+            f"{tracker_text}{policy_text} Update the staff roster leave status to {next_status} using the button below. "
+            "This workflow is running in deterministic mode."
+        )
+        await _send_workflow_action_notification(
+            teams_messenger,
+            employee_email=employee_email,
+            employee_name=employee_name,
+            fields=fields,
+            summary=summary,
+            action_name="update_leave_start" if next_status == "On Leave" else "update_leave_end",
+            action_label="Mark On Leave" if next_status == "On Leave" else "Mark Active",
+            action_completed_label="\u2713 Marked On Leave" if next_status == "On Leave" else "\u2713 Marked Active",
+        )
+        logger.info(
+            "Processed queued %s job for %s in %.3fs",
+            workflow_type,
+            employee_email or "unknown",
+            time.perf_counter() - started,
+        )
+    except Exception:
+        logger.exception("Queued %s job failed for %s", workflow_type, employee_email or "unknown")
+        raise
+
+
+async def _send_workflow_action_notification(
     teams_messenger: TeamsMessenger,
     *,
     employee_email: str,
