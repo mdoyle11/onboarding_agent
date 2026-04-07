@@ -9,6 +9,7 @@
 .build/
 __pycache__/
 *.pyc
+docs/
 data/
 keys/
 config/staff_rosters.json
