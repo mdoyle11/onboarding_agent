@@ -6,9 +6,9 @@ import logging
 from typing import Any
 
 import aiohttp
-from azure.identity.aio import ClientSecretCredential
 
 from onboarding_agent.config import settings
+from onboarding_agent.integrations.graph.auth import graph_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +26,6 @@ class OutlookEmailClient:
         """Send an HTML email via Graph API. Returns {success, message_id}."""
         if not settings.outlook_sender_email:
             return {"success": False, "error": "OUTLOOK_SENDER_EMAIL is not configured."}
-
-        credential = ClientSecretCredential(
-            tenant_id=settings.azure_tenant_id,
-            client_id=settings.azure_client_id,
-            client_secret=settings.azure_client_secret,
-        )
 
         message_payload: dict[str, Any] = {
             "message": {
@@ -60,9 +54,9 @@ class OutlookEmailClient:
             ]
 
         try:
-            token = await credential.get_token("https://graph.microsoft.com/.default")
+            token = await graph_access_token()
             headers = {
-                "Authorization": f"Bearer {token.token}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             }
             url = (
@@ -91,5 +85,3 @@ class OutlookEmailClient:
         except Exception as exc:
             logger.exception("Outlook send_email failed for %s", to_email)
             return {"success": False, "error": str(exc)}
-        finally:
-            await credential.close()

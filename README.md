@@ -1,141 +1,209 @@
 # Onboarding Agent
 
-A LangGraph-based AI agent for the Microsoft onboarding stack: Microsoft Forms, Power Automate, Teams, Excel via Microsoft Graph, Outlook, and DocuSign.
+AI-assisted HR onboarding system for:
 
-## What it does
+- Microsoft Forms / Power Automate
+- Microsoft Teams
+- Excel via Microsoft Graph
+- Outlook via Microsoft Graph
+- DocuSign
 
-| Trigger | Action |
+It receives onboarding events, maintains an Excel-based onboarding tracker,
+prepares or sends onboarding communications, and lets HR drive the workflow
+from Teams.
+
+## What It Does
+
+| Trigger | Result |
 |---|---|
-| Power Automate POSTs a new Microsoft Forms submission | Agent adds the employee to the Excel tracker, creates a DocuSign draft, drafts the onboarding email, and posts a Teams Adaptive Card |
-| HR asks "What's the status of Alice?" in Teams | Agent queries Excel + DocuSign and replies with a human-readable summary |
-| HR asks to send the offer letter or clicks the card action | Agent sends the DocuSign envelope and updates the original Teams card |
-| HR asks to send the welcome email or clicks the card action | Agent sends the Outlook email and updates the original Teams card |
+| New-hire Power Automate submission | Adds or checks the employee in the tracker, prepares DocuSign and email steps, posts a Teams card |
+| Teams status query | Returns combined tracker + DocuSign onboarding status |
+| Teams card button or HR command | Sends the welcome email, sends the offer letter, or performs follow-up steps |
+| DocuSign status webhook | Updates tracker state and posts a Teams status update |
+| Background-clearance webhook | Updates tracker state, posts a Teams notification, and sends a confirmation email |
 
-## Architecture
+## Current Architecture
 
-Two processes communicate via stdio using MCP:
+The current hosted deployment is one Azure Container App running:
 
-```text
-aiohttp server (port 8080)
-  ├── GET/POST /api/messages              ← Microsoft 365 Agents SDK / Teams
-  ├── POST /webhook/new-hire              ← Power Automate
-  ├── POST /webhook/docusign              ← DocuSign Connect
-  └── POST /webhook/background-clearance  ← Power Automate
-        │
-        └──► LangGraph agent
-               │
-               └──► FastMCP server (stdio subprocess)
-                     ├── Microsoft Graph tools (Excel, Teams, Forms, Outlook)
-                     ├── DocuSign tools
-                     └── Composite onboarding/status tools
-```
+- the aiohttp app
+- the Teams bot endpoint
+- the webhook endpoints
+- the Azure Queue-backed background worker
+- the FastMCP subprocess used by the LangChain agent runner
 
-## Current stack
+Durable external state is stored in:
 
-- Chat interface: Microsoft Teams via Microsoft 365 Agents SDK
-- Tracker backend: Excel workbook via Microsoft Graph
-- Email backend: Outlook via Microsoft Graph `sendMail`
-- Signature backend: DocuSign JWT + DocuSign Connect
-- Workflow source: Microsoft Forms + Power Automate webhooks
-- Notification UX: Teams Adaptive Cards with action-state sync
+- Azure Queue Storage
+- Cosmos DB `state-records`
+- Cosmos DB `conversation-sessions`
 
-## Quick start
+At runtime, the main layers are:
+
+- `src/onboarding_agent/server.py`
+  HTTP app entrypoint and startup
+
+- `src/onboarding_agent/runtime/`
+  queueing, webhooks, state store, job handlers
+
+- `src/onboarding_agent/agent/`
+  plain async agent runner and chat history persistence
+
+- `src/onboarding_agent/mcp_server/`
+  FastMCP tool server launched as a subprocess
+
+- `src/onboarding_agent/integrations/`
+  Graph, Teams, Outlook, DocuSign, card state
+
+## Docs
+
+- Repo-wide architecture: [ARCHITECTURE.md](/home/matthewdoyle/projects/onboarding_agent/ARCHITECTURE.md)
+- Deploy, rollback, smoke test, and CI/CD guidance: [RUNBOOK.md](/home/matthewdoyle/projects/onboarding_agent/RUNBOOK.md)
+- Current deployment summary and next steps: [container_app_summary.txt](/home/matthewdoyle/projects/onboarding_agent/container_app_summary.txt)
+
+## Repo Layout
+
+- `src/onboarding_agent/`
+  main application package
+
+- `infra/terraform/container-app/`
+  Azure Container App Terraform
+
+- `scripts/`
+  build, push, deploy, Teams package, roster sync, and cleanup helpers
+
+- `templates/`
+  HTML email templates
+
+- `config/`
+  example and local config files
+
+- `teamsappPackage.example/`
+  commit-safe Teams sideload package template
+
+- `tests/unit/`
+  unit tests for queueing, jobs, and webhooks
+
+## Local Quick Start
 
 ```bash
-# 1. Install dependencies
 uv sync
-
-# 2. Configure .env with Microsoft Graph, Teams, Outlook, and DocuSign settings
-
-# 3. Generate DocuSign RSA keys if needed
-python scripts/generate_docusign_keys.py
-
-# 4. Run the server
 uv run python -m onboarding_agent.server
 ```
 
-## Setup guides
+Before running locally, configure `.env` with:
 
-- Azure / Microsoft Graph app registration: `python scripts/setup_azure_ad.py`
-- Teams / Agents SDK app registration: `python scripts/setup_azure_bot.py`
-- DocuSign JWT keys: `python scripts/generate_docusign_keys.py`
-
-## Teams card actions
-
-The new-hire Teams card supports:
-
-- `Send Welcome Email`
-- `Send Offer Letter`
-
-When one of those actions succeeds, the original card is updated to show completion so teammates do not send the same step twice. Natural-language sends from a DM, group chat, or channel message also update the original card in the notification channel.
-
-When a DocuSign envelope reaches `completed`, the DocuSign status card also supports:
-
-- `Add To Staff Roster`
-
-That action requires HR to enter the exact staff-roster job category. The agent can also do the same flow from natural language in Teams, for example:
-
-- `check staff roster capacity for Collier Teacher`
-- `add mdoyle@example.com to the staff roster as Teacher`
-
-## Staff roster config
-
-Staff rosters are configured as one Excel workbook per location. Each location workbook should contain:
-
-- a `Roster_Data` sheet with one employee per row
-- a `Capacity` sheet with `Group` and `Capacity` columns
-
-Preferred setup:
-
-- set `STAFF_ROSTER_LOCATIONS_FILE=config/staff_rosters.json` in `.env`
-- copy [config/staff_rosters.example.json](/home/matthewdoyle/projects/onboarding_agent/config/staff_rosters.example.json) to `config/staff_rosters.json`
-- fill in the workbook IDs there
-
-Examples are in:
-
-- [.env.example](/home/matthewdoyle/projects/onboarding_agent/.env.example)
-- [staff_rosters.example.json](/home/matthewdoyle/projects/onboarding_agent/config/staff_rosters.example.json)
-
-Defaults:
-
-- `STAFF_ROSTER_LOCATIONS_FILE` takes precedence over `STAFF_ROSTER_LOCATIONS_JSON`
-- `drive_id`: falls back to `GRAPH_EXCEL_DRIVE_ID`
-- `roster_sheet_name`: `Roster_Data`
-- `capacity_sheet_name`: `Capacity`
-
-## Adding new onboarding steps
-
-Add a function in `src/onboarding_agent/mcp_server/tools_*.py` decorated with `@mcp.tool()`.
-The agent picks it up on next restart.
-
-```python
-@mcp.tool()
-async def request_it_equipment(employee_email: str, equipment_type: str) -> dict:
-    """Submit an IT equipment request for a new hire."""
-    ...
-```
-
-## Development
-
-```bash
-uv sync --extra dev
-uv run pytest tests/unit -q
-```
-
-## Environment
-
-This branch expects Microsoft-only configuration:
-
-- Teams / Agents SDK app ID and secret
+- Teams / Agents SDK settings
 - Azure tenant / client credentials for Graph
 - Excel workbook IDs
 - Outlook sender mailbox
 - DocuSign JWT settings
 - webhook secret
 
-## Security notes
+For local development, the app can use:
 
-- `.env`, `*.key`, and `*.pem` are gitignored and must never be committed
-- Webhook endpoints are protected by `WEBHOOK_SECRET`
-- Microsoft Graph uses client credentials flow and requires admin consent once per tenant
-- DocuSign uses JWT Grant for server-to-server access
+- file-backed state
+- local in-process queue
+- stdio MCP subprocess
+
+## Hosted Deployment
+
+The hosted deployment uses:
+
+- Docker image from `Dockerfile`
+- Terraform in `infra/terraform/container-app/`
+- helper scripts in `scripts/`
+
+The main workflow is:
+
+1. Fill `infra/terraform/container-app/terraform.tfvars`
+2. Sync staff roster config if needed
+3. Build and push an immutable image tag
+4. Apply Terraform
+5. Update Teams bot endpoint and Teams package if needed
+6. Run smoke tests
+
+See:
+
+- [RUNBOOK.md](/home/matthewdoyle/projects/onboarding_agent/RUNBOOK.md)
+
+## Key Scripts
+
+- `scripts/build_and_push_container_app.sh`
+  build and push the Container App image
+
+- `scripts/deploy_container_app.sh`
+  run Terraform plan/apply
+
+- `scripts/package_teams_app.sh`
+  rebuild the Teams sideload package for the current host
+
+- `scripts/sync_staff_rosters_to_tfvars.sh`
+  sync local sensitive roster config into `terraform.tfvars`
+
+- `scripts/reset_runtime_state.py`
+  clear Cosmos card/conversation state for testing
+
+## Teams Behavior
+
+The primary HR interaction surface is Teams.
+
+Supported patterns:
+
+- DM the bot
+- mention the bot in a channel
+- click Adaptive Card buttons
+
+The main new-hire card supports:
+
+- `Send Welcome Email`
+- `Send Offer Letter`
+
+When DocuSign reaches `completed`, the DocuSign status card supports:
+
+- `Add To Staff Roster`
+
+Card state is persisted so actions can update the original card instead of
+posting duplicate follow-ups.
+
+## Staff Roster Config
+
+Staff rosters are configured as one workbook per location.
+
+Preferred local setup:
+
+- keep `config/staff_rosters.json` local and ignored
+- use `scripts/sync_staff_rosters_to_tfvars.sh` before deploy
+
+Defaults and examples:
+
+- [.env.example](/home/matthewdoyle/projects/onboarding_agent/.env.example)
+- [staff_rosters.example.json](/home/matthewdoyle/projects/onboarding_agent/config/staff_rosters.example.json)
+
+## Adding New Agent Capabilities
+
+The easiest extension point is a new MCP tool in:
+
+- `src/onboarding_agent/mcp_server/tools_*.py`
+
+Example shape:
+
+```python
+@mcp.tool()
+async def request_it_equipment(employee_email: str, equipment_type: str) -> dict[str, object]:
+    ...
+```
+
+When adding a new capability, prefer:
+
+- deterministic orchestration for critical system-of-record writes
+- agent-driven orchestration for judgment-heavy or optional steps
+
+## Security Notes
+
+- `.env`, `*.key`, `*.pem`, `terraform.tfvars`, and the real `teamsappPackage/`
+  are local-only and must not be committed
+- webhook endpoints are protected by `WEBHOOK_SECRET`
+- Microsoft Graph uses client credentials with tenant-level consent
+- DocuSign uses JWT Grant
+- sensitive staff roster mappings should remain outside git

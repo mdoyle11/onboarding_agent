@@ -1,1 +1,1 @@
-"""LangGraph agent package."""
+"""Agent package."""

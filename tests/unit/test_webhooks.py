@@ -1,0 +1,66 @@
+"""Tests for webhook parsing helpers."""
+
+from onboarding_agent.runtime.webhooks import parse_docusign_payload
+
+
+def test_parse_docusign_json_payload_extracts_custom_field() -> None:
+    body = (
+        b'{"envelopeId":"env-123","status":"completed","customFields":{"textCustomFields":['
+        b'{"name":"employee_email","value":"alice@example.com"},'
+        b'{"name":"work_location","value":"Bronx"},'
+        b'{"name":"job_title","value":"Teacher"},'
+        b'{"name":"submission_id","value":"sub-123"}]}}'
+    )
+
+    parsed = parse_docusign_payload(body, "application/json")
+
+    assert parsed == {
+        "envelope_id": "env-123",
+        "status": "completed",
+        "employee_email": "alice@example.com",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "",
+        "submission_id": "sub-123",
+    }
+
+
+def test_parse_docusign_xml_payload_extracts_custom_field() -> None:
+    body = b"""
+<DocuSignEnvelopeInformation xmlns="http://www.docusign.net/API/3.0">
+  <EnvelopeStatus>
+    <EnvelopeID>env-456</EnvelopeID>
+    <Status>sent</Status>
+    <CustomFields>
+      <CustomField>
+        <Name>employee_email</Name>
+        <Value>bob@example.com</Value>
+      </CustomField>
+      <CustomField>
+        <Name>work_location</Name>
+        <Value>Queens</Value>
+      </CustomField>
+      <CustomField>
+        <Name>job_title</Name>
+        <Value>Assistant Principal</Value>
+      </CustomField>
+      <CustomField>
+        <Name>submission_id</Name>
+        <Value>sub-456</Value>
+      </CustomField>
+    </CustomFields>
+  </EnvelopeStatus>
+</DocuSignEnvelopeInformation>
+"""
+
+    parsed = parse_docusign_payload(body, "application/xml")
+
+    assert parsed == {
+        "envelope_id": "env-456",
+        "status": "sent",
+        "employee_email": "bob@example.com",
+        "work_location": "Queens",
+        "job_title": "Assistant Principal",
+        "status_change": "",
+        "submission_id": "sub-456",
+    }

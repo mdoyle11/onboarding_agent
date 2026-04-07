@@ -40,7 +40,6 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET || 'test-secret' }}
           GRAPH_EXCEL_DRIVE_ID: test-drive
           GRAPH_EXCEL_ITEM_ID: test-item
-          GRAPH_FORMS_FORM_ID: test-form
           TEAMS_TEAM_ID: test-team
           TEAMS_CHANNEL_ID: test-channel
           DOCUSIGN_ACCOUNT_ID: test-account

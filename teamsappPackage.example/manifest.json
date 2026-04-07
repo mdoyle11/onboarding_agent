@@ -1,0 +1,63 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.23/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.23",
+  "version": "1.0.0",
+  "id": "REPLACE_ME_TEAMS_APP_ID",
+  "developer": {
+    "name": "BridgePrep Academy",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Onboarding Agent",
+    "full": "BridgePrep Onboarding Agent"
+  },
+  "description": {
+    "short": "Teams bot for onboarding workflows and status queries.",
+    "full": "BridgePrep Onboarding Agent handles onboarding workflow updates, status lookups, and channel notifications in Microsoft Teams."
+  },
+  "accentColor": "#0F6CBD",
+  "bots": [
+    {
+      "botId": "REPLACE_ME_BOT_ID",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupChat"
+          ],
+          "commands": [
+            {
+              "title": "status",
+              "description": "Check onboarding status for an employee."
+            },
+            {
+              "title": "help",
+              "description": "Show supported onboarding actions."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "REPLACE_ME_BOT_HOST"
+  ]
+}
