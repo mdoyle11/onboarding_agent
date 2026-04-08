@@ -58,6 +58,12 @@ microsoft_app_id       = "REPLACE_ME_TEAMS_APP_ID"
 microsoft_app_password = "REPLACE_ME_TEAMS_APP_PASSWORD"
 teams_channel_id       = "REPLACE_ME_TEAMS_CHANNEL_ID"
 
+# Non-production Teams testing flags.
+# Enable these only in non-production environments where synthetic App Tester
+# or load-test traffic is acceptable.
+microsoft_app_allow_anonymous = false
+teams_loadtest_mode           = false
+
 # Graph Excel tracker settings.
 graph_excel_drive_id = "REPLACE_ME_GRAPH_EXCEL_DRIVE_ID"
 graph_excel_item_id  = "REPLACE_ME_GRAPH_EXCEL_ITEM_ID"

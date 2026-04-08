@@ -128,6 +128,18 @@ variable "microsoft_app_password" {
   sensitive   = true
 }
 
+variable "microsoft_app_allow_anonymous" {
+  description = "Allow anonymous Teams/App Tester traffic in non-production environments."
+  type        = bool
+  default     = false
+}
+
+variable "teams_loadtest_mode" {
+  description = "Enable non-production synthetic Teams load-test handling."
+  type        = bool
+  default     = false
+}
+
 variable "azure_tenant_id" {
   description = "Azure AD tenant ID."
   type        = string

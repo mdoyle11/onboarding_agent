@@ -11,6 +11,7 @@ from microsoft_agents.hosting.core import TurnContext, TurnState
 
 from onboarding_agent.agent import runner
 from onboarding_agent.agent.runner import _decode_tool_content
+from onboarding_agent.config import settings
 from onboarding_agent.domain.identity import EmployeeIdentity
 from onboarding_agent.integrations.card_state import (
     clear_new_hire_action_complete,
@@ -65,6 +66,20 @@ _CARD_REFRESH_TOOL_NAMES = {
     "find_separation_record",
     "update_leave_status",
 }
+
+
+def _is_synthetic_loadtest_activity(activity: Any) -> bool:
+    if not settings.teams_loadtest_mode:
+        return False
+    activity_id = str(getattr(activity, "id", "") or "").strip()
+    conversation_id = str(getattr(getattr(activity, "conversation", None), "id", "") or "").strip()
+    from_property = getattr(activity, "from_property", None)
+    user_id = str(getattr(from_property, "aad_object_id", "") or getattr(from_property, "id", "") or "").strip()
+    return (
+        activity_id.startswith("loadtest-activity-")
+        or conversation_id.startswith("loadtest-conv-")
+        or user_id.startswith("loadtest-user-")
+    )
 
 
 def _should_refresh_cards(messages: list[BaseMessage]) -> bool:
@@ -145,6 +160,7 @@ def register_handlers(agent_app: Any) -> None:
         await save_conversation_reference(context.activity)
 
         activity = context.activity
+        synthetic_loadtest = _is_synthetic_loadtest_activity(activity)
         conversation_type = getattr(activity.conversation, "conversation_type", "") or ""
         logger.info(
             "Received Teams activity: type=%s conversation_type=%s channel_id=%s text=%r",
@@ -186,6 +202,9 @@ def register_handlers(agent_app: Any) -> None:
             return
 
         if not runner.is_ready():
+            if synthetic_loadtest:
+                logger.info("Skipping reply for synthetic Teams load-test activity while agent is starting")
+                return
             await context.send_activity("Agent is still starting up. Please try again shortly.")
             return
 
@@ -224,8 +243,14 @@ def register_handlers(agent_app: Any) -> None:
             logger.exception("Agent invocation failed")
             reply_text = f"Sorry, something went wrong: {exc}"
 
-        if reply_text:
+        if reply_text and not synthetic_loadtest:
             await context.send_activity(reply_text)
+        elif reply_text:
+            logger.info(
+                "Skipping final reply send for synthetic Teams load-test activity: conversation_id=%s activity_id=%s",
+                getattr(getattr(activity, "conversation", None), "id", "") or "",
+                getattr(activity, "id", "") or "",
+            )
 
 
 async def _run_deterministic_card_action_in_background(

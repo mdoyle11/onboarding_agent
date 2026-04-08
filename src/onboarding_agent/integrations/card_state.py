@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 NS_NEW_HIRE = "new_hire_card"
 NS_DOCUSIGN = "docusign_card"
 NS_SEPARATION = "separation_card"
+NS_BACKGROUND_CLEARANCE = "background_clearance_card"
 _CARD_STATE_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
@@ -523,3 +524,39 @@ async def refresh_separation_card(identity: EmployeeIdentity, submission_id: str
         message_id=card.get("message_id", ""),
         card=updated_card,
     )
+
+
+async def save_background_clearance_card(
+    *,
+    employee_email: str,
+    channel_id: str,
+    message_id: str,
+    employee_name: str = "",
+    submission_id: str = "",
+    summary: str = "",
+    work_location: str = "",
+    job_title: str = "",
+    status_change: str = "",
+) -> None:
+    key = _card_key(employee_email, work_location, job_title, status_change)
+    await _store().put(NS_BACKGROUND_CLEARANCE, key, _card_record({
+        "channel_id": channel_id,
+        "message_id": message_id,
+        "employee_email": employee_email,
+        "employee_name": employee_name,
+        "submission_id": submission_id,
+        "summary": summary,
+        "work_location": work_location,
+        "job_title": job_title,
+        "status_change": status_change,
+    }))
+
+
+async def get_background_clearance_card(
+    identity: EmployeeIdentity,
+    submission_id: str = "",
+) -> dict[str, Any] | None:
+    key = await _resolve_card_key(NS_BACKGROUND_CLEARANCE, identity, submission_id=submission_id)
+    if key is None:
+        return None
+    return await _store().get(NS_BACKGROUND_CLEARANCE, key)

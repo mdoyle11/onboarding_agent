@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -32,16 +33,23 @@ from onboarding_agent.domain.workflows import (
 )
 from onboarding_agent.integrations.card_state import (
     _submission_card_title,
+    get_background_clearance_card,
+    get_docusign_status_card,
+    get_new_hire_card,
+    get_separation_card,
     reset_new_hire_card_actions,
+    save_background_clearance_card,
     save_docusign_status_card,
     save_new_hire_card,
     save_separation_card,
 )
+from onboarding_agent.integrations.teams.proactive import update_proactive_card
 from onboarding_agent.integrations.docusign_client import DocuSignClient
 from onboarding_agent.integrations.teams.messenger import TeamsMessenger
 from onboarding_agent.integrations.workbook.staff_roster_client import StaffRosterClient
 from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 from onboarding_agent.mcp_server.tools_email import draft_onboarding_email_for_employee
+from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.job_queue import QueueJob
 from onboarding_agent.runtime.payloads import payload_any, payload_value
 
@@ -50,10 +58,22 @@ logger = logging.getLogger(__name__)
 JOB_NEW_HIRE = "new_hire_webhook"
 JOB_DOCUSIGN = "docusign_webhook"
 JOB_BACKGROUND_CLEARANCE = "background_clearance_webhook"
+_NOTIFICATION_SEND_RETRIES = 3
 
 
 def _notification_channel() -> str:
     return settings.notification_channel()
+
+
+def _card_state_available() -> bool:
+    return store_mod.store is not None
+
+
+async def _save_card_state_safely(operation: Any) -> None:
+    try:
+        await operation
+    except AssertionError:
+        logger.debug("Card state store not initialized; skipping card-state persistence")
 
 
 def _employee_thread_context(
@@ -161,6 +181,38 @@ async def _send_or_raise(
     return result
 
 
+async def _send_or_update_card(
+    teams_messenger: TeamsMessenger,
+    *,
+    existing_message_id: str = "",
+    summary: str,
+    card: dict[str, Any],
+    session_context: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"success": False}
+    for attempt in range(_NOTIFICATION_SEND_RETRIES):
+        if existing_message_id:
+            result = await update_proactive_card(
+                channel_id=_notification_channel(),
+                message_id=existing_message_id,
+                card=card,
+            )
+            if result.get("success"):
+                result["message_id"] = existing_message_id
+        else:
+            result = await teams_messenger.send_channel_notification(
+                _notification_channel(),
+                summary,
+                card=card,
+                session_context=session_context,
+            )
+        if result.get("success"):
+            return result
+        if attempt < _NOTIFICATION_SEND_RETRIES - 1:
+            await asyncio.sleep(2 ** attempt)
+    return result
+
+
 async def _send_submission_notification(
     teams_messenger: TeamsMessenger,
     *,
@@ -173,12 +225,13 @@ async def _send_submission_notification(
 ) -> None:
     from onboarding_agent.integrations.adaptive_cards import new_hire_card
 
-    await reset_new_hire_card_actions(EmployeeIdentity(
+    identity = EmployeeIdentity(
         email=employee_email,
         work_location=fields["work_location"],
         job_title=fields["job_title"],
         status_change=fields["status_change"],
-    ))
+    )
+    await reset_new_hire_card_actions(identity)
     card = new_hire_card(
         employee_name=employee_name or employee_email,
         employee_email=employee_email,
@@ -195,8 +248,15 @@ async def _send_submission_notification(
         allow_email_action=allow_email_action,
         allow_docusign_action=allow_docusign_action,
     )
-    teams_result = await _send_or_raise(
+    existing_card = (
+        await get_new_hire_card(identity, submission_id=fields["submission_id"])
+        if _card_state_available()
+        else None
+    )
+    existing_message_id = str((existing_card or {}).get("message_id", "") or "").strip()
+    teams_result = await _send_or_update_card(
         teams_messenger,
+        existing_message_id=existing_message_id,
         summary=summary,
         card=card,
         session_context=_employee_thread_context(
@@ -209,8 +269,8 @@ async def _send_submission_notification(
             intent="check_onboarding_status",
         ),
     )
-    if teams_result.get("message_id"):
-        await save_new_hire_card(
+    if teams_result.get("success") and teams_result.get("message_id"):
+        await _save_card_state_safely(save_new_hire_card(
             employee_email=employee_email,
             channel_id=_notification_channel(),
             message_id=str(teams_result["message_id"]),
@@ -225,6 +285,13 @@ async def _send_submission_notification(
             summary=summary,
             allow_email_action=allow_email_action,
             allow_docusign_action=allow_docusign_action,
+        ))
+    elif not teams_result.get("success"):
+        logger.warning(
+            "Submission notification failed for %s submission_id=%s: %s",
+            employee_email,
+            fields["submission_id"] or "<missing>",
+            teams_result.get("error", "unknown error"),
         )
 
 
@@ -578,6 +645,12 @@ async def _send_workflow_action_notification(
 ) -> None:
     from onboarding_agent.integrations.adaptive_cards import separation_card
 
+    identity = EmployeeIdentity(
+        email=employee_email,
+        work_location=fields["work_location"],
+        job_title=fields["job_title"],
+        status_change=fields["status_change"],
+    )
     card = separation_card(
         employee_name=employee_name or employee_email,
         employee_email=employee_email,
@@ -593,8 +666,15 @@ async def _send_workflow_action_notification(
         action_label=action_label,
         action_completed_label=action_completed_label,
     )
-    teams_result = await _send_or_raise(
+    existing_card = (
+        await get_separation_card(identity, submission_id=fields["submission_id"])
+        if _card_state_available()
+        else None
+    )
+    existing_message_id = str((existing_card or {}).get("message_id", "") or "").strip()
+    teams_result = await _send_or_update_card(
         teams_messenger,
+        existing_message_id=existing_message_id,
         summary=summary,
         card=card,
         session_context=_employee_thread_context(
@@ -607,8 +687,8 @@ async def _send_workflow_action_notification(
             intent="check_onboarding_status",
         ),
     )
-    if teams_result.get("message_id"):
-        await save_separation_card(
+    if teams_result.get("success") and teams_result.get("message_id"):
+        await _save_card_state_safely(save_separation_card(
             employee_email=employee_email,
             channel_id=_notification_channel(),
             message_id=str(teams_result["message_id"]),
@@ -624,6 +704,13 @@ async def _send_workflow_action_notification(
             action_name=action_name,
             action_label=action_label,
             action_completed_label=action_completed_label,
+        ))
+    elif not teams_result.get("success"):
+        logger.warning(
+            "Workflow action notification failed for %s submission_id=%s: %s",
+            employee_email,
+            fields["submission_id"] or "<missing>",
+            teams_result.get("error", "unknown error"),
         )
 
 
@@ -656,6 +743,7 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
             employee_email = str(recipients[0].get("email", "")).strip().lower()
 
     try:
+        tracker_record: dict[str, Any] = {}
         stage_result: dict[str, Any] = {"success": False, "error": "No tracker stage update required"}
         if employee_email and status == "completed":
             stage_result = await tracker_client.update_stage(
@@ -716,8 +804,21 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
             job_title=job_title,
             status_change=status_change,
         )
-        teams_result = await _send_or_raise(
+        identity = EmployeeIdentity(
+            email=employee_email,
+            work_location=work_location,
+            job_title=job_title,
+            status_change=status_change,
+        )
+        existing_card = (
+            await get_docusign_status_card(identity, submission_id=submission_id)
+            if _card_state_available()
+            else None
+        )
+        existing_message_id = str((existing_card or {}).get("message_id", "") or "").strip()
+        teams_result = await _send_or_update_card(
             teams_messenger,
+            existing_message_id=existing_message_id,
             summary=summary,
             card=card,
             session_context=_employee_thread_context(
@@ -730,8 +831,8 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
                 envelope_id=envelope_id,
             ),
         )
-        if status == "completed" and teams_result.get("message_id") and employee_email:
-            await save_docusign_status_card(
+        if teams_result.get("success") and teams_result.get("message_id") and employee_email:
+            await _save_card_state_safely(save_docusign_status_card(
                 employee_email=employee_email,
                 employee_name=str(tracker_record.get("name", "") or employee_email) if employee_email else "",
                 channel_id=_notification_channel(),
@@ -745,6 +846,13 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
                 status_change=status_change,
                 roster_added=roster_added,
                 job_category=roster_job_category,
+            ))
+        elif not teams_result.get("success"):
+            logger.warning(
+                "DocuSign notification failed for envelope=%s submission_id=%s: %s",
+                envelope_id[:8] if envelope_id else "unknown",
+                submission_id or "<missing>",
+                teams_result.get("error", "unknown error"),
             )
         logger.info(
             "Processed queued DocuSign job for %s in %.3fs",
@@ -806,8 +914,18 @@ async def process_background_clearance_job(payload: dict[str, Any]) -> None:
             work_location=work_location,
             job_title=job_title,
         )
-        teams_result = await _send_or_raise(
+        email_result = await send_background_clearance_confirmation_email(employee_email, resolved_employee_name)
+        identity = EmployeeIdentity(
+            email=employee_email,
+            work_location=work_location,
+            job_title=job_title,
+            status_change=status_change,
+        )
+        existing_card = await get_background_clearance_card(identity) if _card_state_available() else None
+        existing_message_id = str((existing_card or {}).get("message_id", "") or "").strip()
+        teams_result = await _send_or_update_card(
             teams_messenger,
+            existing_message_id=existing_message_id,
             summary=summary,
             card=card,
             session_context=_employee_thread_context(
@@ -819,7 +937,24 @@ async def process_background_clearance_job(payload: dict[str, Any]) -> None:
                 intent="background_clearance",
             ),
         )
-        email_result = await send_background_clearance_confirmation_email(employee_email, resolved_employee_name)
+        if teams_result.get("success") and teams_result.get("message_id"):
+            await _save_card_state_safely(save_background_clearance_card(
+                employee_email=employee_email,
+                channel_id=_notification_channel(),
+                message_id=str(teams_result["message_id"]),
+                employee_name=resolved_employee_name,
+                submission_id=str(tracker_record.get("submission_id", "") or ""),
+                summary=summary,
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
+            ))
+        else:
+            logger.warning(
+                "Background-clearance notification failed for %s: %s",
+                employee_email or "unknown",
+                teams_result.get("error", "unknown error"),
+            )
 
         if not email_result.get("success"):
             logger.warning(

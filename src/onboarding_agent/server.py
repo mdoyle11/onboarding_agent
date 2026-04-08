@@ -36,6 +36,10 @@ _agent_app: AgentApplication[TurnState] | None = None
 _adapter: CloudAdapter | None = None
 
 
+def _is_synthetic_teams_loadtest(request: web.Request) -> bool:
+    return settings.teams_loadtest_mode and request.headers.get("X-Load-Test", "").strip().lower() == "true"
+
+
 def _setup_teams(app: web.Application) -> None:
     config = load_agents_sdk_config()
     storage = MemoryStorage()
@@ -60,12 +64,16 @@ def _setup_teams(app: web.Application) -> None:
         """POST /api/messages — Microsoft 365 Agents SDK endpoint for Teams/App Tester."""
         if "application/json" not in request.content_type:
             return web.Response(status=415)
+        synthetic_loadtest = _is_synthetic_teams_loadtest(request)
         try:
             response = await adapter.process(request, agent_app)
             if response is None:
                 return web.Response(status=201)
             return cast(web.Response, response)
         except Exception as exc:
+            if synthetic_loadtest:
+                logger.warning("Ignoring synthetic Teams load-test reply error: %s", exc)
+                return web.Response(status=201)
             logger.exception("Error processing Teams activity")
             return web.Response(status=500, text=str(exc))
 

@@ -17,6 +17,8 @@ locals {
     HOST                                       = "0.0.0.0"
     PORT                                       = "8080"
     MICROSOFT_APP_ID                           = var.microsoft_app_id
+    MICROSOFT_APP_ALLOW_ANONYMOUS              = tostring(var.microsoft_app_allow_anonymous)
+    TEAMS_LOADTEST_MODE                        = tostring(var.teams_loadtest_mode)
     AZURE_TENANT_ID                            = var.azure_tenant_id
     AZURE_CLIENT_ID                            = var.azure_client_id
     GRAPH_EXCEL_DRIVE_ID                       = var.graph_excel_drive_id

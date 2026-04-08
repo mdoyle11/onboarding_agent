@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     microsoft_app_id: str = ""
     microsoft_app_password: str = ""
     microsoft_app_allow_anonymous: bool = False
+    teams_loadtest_mode: bool = False
 
     # ---------------------------------------------------------------------------
     # Microsoft Graph — Excel tracker
