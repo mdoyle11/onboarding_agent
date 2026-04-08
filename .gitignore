@@ -44,6 +44,13 @@ teamsappPackage/
 ARCHITECTURE.md
 RUNBOOK.md
 docs/
+loadtest/
+STRESS_TEST_PLAN.md
+STRESS_TEST_RESULTS_2026-04-08.md
+EDGE_CASE_TEST_CONSIDERATIONS.md
+SECURITY_RBAC_PLAN.md
+.claude/
+.codex
 
 # Editor
 .vscode/
