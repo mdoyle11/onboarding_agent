@@ -146,14 +146,6 @@ def _compact_employee_lookup(result: dict[str, Any]) -> dict[str, Any]:
         "identity_key": str(result.get("identity_key", "") or ""),
         "manager_email": str(result.get("manager_email", "") or ""),
         "requesting_manager": str(result.get("requesting_manager", result.get("manager_email", "")) or ""),
-        "staff_phone": str(result.get("staff_phone", "") or ""),
-        "education_level": str(result.get("education_level", "") or ""),
-        "supplements": str(result.get("supplements", "") or ""),
-        "license_number": str(result.get("license_number", "") or ""),
-        "uploaded_credentials": str(result.get("uploaded_credentials", "") or ""),
-        "compensation": str(result.get("compensation", "") or ""),
-        "employment_type": str(result.get("employment_type", "") or ""),
-        "contract_term": str(result.get("contract_term", "") or ""),
         "status": status,
         "summary": " ".join(summary_bits),
     }
@@ -249,8 +241,9 @@ def register(mcp: FastMCP) -> None:
 
         Use this to inspect the canonical onboarding tracker record before
         updating fields, updating stages, or deleting the row. The response
-        includes row-level values such as start date, location, job title,
-        status change, manager, phone, compensation, and other tracker fields.
+        includes the identity and workflow fields most commonly needed for
+        conversational HR operations. It intentionally omits higher-sensitivity
+        fields such as compensation, phone, credentials, and license data.
         If the same email has multiple tracker rows, provide `location`,
         `job_title`, or `status_change` to disambiguate.
         """

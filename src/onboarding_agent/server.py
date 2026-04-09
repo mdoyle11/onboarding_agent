@@ -114,6 +114,8 @@ async def _on_startup(app: web.Application) -> None:
         app["job_queue"] = create_job_queue(
             backend=settings.job_queue_backend,
             handler=process_job,
+            managed_identity_client_id=settings.managed_identity_client_id,
+            azure_storage_queue_account_url=settings.azure_storage_queue_account_url,
             azure_storage_queue_connection_string=settings.azure_storage_queue_connection_string,
             azure_storage_queue_name=settings.azure_storage_queue_name,
             queue_poll_interval_seconds=settings.queue_poll_interval_seconds,

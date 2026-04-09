@@ -1,0 +1,50 @@
+# Fresh long-lived Azure platform resources for the target environment.
+
+environment = "prod"
+location    = "eastus"
+
+resource_group_name            = "OnboardingAgent-Prod"
+container_registry_name        = "onboardingagentprodacr"
+container_app_environment_name = "onboarding-agent-prod-env"
+log_analytics_workspace_name   = "onboarding-agent-prod-logs"
+storage_account_name           = "onboardingagentprodst"
+cosmos_account_name            = "onboardingagentprodcosmos"
+key_vault_name                 = "onboarding-agent-prod-kv"
+azure_openai_account_name      = "onboarding-agent-prod-openai"
+azure_openai_deployment_name   = "gpt-4.1-mini"
+azure_openai_model_name        = "gpt-4.1-mini"
+azure_openai_model_version     = "2025-04-14"
+azure_openai_deployment_sku_name = "Standard"
+azure_openai_deployment_capacity = 1
+shared_user_assigned_identity_name = "onboarding-agent-prod-identity"
+azure_bot_name                 = "onboarding-agent-prod-bot"
+azure_bot_display_name         = "Onboarding Agent"
+
+# Enable this only for the one environment that should consume Cosmos free tier.
+cosmos_free_tier_enabled = true
+
+# Existing approved Entra app registration values.
+microsoft_app_id        = "REPLACE_ME_EXISTING_APPROVED_BOT_APP_ID"
+microsoft_app_tenant_id = "REPLACE_ME_AZURE_TENANT_ID"
+
+# The app layer will overwrite the bot endpoint after the Container App exists.
+bot_initial_endpoint = "https://placeholder.invalid/api/messages"
+
+# Optional initial Key Vault seeding for environment secrets.
+# Keep real values only in your local tfvars files or secret backend.
+# key_vault_secrets = {
+#   "webhook-secret"              = "REPLACE_ME_WEBHOOK_SECRET"
+#   "microsoft-app-password"      = "REPLACE_ME_TEAMS_APP_PASSWORD"
+#   "azure-client-secret"         = "REPLACE_ME_GRAPH_CLIENT_SECRET"
+#   "docusign-private-key"        = <<-EOT
+# -----BEGIN RSA PRIVATE KEY-----
+# REPLACE_ME_WITH_YOUR_ACTUAL_DOCUSIGN_PRIVATE_KEY_CONTENT
+# -----END RSA PRIVATE KEY-----
+# EOT
+# }
+
+# Optional custom tags for resources Terraform creates.
+# tags = {
+#   owner = "matthew"
+#   app   = "onboarding-agent"
+# }

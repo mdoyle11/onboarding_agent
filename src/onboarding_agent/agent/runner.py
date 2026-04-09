@@ -269,6 +269,34 @@ def is_ready() -> bool:
 
 
 def _build_llm(tools: list[Any]) -> Any:
+    if settings.is_azure_openai():
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        from langchain_openai import AzureChatOpenAI
+
+        azure_openai_kwargs: dict[str, Any] = {
+            "azure_deployment": settings.azure_openai_deployment,
+            "api_version": settings.azure_openai_api_version,
+            "azure_endpoint": settings.azure_openai_endpoint,
+        }
+
+        if settings.azure_openai_api_key:
+            logger.info("Using Azure OpenAI API-key auth")
+            azure_openai_kwargs["api_key"] = settings.azure_openai_api_key
+        else:
+            logger.info("Using Azure OpenAI managed-identity auth")
+            credential = DefaultAzureCredential(
+                managed_identity_client_id=settings.azure_openai_managed_identity_client_id or None,
+                exclude_environment_credential=True,
+            )
+            azure_openai_kwargs["azure_ad_token_provider"] = get_bearer_token_provider(
+                credential,
+                "https://cognitiveservices.azure.com/.default",
+            )
+
+        return AzureChatOpenAI(
+            **azure_openai_kwargs,
+        ).bind_tools(tools)
+
     if settings.is_gemini():
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
@@ -317,13 +345,24 @@ async def _execute_tool_calls(
             return ToolMessage(content=f"Unknown tool: {name}", tool_call_id=call_id, name=name)
         try:
             tool = tool_map[name]
-            logger.info("Executing tool %s with args=%s", name, args)
+            logger.info(
+                "Executing tool %s with arg_keys=%s",
+                name,
+                sorted(str(key) for key in args.keys()),
+            )
             result = (
                 await tool.arun(args)
                 if inspect.iscoroutinefunction(tool.arun)
                 else tool.run(args)
             )
-            logger.info("Tool %s result=%s", name, result)
+            result_type = type(result).__name__
+            result_size = len(result) if isinstance(result, (str, list, dict, tuple, set)) else None
+            logger.info(
+                "Tool %s completed result_type=%s result_size=%s",
+                name,
+                result_type,
+                result_size if result_size is not None else "n/a",
+            )
             return ToolMessage(content=str(result), tool_call_id=call_id, name=name)
         except Exception as exc:
             logger.exception("Tool %s failed", name)
@@ -362,10 +401,11 @@ async def run_agent(
                 response = cast(AIMessage, await llm.ainvoke(messages))
                 messages.append(response)
                 logger.info(
-                    "Agent response for %s: tool_calls=%d content=%s",
+                    "Agent response for %s: tool_calls=%d has_content=%s content_length=%d",
                     trigger_source or "unknown",
                     len(response.tool_calls),
-                    response.content,
+                    bool(response.content),
+                    len(str(response.content or "")),
                 )
 
                 if not response.tool_calls:

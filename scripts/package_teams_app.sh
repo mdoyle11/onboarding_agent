@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <bot-host>"
-  echo "Example: $0 onboarding-agent.eastus.azurecontainerapps.io"
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "Usage: $0 <bot-host> <bot-app-id> [teams-app-id]"
+  echo "Example: $0 onboarding-agent.eastus.azurecontainerapps.io 00000000-0000-0000-0000-000000000000"
   exit 1
 fi
 
 BOT_HOST="$1"
+BOT_APP_ID="$2"
+TEAMS_APP_ID="${3:-$BOT_APP_ID}"
 PACKAGE_DIR="teamsappPackage"
 MANIFEST_TEMPLATE="${PACKAGE_DIR}/manifest.json"
 MANIFEST_RENDERED="${PACKAGE_DIR}/.manifest.rendered.json"
@@ -18,7 +20,7 @@ if [[ ! -f "$MANIFEST_TEMPLATE" ]]; then
   exit 1
 fi
 
-python3 - "$MANIFEST_TEMPLATE" "$MANIFEST_RENDERED" "$BOT_HOST" <<'PY'
+python3 - "$MANIFEST_TEMPLATE" "$MANIFEST_RENDERED" "$BOT_HOST" "$BOT_APP_ID" "$TEAMS_APP_ID" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -26,8 +28,13 @@ import sys
 src = Path(sys.argv[1])
 dst = Path(sys.argv[2])
 bot_host = sys.argv[3]
+bot_app_id = sys.argv[4]
+teams_app_id = sys.argv[5]
 
 manifest = json.loads(src.read_text())
+manifest["id"] = teams_app_id
+for bot in manifest.get("bots", []):
+    bot["botId"] = bot_app_id
 manifest["validDomains"] = [bot_host]
 dst.write_text(json.dumps(manifest, indent=2) + "\n")
 PY
@@ -67,3 +74,5 @@ rm -f "$MANIFEST_RENDERED"
 
 echo "Wrote Teams app package: $ZIP_PATH"
 echo "Bot host in manifest validDomains: $BOT_HOST"
+echo "Bot app ID in manifest bots[].botId: $BOT_APP_ID"
+echo "Teams app ID in manifest id: $TEAMS_APP_ID"

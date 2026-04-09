@@ -826,8 +826,8 @@ class TestTrackerTools:
         assert result["found"] is True
         assert result["email"] == "alice@example.com"
         assert result["status"] == "Sent Offer Letter"
-        assert result["staff_phone"] == "555-111-2222"
-        assert result["compensation"] == "60000"
+        assert "staff_phone" not in result
+        assert "compensation" not in result
         assert "stages" not in result
         assert "Alice Example" in result["summary"]
 

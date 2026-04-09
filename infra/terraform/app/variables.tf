@@ -7,47 +7,67 @@ variable "project_name" {
 variable "environment" {
   description = "Deployment environment name."
   type        = string
-  default     = "dev"
 }
 
 variable "resource_group_name" {
-  description = "Existing Azure resource group name used for this deployment."
+  description = "Resource group name created by the foundation layer."
+  type        = string
+}
+
+variable "container_app_environment_id" {
+  description = "Container Apps environment resource ID from foundation."
   type        = string
 }
 
 variable "container_registry_name" {
-  description = "Existing Azure Container Registry name."
+  description = "Azure Container Registry name from foundation."
   type        = string
 }
 
-variable "container_registry_username" {
-  description = "Username for the existing Azure Container Registry. Requires ACR admin user to be enabled."
-  type        = string
-}
-
-variable "container_registry_password" {
-  description = "Password for the existing Azure Container Registry. Requires ACR admin user to be enabled."
-  type        = string
-  sensitive   = true
-}
-
-variable "container_app_environment_name" {
-  description = "Container Apps environment name."
-  type        = string
-}
-
-variable "container_app_name" {
-  description = "Container App name."
+variable "key_vault_name" {
+  description = "Key Vault name from foundation."
   type        = string
 }
 
 variable "storage_account_name" {
-  description = "Existing Azure Storage Account name used for queue-backed job processing."
+  description = "Storage account name from foundation."
   type        = string
 }
 
-variable "existing_cosmos_account_name" {
-  description = "Existing Azure Cosmos DB account name."
+variable "cosmos_account_name" {
+  description = "Cosmos account name from foundation."
+  type        = string
+}
+
+variable "azure_bot_resource_id" {
+  description = "Azure Bot resource ID from foundation."
+  type        = string
+}
+
+variable "shared_user_assigned_identity_id" {
+  description = "Shared user-assigned managed identity resource ID from foundation."
+  type        = string
+}
+
+variable "shared_user_assigned_identity_client_id" {
+  description = "Shared user-assigned managed identity client ID from foundation."
+  type        = string
+  default     = ""
+}
+
+variable "key_vault_secret_names" {
+  description = "Key Vault secret names used by the app layer."
+  type        = map(string)
+  default = {
+    webhook_secret         = "webhook-secret"
+    microsoft_app_password = "microsoft-app-password"
+    azure_client_secret    = "azure-client-secret"
+    docusign_private_key   = "docusign-private-key"
+  }
+}
+
+variable "container_app_name" {
+  description = "Container App name."
   type        = string
 }
 
@@ -81,26 +101,8 @@ variable "memory" {
   default     = "1Gi"
 }
 
-# ---------------------------------------------------------------------------
-# Application secrets (passed as Container App secrets)
-# ---------------------------------------------------------------------------
-
-variable "anthropic_api_key" {
-  description = "Anthropic API key."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "gemini_api_key" {
-  description = "Gemini API key."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "llm_provider" {
-  description = "LLM provider to use (anthropic or gemini)."
+  description = "LLM provider to use (anthropic, gemini, or azure_openai)."
   type        = string
   default     = "gemini"
 }
@@ -111,21 +113,27 @@ variable "gemini_model" {
   default     = "gemini-2.5-flash"
 }
 
-variable "webhook_secret" {
-  description = "HMAC secret for webhook validation."
+variable "azure_openai_endpoint" {
+  description = "Azure OpenAI endpoint from foundation."
   type        = string
-  sensitive   = true
+  default     = ""
+}
+
+variable "azure_openai_api_version" {
+  description = "Azure OpenAI API version."
+  type        = string
+  default     = "2024-10-21"
+}
+
+variable "azure_openai_deployment" {
+  description = "Azure OpenAI model deployment name."
+  type        = string
+  default     = ""
 }
 
 variable "microsoft_app_id" {
   description = "Microsoft App ID for Teams bot."
   type        = string
-}
-
-variable "microsoft_app_password" {
-  description = "Microsoft App password for Teams bot."
-  type        = string
-  sensitive   = true
 }
 
 variable "microsoft_app_allow_anonymous" {
@@ -141,19 +149,13 @@ variable "teams_loadtest_mode" {
 }
 
 variable "azure_tenant_id" {
-  description = "Azure AD tenant ID."
+  description = "Azure tenant ID."
   type        = string
 }
 
 variable "azure_client_id" {
-  description = "Azure AD client ID for Graph API."
+  description = "Existing Graph app registration client ID."
   type        = string
-}
-
-variable "azure_client_secret" {
-  description = "Azure AD client secret for Graph API."
-  type        = string
-  sensitive   = true
 }
 
 variable "graph_excel_drive_id" {
@@ -167,7 +169,7 @@ variable "graph_excel_item_id" {
 }
 
 variable "graph_excel_table_name" {
-  description = "Optional Excel table name for onboarding tracker reads. Falls back to usedRange when empty."
+  description = "Optional Excel table name for onboarding tracker reads."
   type        = string
   default     = ""
 }
@@ -183,14 +185,8 @@ variable "docusign_integration_key" {
 }
 
 variable "docusign_user_id" {
-  description = "DocuSign user ID for JWT Grant."
+  description = "DocuSign user ID for JWT grant."
   type        = string
-}
-
-variable "docusign_private_key" {
-  description = "DocuSign RSA private key (inline PEM content)."
-  type        = string
-  sensitive   = true
 }
 
 variable "docusign_template_id" {
@@ -199,13 +195,13 @@ variable "docusign_template_id" {
 }
 
 variable "docusign_connect_url" {
-  description = "Base URL used by DocuSign Connect callbacks, for example https://your-app.azurecontainerapps.io."
+  description = "Base URL used by DocuSign Connect callbacks."
   type        = string
   default     = ""
 }
 
 variable "cosmos_key" {
-  description = "Key for the existing Cosmos DB account."
+  description = "Cosmos account key from foundation. Replace later with identity-based access."
   type        = string
   sensitive   = true
 }
@@ -235,9 +231,16 @@ variable "conversation_session_cosmos_container_name" {
 }
 
 variable "conversation_session_cosmos_default_ttl" {
-  description = "Default TTL in seconds for Teams conversation session metadata. Use -1 to disable automatic expiry."
+  description = "Default TTL in seconds for Teams conversation session metadata."
   type        = number
   default     = 259200
+}
+
+variable "storage_account_connection_string" {
+  description = "Storage account connection string from foundation. Replace later with identity-based access."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "azure_storage_queue_name" {
@@ -258,27 +261,20 @@ variable "outlook_sender_email" {
   default     = ""
 }
 
-variable "staff_roster_locations_json" {
-  description = "JSON string mapping locations to staff roster workbook IDs."
-  type        = string
-  sensitive   = true
-  default     = "{}"
-}
-
 variable "staff_roster_default_separations_sheet_name" {
-  description = "Default separations sheet name for all staff roster workbooks."
+  description = "Default staff roster separations worksheet name."
   type        = string
   default     = "Separations"
 }
 
-variable "storage_account_connection_string" {
-  description = "Connection string for the existing Azure Storage Account."
+variable "staff_roster_locations_json" {
+  description = "Serialized staff roster workbook mapping payload."
   type        = string
   sensitive   = true
 }
 
 variable "tags" {
-  description = "Tags applied to all resources."
+  description = "Optional custom tags."
   type        = map(string)
   default     = {}
 }

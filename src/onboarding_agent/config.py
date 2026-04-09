@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # ---------------------------------------------------------------------------
-    # LLM provider — "gemini" | "anthropic"
+    # LLM provider — "gemini" | "anthropic" | "azure_openai"
     # ---------------------------------------------------------------------------
     llm_provider: str = "anthropic"
 
@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     # Gemini (required when llm_provider=gemini)
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+
+    # Azure OpenAI / Azure-hosted model (required when llm_provider=azure_openai)
+    azure_openai_api_key: str = ""
+    azure_openai_endpoint: str = ""
+    azure_openai_api_version: str = "2024-10-21"
+    azure_openai_deployment: str = ""
+    azure_openai_managed_identity_client_id: str = ""
 
     # ---------------------------------------------------------------------------
     # Teams / Agents SDK
@@ -105,6 +112,8 @@ class Settings(BaseSettings):
     # Job queue — "local" | "azure"
     # ---------------------------------------------------------------------------
     job_queue_backend: str = "local"
+    managed_identity_client_id: str = ""
+    azure_storage_queue_account_url: str = ""
     azure_storage_queue_connection_string: str = ""
     azure_storage_queue_name: str = "onboarding-jobs"
     queue_poll_interval_seconds: float = 1.0
@@ -114,6 +123,9 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------------------------
     def is_gemini(self) -> bool:
         return self.llm_provider.lower() == "gemini"
+
+    def is_azure_openai(self) -> bool:
+        return self.llm_provider.lower() == "azure_openai"
 
     def docusign_private_key_bytes(self) -> bytes:
         """Return the DocuSign private key as bytes.

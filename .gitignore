@@ -37,7 +37,7 @@ devTools/
 *.tfstate.backup
 .terraform/
 .terraform.lock.hcl
-terraform.tfvars
+*.tfvars
 
 # Local-only Teams package and planning docs
 teamsappPackage/

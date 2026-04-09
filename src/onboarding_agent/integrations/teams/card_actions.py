@@ -483,6 +483,7 @@ async def _run_new_hire_card_action(card_action: dict[str, str]) -> dict[str, An
         current_work_location = str(tracker_record.get("location", "") or identity.work_location or "").strip()
         current_job_title = str(tracker_record.get("job_title", "") or identity.job_title or "").strip()
         current_status_change = str(tracker_record.get("status_change", "") or identity.status_change or "").strip()
+        employee_name = str(tracker_record.get("name", "") or parent_card.get("employee_name", "") or "").strip()
         docusign_client = DocuSignClient()
         draft_result = await docusign_client.check_draft_exists(
             identity.email,
@@ -499,7 +500,6 @@ async def _run_new_hire_card_action(card_action: dict[str, str]) -> dict[str, An
         )
         if not draft_result.get("exists"):
             requested_start_date = str(tracker_record.get("start_date", "") or "").strip()
-            employee_name = str(tracker_record.get("name", "") or parent_card.get("employee_name", "") or "").strip()
             if not requested_start_date or not current_job_title or not current_work_location:
                 logger.warning(
                     "Draft card action missing required tracker fields: employee=%s submission_id=%s start_date=%s location=%s job_title=%s",

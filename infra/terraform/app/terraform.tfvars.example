@@ -1,0 +1,67 @@
+# Copy foundation outputs or remote-state values into this file.
+
+environment                = "prod"
+resource_group_name        = "OnboardingAgent-Prod"
+container_app_environment_id      = "/subscriptions/REPLACE_ME/resourceGroups/OnboardingAgent-Prod/providers/Microsoft.App/managedEnvironments/onboarding-agent-prod-env"
+container_registry_name           = "onboardingagentprodacr"
+key_vault_name                    = "onboarding-agent-prod-kv"
+storage_account_name              = "onboardingagentprodst"
+cosmos_account_name               = "onboardingagentprodcosmos"
+azure_bot_resource_id             = "/subscriptions/REPLACE_ME/resourceGroups/OnboardingAgent-Prod/providers/Microsoft.BotService/botServices/onboarding-agent-prod-bot"
+shared_user_assigned_identity_id = "/subscriptions/REPLACE_ME/resourceGroups/OnboardingAgent-Prod/providers/Microsoft.ManagedIdentity/userAssignedIdentities/onboarding-agent-prod-identity"
+shared_user_assigned_identity_client_id = "REPLACE_ME_FOUNDATION_IDENTITY_CLIENT_ID"
+
+container_app_name = "onboarding-agent"
+image_tag          = "REPLACE_ME_IMAGE_TAG"
+
+min_replicas = 1
+max_replicas = 3
+cpu          = 0.5
+memory       = "1Gi"
+
+llm_provider            = "azure_openai"
+azure_openai_endpoint   = "https://REPLACE_ME.openai.azure.com/"
+azure_openai_deployment = "REPLACE_ME_FOUNDATION_DEPLOYMENT_NAME"
+
+azure_tenant_id     = "REPLACE_ME_AZURE_TENANT_ID"
+azure_client_id     = "REPLACE_ME_EXISTING_GRAPH_CLIENT_ID"
+
+microsoft_app_id                  = "REPLACE_ME_EXISTING_APPROVED_BOT_APP_ID"
+microsoft_app_allow_anonymous     = false
+teams_loadtest_mode               = false
+teams_channel_id                  = "REPLACE_ME_TEAMS_CHANNEL_ID"
+
+# Override these only if you seed different secret names in foundation.
+# key_vault_secret_names = {
+#   webhook_secret              = "webhook-secret"
+#   microsoft_app_password      = "microsoft-app-password"
+#   azure_client_secret         = "azure-client-secret"
+#   docusign_private_key        = "docusign-private-key"
+# }
+
+graph_excel_drive_id      = "REPLACE_ME_GRAPH_EXCEL_DRIVE_ID"
+graph_excel_item_id       = "REPLACE_ME_GRAPH_EXCEL_ITEM_ID"
+graph_excel_table_name    = ""
+
+staff_roster_locations_json       = "{}"
+staff_roster_default_separations_sheet_name = "Separations"
+
+docusign_account_id      = "REPLACE_ME_DOCUSIGN_ACCOUNT_ID"
+docusign_integration_key = "REPLACE_ME_DOCUSIGN_INTEGRATION_KEY"
+docusign_user_id         = "REPLACE_ME_DOCUSIGN_USER_ID"
+docusign_template_id = "REPLACE_ME_DOCUSIGN_TEMPLATE_ID"
+docusign_connect_url     = "https://REPLACE_ME_CONTAINER_APP_BASE_URL"
+
+cosmos_key                       = "REPLACE_ME_FOUNDATION_COSMOS_PRIMARY_KEY"
+state_store_backend              = "cosmos"
+cosmos_database_name             = "onboarding-agent"
+cosmos_state_container_name      = "state-records"
+conversation_session_cosmos_container_name = "conversation-sessions"
+conversation_session_cosmos_default_ttl    = 259200
+
+azure_storage_queue_name          = "onboarding-jobs"
+
+# Optional legacy fallback. Leave empty when using managed identity for Queue Storage.
+# storage_account_connection_string = "REPLACE_ME_FOUNDATION_STORAGE_CONNECTION_STRING"
+
+outlook_sender_email = "hr@example.com"

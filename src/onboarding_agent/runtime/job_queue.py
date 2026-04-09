@@ -72,17 +72,33 @@ class AzureStorageJobQueue:
         self,
         handler: JobHandler,
         *,
-        connection_string: str,
         queue_name: str,
+        connection_string: str = "",
+        account_url: str = "",
+        managed_identity_client_id: str = "",
         poll_interval_seconds: float = 1.0,
         visibility_timeout_seconds: int = 300,
         max_dequeue_count: int = 5,
     ) -> None:
         from azure.core.exceptions import ResourceExistsError
+        from azure.identity import DefaultAzureCredential
         from azure.storage.queue import QueueClient
 
         self._handler = handler
-        self._client = QueueClient.from_connection_string(connection_string, queue_name)
+        if connection_string:
+            self._client = QueueClient.from_connection_string(connection_string, queue_name)
+        elif account_url:
+            credential = DefaultAzureCredential(
+                managed_identity_client_id=managed_identity_client_id or None,
+                exclude_environment_credential=True,
+            )
+            self._client = QueueClient(
+                account_url=account_url,
+                queue_name=queue_name,
+                credential=credential,
+            )
+        else:
+            raise ValueError("Azure job queue backend requires either account_url or connection_string")
         self._resource_exists_error = ResourceExistsError
         self._poll_interval_seconds = poll_interval_seconds
         self._visibility_timeout_seconds = visibility_timeout_seconds
@@ -182,12 +198,19 @@ def create_job_queue(
     normalized = backend.strip().lower()
     if normalized == "azure":
         connection_string = str(kwargs.get("azure_storage_queue_connection_string", "")).strip()
-        if not connection_string:
-            raise ValueError("Azure job queue backend requires AZURE_STORAGE_QUEUE_CONNECTION_STRING")
+        account_url = str(kwargs.get("azure_storage_queue_account_url", "")).strip()
+        managed_identity_client_id = str(kwargs.get("managed_identity_client_id", "")).strip()
+        if not connection_string and not account_url:
+            raise ValueError(
+                "Azure job queue backend requires AZURE_STORAGE_QUEUE_ACCOUNT_URL or "
+                "AZURE_STORAGE_QUEUE_CONNECTION_STRING"
+            )
         return AzureStorageJobQueue(
             handler,
+            account_url=account_url,
             connection_string=connection_string,
             queue_name=str(kwargs.get("azure_storage_queue_name", "onboarding-jobs")),
+            managed_identity_client_id=managed_identity_client_id,
             poll_interval_seconds=float(kwargs.get("queue_poll_interval_seconds", 1.0)),
             max_dequeue_count=int(kwargs.get("queue_max_dequeue_count", 5)),
         )
