@@ -43,9 +43,9 @@ from onboarding_agent.integrations.card_state import (
     save_new_hire_card,
     save_separation_card,
 )
-from onboarding_agent.integrations.teams.proactive import update_proactive_card
 from onboarding_agent.integrations.docusign_client import DocuSignClient
 from onboarding_agent.integrations.teams.messenger import TeamsMessenger
+from onboarding_agent.integrations.teams.proactive import update_proactive_card
 from onboarding_agent.integrations.workbook.staff_roster_client import StaffRosterClient
 from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 from onboarding_agent.mcp_server.tools_email import draft_onboarding_email_for_employee

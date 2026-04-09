@@ -348,7 +348,7 @@ async def _execute_tool_calls(
             logger.info(
                 "Executing tool %s with arg_keys=%s",
                 name,
-                sorted(str(key) for key in args.keys()),
+                sorted(str(key) for key in args),
             )
             result = (
                 await tool.arun(args)
