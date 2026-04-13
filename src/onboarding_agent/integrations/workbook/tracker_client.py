@@ -763,7 +763,7 @@ class TrackerClient(WorkbookGraphClient):
                 "error": f"Unknown stage '{stage_name}'. Valid stages: {list(self._stage_columns)}",
             }
 
-        employee = await self.find_employee_in_tracker(
+        employee = await self.resolve_employee_relaxed(
             employee_email,
             location=location,
             job_title=job_title,
@@ -771,7 +771,39 @@ class TrackerClient(WorkbookGraphClient):
             submission_id=submission_id,
         )
         if not employee.get("found"):
-            return {"success": False, "error": f"Employee {employee_email} not found in tracker"}
+            response: dict[str, Any] = {
+                "success": False,
+                "employee_email": employee_email,
+                "location": location,
+                "job_title": job_title,
+                "status_change": status_change,
+                "submission_id": submission_id,
+                "multiple_matches": bool(employee.get("multiple_matches", False)),
+                "matches": employee.get("matches", []),
+            }
+            if employee.get("multiple_matches"):
+                response["error"] = str(
+                    employee.get(
+                        "error",
+                        "Multiple tracker rows matched this email. Provide location, job_title, status_change, or submission_id.",
+                    )
+                )
+                return response
+            filters = [
+                f"{name}={value}"
+                for name, value in {
+                    "location": location,
+                    "job_title": job_title,
+                    "status_change": status_change,
+                    "submission_id": submission_id,
+                }.items()
+                if value
+            ]
+            filter_text = f" with filters {', '.join(filters)}" if filters else ""
+            response["error"] = str(
+                employee.get("error") or f"Employee {employee_email} not found in tracker{filter_text}"
+            )
+            return response
 
         try:
             row_id = employee["row_id"]

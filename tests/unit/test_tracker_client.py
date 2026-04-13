@@ -337,6 +337,8 @@ async def test_update_stage_refreshes_stage_columns_before_validation():
                 side_effect=[
                     {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
                     {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
                     {},
                 ]
             ),
@@ -350,7 +352,95 @@ async def test_update_stage_refreshes_stage_columns_before_validation():
         )
 
     assert result["success"] is True
-    assert mock_request.await_args_list[2].args[0] == "PATCH"
+    assert mock_request.await_args_list[-1].args[0] == "PATCH"
+
+
+@pytest.mark.asyncio
+async def test_update_stage_relaxes_stale_identity_filters_for_unique_email_match():
+    client = TrackerClient()
+    row = _build_row(
+        {
+            "Staff Name": "Nancy Cruz",
+            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Work Location": "Collier",
+            "Job Title": "Teacher",
+            "Status Change": "New Hire",
+        }
+    )
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(
+                side_effect=[
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {},
+                ]
+            ),
+        ) as mock_request,
+    ):
+        result = await client.update_stage(
+            "ncruz@bridgeprepacademy.com",
+            "Background Submission",
+            location="Collier",
+            job_title="Wrong Title",
+            status_change="Leave Start",
+        )
+
+    assert result["success"] is True
+    assert mock_request.await_args_list[-1].args[0] == "PATCH"
+
+
+@pytest.mark.asyncio
+async def test_update_stage_surfaces_ambiguity_for_duplicate_email_matches():
+    client = TrackerClient()
+    row1 = _build_row(
+        {
+            "Staff Name": "Nancy Cruz",
+            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Work Location": "Collier",
+            "Job Title": "Teacher",
+            "Status Change": "New Hire",
+            "Added to Tracker": "2026-04-01",
+        }
+    )
+    row2 = _build_row(
+        {
+            "Staff Name": "Nancy Cruz",
+            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Work Location": "Collier",
+            "Job Title": "Coach",
+            "Status Change": "Transfer In",
+            "Added to Tracker": "2026-04-02",
+        }
+    )
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(return_value={"address": "Onboarding!A1:AA3", "values": [HEADER_ROW, row1, row2]}),
+        ) as mock_request,
+    ):
+        result = await client.update_stage(
+            "ncruz@bridgeprepacademy.com",
+            "Background Submission",
+            location="Wrong Location",
+            job_title="Wrong Title",
+            status_change="Leave Start",
+        )
+
+    assert result["success"] is False
+    assert result["multiple_matches"] is True
+    assert len(result["matches"]) == 2
+    assert "Multiple tracker rows" in result["error"]
+    assert all(call.args[0] == "GET" for call in mock_request.await_args_list)
 
 
 @pytest.mark.asyncio

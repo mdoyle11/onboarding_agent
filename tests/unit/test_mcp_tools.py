@@ -1244,6 +1244,33 @@ class TestTrackerTools:
         )
 
     @pytest.mark.asyncio
+    async def test_update_tracker_stage_surfaces_lookup_ambiguity(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": False,
+            "multiple_matches": True,
+            "matches": [
+                {"location": "Collier", "job_title": "Teacher"},
+                {"location": "Collier", "job_title": "Coach"},
+            ],
+            "error": "Multiple tracker rows matched this email.",
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-update-ambiguity-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
+        result = await tool_fn(
+            employee_email="ncruz@bridgeprepacademy.com",
+            stage_name="Background Submission",
+        )
+
+        assert result["success"] is False
+        assert result["multiple_matches"] is True
+        assert len(result["matches"]) == 2
+        self.tracker.update_stage.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_find_employee_in_tracker_passes_submission_id(self):
         self.tracker.find_employee_in_tracker.return_value = {
             "found": True,
