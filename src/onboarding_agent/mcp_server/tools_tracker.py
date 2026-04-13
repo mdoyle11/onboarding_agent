@@ -8,8 +8,8 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from onboarding_agent.domain.formatting import format_date
 from onboarding_agent.domain.field_resolution import resolve_field_name
+from onboarding_agent.domain.formatting import format_date
 from onboarding_agent.domain.identity import EmployeeIdentity
 from onboarding_agent.integrations.workbook.schema import (
     ALL_STAGES,

@@ -7,7 +7,10 @@ from typing import Any
 from fastmcp import FastMCP
 
 from onboarding_agent.domain.field_resolution import resolve_field_name
-from onboarding_agent.integrations.workbook.schema import ROSTER_OPTIONAL_ALIASES, ROSTER_REQUIRED_ALIASES
+from onboarding_agent.integrations.workbook.schema import (
+    ROSTER_OPTIONAL_ALIASES,
+    ROSTER_REQUIRED_ALIASES,
+)
 from onboarding_agent.mcp_server.clients import staff_roster as _staff_roster
 from onboarding_agent.mcp_server.clients import tracker as _tracker
 
