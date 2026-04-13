@@ -44,6 +44,7 @@ For trigger_source=teams_query:
 - For requests to list drafts waiting to be sent, call list_docusign_drafts.
 - For requests to delete an unsent offer letter draft, call delete_docusign_draft instead of asking for an envelope ID whenever possible.
 - HR users can update tracker stages and perform tracker/staff-roster CRUD through natural language when the corresponding tools support it.
+- For generic non-stage field updates, prefer update_tracker_field or update_staff_roster_field so relaxed column names are resolved deterministically.
 - Use the tool descriptions as the source of truth for exact tracker, staff-roster, email, and DocuSign capabilities.
 - For follow-up requests in the same Teams thread, reuse available employee_email, employee_name, work_location, job_title, status_change, and job_category from session context unless the user clearly changes them.
 - When submission_id is present in session context, treat it as the primary workflow disambiguator and pass it into tracker, roster, and DocuSign tools whenever those tools accept it.
@@ -213,7 +214,9 @@ def derive_session_context(
             "list_staff_roster_vacancies",
             "find_employee_in_staff_roster",
             "remove_employee_from_staff_roster",
+            "update_tracker_field",
             "update_employee_in_staff_roster",
+            "update_staff_roster_field",
             "record_separation",
             "update_leave_status",
         }:

@@ -9,21 +9,42 @@ from typing import Any
 from fastmcp import FastMCP
 
 from onboarding_agent.domain.formatting import format_date
+from onboarding_agent.domain.field_resolution import resolve_field_name
 from onboarding_agent.domain.identity import EmployeeIdentity
-from onboarding_agent.integrations.workbook.schema import ALL_STAGES, STAGE_ALIASES
+from onboarding_agent.integrations.workbook.schema import (
+    ALL_STAGES,
+    STAGE_ALIASES,
+    TRACKER_OPTIONAL_ALIASES,
+    TRACKER_REQUIRED_ALIASES,
+)
 from onboarding_agent.mcp_server.clients import tracker as _tracker
 
 logger = logging.getLogger(__name__)
 
 _LIST_EMPLOYEE_PREVIEW_LIMIT = 25
 _DEFAULT_RECENT_DAYS = 30
+_TRACKER_FIELD_ALIASES = {**TRACKER_REQUIRED_ALIASES, **TRACKER_OPTIONAL_ALIASES}
+_TRACKER_STAGE_ALIASES = {stage: {stage} for stage in ALL_STAGES} | {canonical: {alias} for alias, canonical in STAGE_ALIASES.items()}
 
 
 def _resolve_requested_stage_name(stage_name: str) -> str:
+    resolution = resolve_field_name(stage_name, _TRACKER_STAGE_ALIASES, threshold=0.66)
+    if resolution.get("success"):
+        return str(resolution["field"])
     direct = stage_name.strip()
-    if direct in ALL_STAGES:
-        return direct
     return STAGE_ALIASES.get(direct, direct)
+
+
+def _resolve_stage_for_update(stage_name: str) -> dict[str, Any]:
+    resolution = resolve_field_name(stage_name, _TRACKER_STAGE_ALIASES, threshold=0.66)
+    if resolution.get("success"):
+        return resolution
+    return {
+        **resolution,
+        "success": False,
+        "stage_name": stage_name,
+        "error": str(resolution.get("error", f"Stage '{stage_name}' did not match a supported tracker stage.")),
+    }
 
 
 async def _guard_inactive_stage_update(
@@ -381,6 +402,54 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
+    async def update_tracker_field(
+        employee_email: str,
+        column_name: str,
+        value: str,
+        location: str = "",
+        current_job_title: str = "",
+        current_status_change: str = "",
+        submission_id: str = "",
+    ) -> dict[str, Any]:
+        """Update one non-stage tracker field using a relaxed column label.
+
+        Use this for generic `/update-field tracker ...` requests. `column_name`
+        can be a natural label such as "start date", "manager", "title", or
+        "employment type". Tracker stages are intentionally rejected here; use
+        `update_tracker_stage` or `clear_tracker_stage` for stage columns.
+        """
+        resolution = resolve_field_name(
+            column_name,
+            _TRACKER_FIELD_ALIASES,
+            blocked_aliases_by_key=_TRACKER_STAGE_ALIASES,
+        )
+        if not resolution.get("success"):
+            return {
+                **resolution,
+                "success": False,
+                "employee_email": employee_email,
+                "column_name": column_name,
+                "target": "tracker",
+            }
+
+        field = str(resolution["field"])
+        result = await _tracker().update_employee_in_tracker(
+            employee_email,
+            location=location,
+            current_job_title=current_job_title,
+            current_status_change=current_status_change,
+            submission_id=submission_id,
+            **{field: value},
+        )
+        return {
+            **result,
+            "target": "tracker",
+            "column_name": column_name,
+            "field": field,
+            "value": value,
+        }
+
+    @mcp.tool()
     async def update_tracker_stage(
         employee_email: str,
         stage_name: str,
@@ -397,17 +466,24 @@ def register(mcp: FastMCP) -> None:
         tracker client uses today's date. If the stage is currently `N/A`, this
         tool returns an inactive-stage response instead of writing.
         """
+        stage_resolution = _resolve_stage_for_update(stage_name)
+        if not stage_resolution.get("success"):
+            return {
+                **stage_resolution,
+                "employee_email": employee_email,
+            }
+        resolved_stage_name = str(stage_resolution["field"])
         identity = EmployeeIdentity(employee_email, location, job_title, status_change)
         guarded = await _guard_inactive_stage_update(
             identity=identity,
-            stage_name=stage_name,
+            stage_name=resolved_stage_name,
             submission_id=submission_id,
         )
         if guarded is not None:
             return guarded
         return await _tracker().update_stage(
             identity.email,
-            stage_name,
+            resolved_stage_name,
             value=stage_value or None,
             location=identity.work_location,
             job_title=identity.job_title,
@@ -429,17 +505,24 @@ def register(mcp: FastMCP) -> None:
         This resets the stage cell to blank. If the stage is currently `N/A`,
         this tool returns an inactive-stage response instead of writing.
         """
+        stage_resolution = _resolve_stage_for_update(stage_name)
+        if not stage_resolution.get("success"):
+            return {
+                **stage_resolution,
+                "employee_email": employee_email,
+            }
+        resolved_stage_name = str(stage_resolution["field"])
         identity = EmployeeIdentity(employee_email, location, job_title, status_change)
         guarded = await _guard_inactive_stage_update(
             identity=identity,
-            stage_name=stage_name,
+            stage_name=resolved_stage_name,
             submission_id=submission_id,
         )
         if guarded is not None:
             return guarded
         return await _tracker().update_stage(
             identity.email,
-            stage_name,
+            resolved_stage_name,
             value="",
             location=identity.work_location,
             job_title=identity.job_title,

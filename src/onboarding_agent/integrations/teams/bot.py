@@ -46,24 +46,59 @@ from onboarding_agent.integrations.teams.reply import extract_reply, should_supp
 logger = logging.getLogger(__name__)
 
 _SLASH_COMMAND_HELP = """\
-Onboarding Agent commands:
+**Onboarding Agent Help**
 
-/help - Show this help text.
-/status <email> - Check the employee's onboarding status.
-/stages <email> - Show tracker stages for an employee.
-/capacity <location> <group> - Check capacity for one staff-roster group.
-/vacancies <location> - List staff-roster groups below capacity.
-/find-roster <email> <location> - Find an employee in the staff roster.
+**Status And Lookup**
+`/status <email>`
+Check the employee's onboarding status.
+Example: `/status employee@example.com`
 
-Examples:
-- /status ncruz@bridgeprepacademy.com
-- /stages ncruz@bridgeprepacademy.com
-- /capacity Collier Teacher
-- /vacancies Collier
-- /find-roster ncruz@bridgeprepacademy.com Collier
-- Is ncruz@bridgeprepacademy.com clear to start?
-- Mark Background Submission complete for ncruz@bridgeprepacademy.com submission ID 143.
-- Move ncruz@bridgeprepacademy.com to the Separations sheet as Transfer Out.
+`/stages <email>`
+Show tracker stages for an employee.
+Example: `/stages employee@example.com`
+
+`/find-tracker <email>`
+Find an employee in the onboarding tracker.
+Example: `/find-tracker employee@example.com`
+
+`/find-roster <email> <location>`
+Find an employee in the staff roster.
+Example: `/find-roster employee@example.com Collier`
+
+**Staff Roster**
+`/capacity <location> <group>`
+Check capacity for one staff-roster group.
+Example: `/capacity Collier Teacher`
+
+`/vacancies <location>`
+List staff-roster groups below capacity.
+Example: `/vacancies Collier`
+
+`/leave <email> <start|end>`
+Start or end staff-roster leave status.
+Examples: `/leave employee@example.com start`, `/leave employee@example.com end`
+
+**Updates**
+`/update-field <tracker|roster> <email> <column> <value>`
+Update a non-stage tracker or roster field.
+Examples: `/update-field tracker employee@example.com "Requested Start Date" "2026-08-03"`, `/update-field roster employee@example.com "Grade Level" "3"`
+
+`/update-stage <email> <stage> <complete|incomplete>`
+Mark a tracker stage complete or clear it.
+Examples: `/update-stage employee@example.com "Background Submission" complete`, `/update-stage employee@example.com "Background Submission" incomplete`
+
+`/clear-stage <email> <stage>`
+Clear a tracker stage cell.
+Example: `/clear-stage employee@example.com "Background Submission"`
+
+**DocuSign**
+`/drafts`
+List unsent DocuSign drafts waiting to be sent.
+
+**Natural Language Examples**
+`Is employee@example.com clear to start?`
+`Mark Background Submission complete for employee@example.com submission ID 143.`
+`Move employee@example.com to the Separations sheet as Transfer Out.`
 """
 
 
@@ -105,6 +140,52 @@ def _expand_slash_command(user_text: str) -> tuple[bool, str]:
         if len(args) < 2:
             return True, "Usage: /find-roster <email> <location>"
         return False, f"Find {args[0]} in the staff roster at {' '.join(args[1:])}."
+    if command in {"find-tracker", "tracker"}:
+        if not args:
+            return True, "Usage: /find-tracker <email>"
+        return False, f"Find {args[0]} in the onboarding tracker."
+    if command == "drafts":
+        if args:
+            return True, "Usage: /drafts"
+        return False, "List unsent DocuSign drafts waiting to be sent."
+    if command == "leave":
+        if len(args) < 2:
+            return True, "Usage: /leave <email> <start|end>"
+        employee = args[0]
+        action = args[1].lower()
+        if action in {"start", "on", "begin"}:
+            return False, f"Update staff roster leave status for {employee} to On Leave."
+        if action in {"end", "off", "return", "returned"}:
+            return False, f"Update staff roster leave status for {employee} to Active."
+        return True, "Usage: /leave <email> <start|end>"
+    if command == "clear-stage":
+        if len(args) < 2:
+            return True, 'Usage: /clear-stage <email> <stage>\nExample: /clear-stage employee@example.com "Background Submission"'
+        employee = args[0]
+        stage = " ".join(args[1:])
+        return False, f"Clear tracker stage '{stage}' for {employee} so it is blank."
+    if command == "update-field":
+        if len(args) < 4:
+            return True, 'Usage: /update-field <tracker|roster> <email> <column> <value>\nExample: /update-field tracker employee@example.com "Requested Start Date" "2026-08-03"'
+        target = args[0].lower()
+        if target not in {"tracker", "roster"}:
+            return True, "Usage: /update-field <tracker|roster> <email> <column> <value>"
+        employee = args[1]
+        column = args[2]
+        value = " ".join(args[3:])
+        tool_name = "update_tracker_field" if target == "tracker" else "update_staff_roster_field"
+        return False, f"Use {tool_name} to update the {target} field '{column}' for {employee} to '{value}'. This is not a tracker stage update."
+    if command == "update-stage":
+        if len(args) < 3:
+            return True, 'Usage: /update-stage <email> <stage> <complete|incomplete>\nExample: /update-stage employee@example.com "Background Submission" complete'
+        employee = args[0]
+        action = args[-1].lower()
+        stage = " ".join(args[1:-1])
+        if action in {"complete", "completed", "done"}:
+            return False, f"Mark tracker stage '{stage}' complete for {employee}."
+        if action in {"incomplete", "clear", "blank", "pending", "undo"}:
+            return False, f"Clear tracker stage '{stage}' for {employee} so it is blank."
+        return True, "Usage: /update-stage <email> <stage> <complete|incomplete>"
 
     return True, f"Unknown command '/{command}'.\n\n{_SLASH_COMMAND_HELP}"
 
@@ -114,6 +195,7 @@ _CARD_REFRESH_TOOL_NAMES = {
     "get_employee_stages",
     "get_onboarding_status",
     "update_tracker_stage",
+    "update_tracker_field",
     "clear_tracker_stage",
     "remove_employee_from_tracker",
     "check_docusign_draft_exists",
@@ -128,6 +210,7 @@ _CARD_REFRESH_TOOL_NAMES = {
     "add_employee_to_staff_roster",
     "remove_employee_from_staff_roster",
     "update_employee_in_staff_roster",
+    "update_staff_roster_field",
     "record_separation",
     "find_separation_record",
     "update_leave_status",

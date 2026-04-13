@@ -21,21 +21,38 @@ def test_should_refresh_cards_only_for_relevant_tool_results() -> None:
     assert _should_refresh_cards([
         ToolMessage(content='{"success": true}', tool_call_id="1", name="send_onboarding_email"),
     ]) is False
+    assert _should_refresh_cards([
+        ToolMessage(content='{"success": true}', tool_call_id="1", name="update_tracker_field"),
+    ]) is True
+    assert _should_refresh_cards([
+        ToolMessage(content='{"success": true}', tool_call_id="1", name="update_staff_roster_field"),
+    ]) is True
 
 
 def test_expand_slash_command_returns_help_text() -> None:
     handled, text = _expand_slash_command("/help")
 
     assert handled is True
+    assert "**Onboarding Agent Help**" in text
+    assert "**Status And Lookup**" in text
+    assert "**Staff Roster**" in text
+    assert "**Natural Language Examples**" in text
     assert "/status <email>" in text
-    assert "Examples:" in text
+    assert '`/drafts`' in text
 
 
 def test_expand_slash_command_translates_status_to_agent_prompt() -> None:
-    handled, text = _expand_slash_command("/status ncruz@bridgeprepacademy.com")
+    handled, text = _expand_slash_command("/status employee@example.com")
 
     assert handled is False
-    assert text == "Get onboarding status for ncruz@bridgeprepacademy.com."
+    assert text == "Get onboarding status for employee@example.com."
+
+
+def test_expand_slash_command_translates_find_tracker() -> None:
+    handled, text = _expand_slash_command("/find-tracker employee@example.com")
+
+    assert handled is False
+    assert text == "Find employee@example.com in the onboarding tracker."
 
 
 def test_expand_slash_command_translates_capacity_with_multi_word_group() -> None:
@@ -50,6 +67,69 @@ def test_expand_slash_command_reports_usage_when_required_args_missing() -> None
 
     assert handled is True
     assert text == "Usage: /vacancies <location>"
+
+
+def test_expand_slash_command_translates_drafts() -> None:
+    handled, text = _expand_slash_command("/drafts")
+
+    assert handled is False
+    assert text == "List unsent DocuSign drafts waiting to be sent."
+
+
+def test_expand_slash_command_translates_leave_start() -> None:
+    handled, text = _expand_slash_command("/leave employee@example.com start")
+
+    assert handled is False
+    assert text == "Update staff roster leave status for employee@example.com to On Leave."
+
+
+def test_expand_slash_command_translates_leave_end() -> None:
+    handled, text = _expand_slash_command("/leave employee@example.com end")
+
+    assert handled is False
+    assert text == "Update staff roster leave status for employee@example.com to Active."
+
+
+def test_expand_slash_command_translates_clear_stage() -> None:
+    handled, text = _expand_slash_command('/clear-stage employee@example.com "Background Submission"')
+
+    assert handled is False
+    assert text == "Clear tracker stage 'Background Submission' for employee@example.com so it is blank."
+
+
+def test_expand_slash_command_translates_update_tracker_field() -> None:
+    handled, text = _expand_slash_command('/update-field tracker employee@example.com "Requested Start Date" "2026-08-03"')
+
+    assert handled is False
+    assert text == "Use update_tracker_field to update the tracker field 'Requested Start Date' for employee@example.com to '2026-08-03'. This is not a tracker stage update."
+
+
+def test_expand_slash_command_translates_update_roster_field() -> None:
+    handled, text = _expand_slash_command('/update-field roster employee@example.com "Grade Level" "3"')
+
+    assert handled is False
+    assert text == "Use update_staff_roster_field to update the roster field 'Grade Level' for employee@example.com to '3'. This is not a tracker stage update."
+
+
+def test_expand_slash_command_translates_update_stage_complete() -> None:
+    handled, text = _expand_slash_command('/update-stage employee@example.com "Background Submission" complete')
+
+    assert handled is False
+    assert text == "Mark tracker stage 'Background Submission' complete for employee@example.com."
+
+
+def test_expand_slash_command_translates_update_stage_incomplete() -> None:
+    handled, text = _expand_slash_command('/update-stage employee@example.com "Background Submission" incomplete')
+
+    assert handled is False
+    assert text == "Clear tracker stage 'Background Submission' for employee@example.com so it is blank."
+
+
+def test_expand_slash_command_rejects_unknown_update_field_target() -> None:
+    handled, text = _expand_slash_command("/update-field sheet employee@example.com Field Value")
+
+    assert handled is True
+    assert text == "Usage: /update-field <tracker|roster> <email> <column> <value>"
 
 
 @pytest.mark.asyncio

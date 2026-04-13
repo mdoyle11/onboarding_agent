@@ -6,8 +6,38 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from onboarding_agent.domain.field_resolution import resolve_field_name
+from onboarding_agent.integrations.workbook.schema import ROSTER_OPTIONAL_ALIASES, ROSTER_REQUIRED_ALIASES
 from onboarding_agent.mcp_server.clients import staff_roster as _staff_roster
 from onboarding_agent.mcp_server.clients import tracker as _tracker
+
+_ROSTER_FIELD_ALIASES = {**ROSTER_REQUIRED_ALIASES, **ROSTER_OPTIONAL_ALIASES}
+_ROSTER_UPDATE_PARAM_BY_FIELD = {
+    "employee_id": "employee_id",
+    "name": "employee_name",
+    "email": "work_email",
+    "group": "job_category",
+    "position": "position",
+    "grade_level": "grade_level",
+    "subject": "subject",
+    "supplements": "supplements",
+    "talent": "talent",
+    "background_eligibility": "background_eligibility",
+    "date_approved": "date_approved",
+    "license": "license_value",
+    "personal_email": "personal_email",
+    "nine_cell": "nine_cell",
+    "notes": "notes",
+    "status": "roster_status",
+    "nti_culture": "nti_culture",
+    "nti_content": "nti_content",
+    "mupd_culture": "mupd_culture",
+    "mupd_content": "mupd_content",
+    "rt_boy_pd_content": "rt_boy_pd_content",
+    "cc_1": "cc_1",
+    "cc_2": "cc_2",
+    "cc_3": "cc_3",
+}
 
 
 def register(mcp: FastMCP) -> None:
@@ -269,4 +299,63 @@ def register(mcp: FastMCP) -> None:
                 f"Staff roster edit failed for {employee_email}. "
                 f"{result.get('error', 'Unknown error')}"
             ),
+        }
+
+    @mcp.tool()
+    async def update_staff_roster_field(
+        employee_email: str,
+        location: str,
+        column_name: str,
+        value: str,
+        current_job_category: str = "",
+        job_title: str = "",
+        status_change: str = "",
+        submission_id: str = "",
+    ) -> dict[str, Any]:
+        """Update one staff-roster field using a relaxed column label.
+
+        Use this for generic `/update-field roster ...` requests. `column_name`
+        can be a natural label such as "group", "work email", "grade",
+        "license", or "status". Provide `current_job_category` when needed to
+        identify the existing roster row before changing Group/category.
+        """
+        resolution = resolve_field_name(column_name, _ROSTER_FIELD_ALIASES)
+        if not resolution.get("success"):
+            return {
+                **resolution,
+                "success": False,
+                "employee_email": employee_email,
+                "location": location,
+                "column_name": column_name,
+                "target": "roster",
+            }
+
+        field = str(resolution["field"])
+        param = _ROSTER_UPDATE_PARAM_BY_FIELD.get(field)
+        if not param:
+            return {
+                "success": False,
+                "employee_email": employee_email,
+                "location": location,
+                "column_name": column_name,
+                "field": field,
+                "target": "roster",
+                "error": f"Roster field '{field}' is not supported for generic updates.",
+            }
+
+        result = await _staff_roster().update_employee_in_staff_roster(
+            employee_email,
+            location=location,
+            current_job_category=current_job_category,
+            job_title=job_title,
+            status_change=status_change,
+            submission_id=submission_id,
+            **{param: value},
+        )
+        return {
+            **result,
+            "target": "roster",
+            "column_name": column_name,
+            "field": field,
+            "value": value,
         }

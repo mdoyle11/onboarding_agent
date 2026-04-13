@@ -57,8 +57,32 @@
               "description": "List staff-roster groups below capacity."
             },
             {
+              "title": "find-tracker",
+              "description": "Find an employee in the onboarding tracker."
+            },
+            {
               "title": "find-roster",
               "description": "Find an employee in the staff roster."
+            },
+            {
+              "title": "drafts",
+              "description": "List unsent DocuSign drafts."
+            },
+            {
+              "title": "leave",
+              "description": "Start or end staff-roster leave status."
+            },
+            {
+              "title": "clear-stage",
+              "description": "Clear a tracker stage cell."
+            },
+            {
+              "title": "update-field",
+              "description": "Update a non-stage tracker or roster field."
+            },
+            {
+              "title": "update-stage",
+              "description": "Mark a tracker stage complete or incomplete."
             },
             {
               "title": "help",
