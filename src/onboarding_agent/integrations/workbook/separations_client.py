@@ -36,6 +36,15 @@ class SeparationsClient(WorkbookGraphClient):
     def _normalized(value: str) -> str:
         return " ".join(str(value or "").strip().lower().split())
 
+    @staticmethod
+    def _separation_status_label(status_change: str) -> str:
+        normalized = SeparationsClient._normalized(status_change)
+        if "transfer" in normalized and "out" in normalized:
+            return "Transfer Out"
+        if "separation" in normalized:
+            return "Separation"
+        return str(status_change or "").strip()
+
     async def add_separation_record(
         self,
         employee_email: str,
@@ -88,6 +97,15 @@ class SeparationsClient(WorkbookGraphClient):
             incoming_personal_email = self._normalized(str((roster_data or {}).get("personal_email", "") or employee_email))
             incoming_group = self._normalized(str((roster_data or {}).get("job_category", "") or job_category))
             incoming_position = self._normalized(str((roster_data or {}).get("position", "") or job_title))
+            separation_status = self._separation_status_label(status_change)
+            if not separation_status:
+                return {
+                    "success": False,
+                    "employee_email": employee_email,
+                    "location": location,
+                    "needs_clarification": True,
+                    "error": "Please specify whether this move is a Separation or Transfer Out.",
+                }
 
             # Duplicate check: allow multiple separation records for the same
             # employee when they refer to different roles/categories.
@@ -99,7 +117,7 @@ class SeparationsClient(WorkbookGraphClient):
                 row_position = self._normalized(_cell(row, header.get("position")))
                 if (
                     (row_email in {incoming_email, incoming_personal_email} or row_personal_email in {incoming_email, incoming_personal_email})
-                    and row_type == self._normalized(status_change)
+                    and row_type == self._normalized(separation_status)
                     and row_group == incoming_group
                     and row_position == incoming_position
                 ):
@@ -144,7 +162,9 @@ class SeparationsClient(WorkbookGraphClient):
             if "manager_email" in header:
                 new_row[header["manager_email"]] = str(rd.get("manager_email", "") or manager_email or "")
             if "separation_type" in header:
-                new_row[header["separation_type"]] = status_change
+                new_row[header["separation_type"]] = separation_status
+            if "status" in header:
+                new_row[header["status"]] = separation_status
             if "separation_date" in header:
                 new_row[header["separation_date"]] = effective_date
             if "date_processed" in header:

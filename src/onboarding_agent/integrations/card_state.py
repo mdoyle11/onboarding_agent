@@ -479,6 +479,31 @@ async def get_separation_card(identity: EmployeeIdentity, submission_id: str = "
     return await _store().get(NS_SEPARATION, key)
 
 
+async def find_active_separation_cards(
+    identity: EmployeeIdentity,
+    submission_id: str = "",
+) -> list[dict[str, Any]]:
+    if submission_id or store_mod.store is None:
+        return []
+
+    email_key = normalize_identity_part(identity.email)
+    matches: list[dict[str, Any]] = []
+    for key in await _store().list_keys(NS_SEPARATION):
+        if key.split("|", 1)[0] != email_key:
+            continue
+        card = await _store().get(NS_SEPARATION, key)
+        if card is None or card.get("action_completed"):
+            continue
+        if identity.work_location and normalize_identity_part(card.get("work_location", "")) != normalize_identity_part(identity.work_location):
+            continue
+        if identity.job_title and normalize_identity_part(card.get("job_title", "")) != normalize_identity_part(identity.job_title):
+            continue
+        if identity.status_change and normalize_identity_part(card.get("status_change", "")) != normalize_identity_part(identity.status_change):
+            continue
+        matches.append(card)
+    return matches
+
+
 async def mark_separation_action_complete(
     identity: EmployeeIdentity,
     submission_id: str = "",

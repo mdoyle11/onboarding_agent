@@ -315,10 +315,7 @@ class StaffRosterClient(WorkbookGraphClient):
             for row in roster_rows[1:]:
                 if self._is_totals_row(row, roster_header):
                     continue
-                email = _cell(row, roster_header.get("email"))
                 group = _cell(row, roster_header.get("group"))
-                if not email or not group:
-                    continue
                 if group.lower() == normalized_category:
                     current_count += 1
 

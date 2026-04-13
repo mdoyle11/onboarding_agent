@@ -192,6 +192,226 @@ async def test_record_separation_continues_when_separation_entry_already_exists(
 
 
 @pytest.mark.asyncio
+async def test_record_separation_requires_status_change_for_natural_language_request() -> None:
+    from onboarding_agent.mcp_server.tools_separations import register
+
+    roster = AsyncMock()
+    separations = AsyncMock()
+    tracker = AsyncMock()
+
+    mcp = FastMCP(name="test-separation-clarification")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+        patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=separations),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
+    ):
+        tool_fn = await _get_tool_fn(mcp, "record_separation")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            job_title="Teacher",
+        )
+
+    assert result["success"] is False
+    assert result["action"] == "needs_clarification"
+    assert result["needs_clarification"] is True
+    assert "Separation or Transfer Out" in result["summary"]
+    roster.find_employee_in_staff_roster.assert_not_awaited()
+    separations.add_separation_record.assert_not_awaited()
+    tracker.update_stage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_record_separation_refreshes_matching_adaptive_card_on_success() -> None:
+    from onboarding_agent.mcp_server.tools_separations import register
+
+    roster = AsyncMock()
+    roster.find_employee_in_staff_roster.return_value = {
+        "found": True,
+        "employee_name": "Alice Example",
+        "employee_email": "alice@company.org",
+        "personal_email": "alice@example.com",
+        "job_category": "Teacher",
+        "position": "Teacher",
+    }
+    roster.remove_employee_from_staff_roster.return_value = {"success": True}
+    separations = AsyncMock()
+    separations.add_separation_record.return_value = {"success": True, "action": "added"}
+    tracker = AsyncMock()
+    tracker.update_stage.return_value = {"success": True}
+
+    mcp = FastMCP(name="test-separation-card-refresh")
+    register(mcp)
+
+    with (
+        patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+        patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=separations),
+        patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
+        patch(
+            "onboarding_agent.integrations.card_state.mark_separation_action_complete",
+            new=AsyncMock(return_value={"message_id": "msg-1"}),
+        ) as mark_complete,
+        patch("onboarding_agent.integrations.card_state.refresh_separation_card", new=AsyncMock()) as refresh_card,
+    ):
+        tool_fn = await _get_tool_fn(mcp, "record_separation")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="Transfer Out",
+            submission_id="sub-123",
+        )
+
+    assert result["success"] is True
+    mark_complete.assert_awaited_once()
+    refresh_card.assert_awaited_once()
+    assert refresh_card.await_args.kwargs["submission_id"] == "sub-123"
+
+
+@pytest.mark.asyncio
+async def test_record_separation_requires_clarification_for_multiple_active_cards(tmp_path) -> None:
+    from onboarding_agent.integrations.card_state import save_separation_card
+    from onboarding_agent.mcp_server.tools_separations import register
+    from onboarding_agent.runtime import state_store as store_mod
+    from onboarding_agent.runtime.state_store import FileStateStore
+
+    previous_store = store_mod.store
+    store_mod.store = FileStateStore(str(tmp_path))
+    try:
+        await save_separation_card(
+            employee_email="alice@example.com",
+            employee_name="Alice Example",
+            channel_id="channel-1",
+            message_id="msg-1",
+            submission_id="sub-1",
+            status_change="Transfer Out",
+            job_title="Teacher",
+            work_location="Bronx",
+        )
+        await save_separation_card(
+            employee_email="alice@example.com",
+            employee_name="Alice Example",
+            channel_id="channel-1",
+            message_id="msg-2",
+            submission_id="sub-2",
+            status_change="Transfer Out",
+            job_title="Coach",
+            work_location="Bronx",
+        )
+
+        roster = AsyncMock()
+        separations = AsyncMock()
+        tracker = AsyncMock()
+
+        mcp = FastMCP(name="test-separation-active-card-ambiguity")
+        register(mcp)
+
+        with (
+            patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+            patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=separations),
+            patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
+        ):
+            tool_fn = await _get_tool_fn(mcp, "record_separation")
+            result = await tool_fn(
+                employee_email="alice@example.com",
+                location="Bronx",
+                status_change="Transfer Out",
+            )
+
+        assert result["success"] is False
+        assert result["needs_clarification"] is True
+        assert result["multiple_active_cards"] is True
+        assert len(result["matches"]) == 2
+        roster.find_employee_in_staff_roster.assert_not_awaited()
+        separations.add_separation_record.assert_not_awaited()
+        tracker.update_stage.assert_not_awaited()
+    finally:
+        store_mod.store = previous_store
+
+
+@pytest.mark.asyncio
+async def test_record_separation_uses_single_active_card_context_for_refresh(tmp_path) -> None:
+    from onboarding_agent.integrations.card_state import save_separation_card
+    from onboarding_agent.mcp_server.tools_separations import register
+    from onboarding_agent.runtime import state_store as store_mod
+    from onboarding_agent.runtime.state_store import FileStateStore
+
+    previous_store = store_mod.store
+    store_mod.store = FileStateStore(str(tmp_path))
+    try:
+        await save_separation_card(
+            employee_email="alice@example.com",
+            employee_name="Alice Example",
+            channel_id="channel-1",
+            message_id="msg-1",
+            submission_id="sub-123",
+            status_change="Transfer Out",
+            job_title="Teacher",
+            work_location="Bronx",
+        )
+
+        roster = AsyncMock()
+        roster.find_employee_in_staff_roster.return_value = {
+            "found": True,
+            "employee_name": "Alice Example",
+            "employee_email": "alice@company.org",
+            "personal_email": "alice@example.com",
+            "job_category": "Teacher",
+            "position": "Teacher",
+        }
+        roster.remove_employee_from_staff_roster.return_value = {"success": True}
+        separations = AsyncMock()
+        separations.add_separation_record.return_value = {"success": True, "action": "added"}
+        tracker = AsyncMock()
+        tracker.update_stage.return_value = {"success": True}
+
+        mcp = FastMCP(name="test-separation-single-active-card-context")
+        register(mcp)
+
+        with (
+            patch("onboarding_agent.mcp_server.tools_separations._staff_roster", return_value=roster),
+            patch("onboarding_agent.mcp_server.tools_separations._separations", return_value=separations),
+            patch("onboarding_agent.mcp_server.tools_separations._tracker", return_value=tracker),
+            patch(
+                "onboarding_agent.integrations.card_state.mark_separation_action_complete",
+                new=AsyncMock(return_value={"message_id": "msg-1"}),
+            ) as mark_complete,
+            patch("onboarding_agent.integrations.card_state.refresh_separation_card", new=AsyncMock()) as refresh_card,
+        ):
+            tool_fn = await _get_tool_fn(mcp, "record_separation")
+            result = await tool_fn(
+                employee_email="alice@example.com",
+                location="Bronx",
+                status_change="Transfer Out",
+            )
+
+        assert result["success"] is True
+        roster.find_employee_in_staff_roster.assert_awaited_once_with(
+            "alice@example.com",
+            location="Bronx",
+            job_category="",
+            personal_email="alice@example.com",
+            position="Teacher",
+        )
+        tracker.update_stage.assert_awaited_once_with(
+            "alice@example.com",
+            "Added to Staff Roster",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="Transfer Out",
+            submission_id="sub-123",
+        )
+        mark_complete.assert_awaited_once()
+        assert mark_complete.await_args.kwargs["submission_id"] == "sub-123"
+        refresh_card.assert_awaited_once()
+        assert refresh_card.await_args.kwargs["submission_id"] == "sub-123"
+    finally:
+        store_mod.store = previous_store
+
+
+@pytest.mark.asyncio
 async def test_record_separation_uses_tracker_identity_to_match_roster_personal_email() -> None:
     from onboarding_agent.mcp_server.tools_separations import register
 

@@ -637,6 +637,97 @@ async def test_check_staff_roster_capacity_normalizes_plural_group_name():
 
 
 @pytest.mark.asyncio
+async def test_check_staff_roster_capacity_counts_personal_email_only_rows():
+    client = StaffRosterClient()
+    capacity_rows = [["Group", "Capacity"], ["Teacher", "1"]]
+    roster_rows = [
+        ["Employee Name", "Work Email", "Personal Email", "Group"],
+        ["Alice Example", "", "alice@example.com", "Teacher"],
+        ["Totals", "1", "", "Teacher"],
+    ]
+
+    with (
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(side_effect=[capacity_rows, roster_rows]),
+        ),
+    ):
+        result = await client.check_staff_roster_capacity("Collier", "Teacher")
+
+    assert result["success"] is True
+    assert result["current_count"] == 1
+    assert result["has_capacity"] is False
+
+
+@pytest.mark.asyncio
+async def test_add_employee_to_staff_roster_rejects_personal_email_only_capacity_full_group():
+    client = StaffRosterClient()
+    roster_rows = [
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Position", "Location"],
+        ["Alice Example", "", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Totals", "1", "", "Teacher", "", "Bronx"],
+    ]
+    capacity_rows = [["Group", "Capacity"], ["Teacher", "1"]]
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Carol Example",
+        "email": "carol@example.com",
+        "location": "Bronx",
+        "job_title": "Teacher",
+        "position": "Teacher",
+        "start_date": "2026-04-10",
+        "manager_email": "",
+    }
+
+    with (
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.TrackerClient", return_value=tracker),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(side_effect=[roster_rows, capacity_rows, roster_rows]),
+        ),
+        patch.object(client, "_insert_roster_row", new=AsyncMock()) as insert_row,
+        patch.object(client, "_graph_workbook_request", new=AsyncMock(return_value={})) as graph,
+    ):
+        result = await client.add_employee_to_staff_roster(
+            "carol@example.com",
+            "Teacher",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    assert result["success"] is False
+    assert result["current_count"] == 1
+    assert result["max_capacity"] == 1
+    assert "at capacity" in result["error"]
+    insert_row.assert_not_awaited()
+    graph.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_add_employee_to_staff_roster_inserts_above_group_totals():
     client = StaffRosterClient()
     roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]

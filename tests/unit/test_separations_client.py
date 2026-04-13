@@ -49,6 +49,86 @@ async def test_add_separation_record_preserves_work_and_personal_email_columns()
 
 
 @pytest.mark.asyncio
+async def test_add_separation_record_writes_workflow_type_to_status_column() -> None:
+    client = SeparationsClient()
+    rows = [
+        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Status"],
+    ]
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "separations_sheet_name": "Separations",
+            },
+        ),
+        patch.object(client, "_used_range_rows", new=AsyncMock(return_value=rows)),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.add_separation_record(
+            "alice@example.com",
+            location="Bronx",
+            status_change="Transfer Out",
+            roster_data={
+                "employee_name": "Alice Example",
+                "employee_email": "alice@company.org",
+                "personal_email": "alice@example.com",
+                "job_category": "Teacher",
+                "position": "Teacher",
+                "status": "Active",
+            },
+        )
+
+    assert result["success"] is True
+    written_row = graph.await_args.args[2]["values"][0]
+    assert written_row[5] == "Transfer Out"
+
+
+@pytest.mark.asyncio
+async def test_add_separation_record_requires_workflow_type_before_writing() -> None:
+    client = SeparationsClient()
+    rows = [
+        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Separation Type", "Status"],
+    ]
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "separations_sheet_name": "Separations",
+            },
+        ),
+        patch.object(client, "_used_range_rows", new=AsyncMock(return_value=rows)),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.add_separation_record(
+            "alice@example.com",
+            location="Bronx",
+            roster_data={
+                "employee_name": "Alice Example",
+                "employee_email": "alice@company.org",
+                "personal_email": "alice@example.com",
+                "job_category": "Teacher",
+                "position": "Teacher",
+                "status": "Active",
+            },
+        )
+
+    assert result["success"] is False
+    assert result["needs_clarification"] is True
+    assert "Separation or Transfer Out" in result["error"]
+    graph.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_add_separation_record_allows_same_email_for_different_role() -> None:
     client = SeparationsClient()
     rows = [
