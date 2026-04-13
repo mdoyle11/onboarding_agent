@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
@@ -43,6 +44,70 @@ from onboarding_agent.integrations.teams.proactive import save_conversation_refe
 from onboarding_agent.integrations.teams.reply import extract_reply, should_suppress_reply
 
 logger = logging.getLogger(__name__)
+
+_SLASH_COMMAND_HELP = """\
+Onboarding Agent commands:
+
+/help - Show this help text.
+/status <email> - Check the employee's onboarding status.
+/stages <email> - Show tracker stages for an employee.
+/capacity <location> <group> - Check capacity for one staff-roster group.
+/vacancies <location> - List staff-roster groups below capacity.
+/find-roster <email> <location> - Find an employee in the staff roster.
+
+Examples:
+- /status ncruz@bridgeprepacademy.com
+- /stages ncruz@bridgeprepacademy.com
+- /capacity Collier Teacher
+- /vacancies Collier
+- /find-roster ncruz@bridgeprepacademy.com Collier
+- Is ncruz@bridgeprepacademy.com clear to start?
+- Mark Background Submission complete for ncruz@bridgeprepacademy.com submission ID 143.
+- Move ncruz@bridgeprepacademy.com to the Separations sheet as Transfer Out.
+"""
+
+
+def _expand_slash_command(user_text: str) -> tuple[bool, str]:
+    text = user_text.strip()
+    if not text.startswith("/"):
+        return False, text
+
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        parts = text.split()
+    if not parts:
+        return False, text
+
+    command = parts[0].lstrip("/").lower()
+    args = parts[1:]
+    if command in {"help", "?"}:
+        return True, _SLASH_COMMAND_HELP
+    if command == "status":
+        if not args:
+            return True, "Usage: /status <email>"
+        return False, f"Get onboarding status for {args[0]}."
+    if command == "stages":
+        if not args:
+            return True, "Usage: /stages <email>"
+        return False, f"Show tracker stages for {args[0]}."
+    if command == "capacity":
+        if len(args) < 2:
+            return True, "Usage: /capacity <location> <group>"
+        location = args[0]
+        group = " ".join(args[1:])
+        return False, f"Check staff roster capacity at {location} for group {group}."
+    if command == "vacancies":
+        if not args:
+            return True, "Usage: /vacancies <location>"
+        return False, f"List staff roster vacancies at {' '.join(args)}."
+    if command in {"find-roster", "roster"}:
+        if len(args) < 2:
+            return True, "Usage: /find-roster <email> <location>"
+        return False, f"Find {args[0]} in the staff roster at {' '.join(args[1:])}."
+
+    return True, f"Unknown command '/{command}'.\n\n{_SLASH_COMMAND_HELP}"
+
 
 _CARD_REFRESH_TOOL_NAMES = {
     "find_employee_in_tracker",
@@ -201,6 +266,13 @@ def register_handlers(agent_app: Any) -> None:
 
         if not user_text:
             return
+
+        slash_handled, slash_result = _expand_slash_command(user_text)
+        if slash_handled:
+            if not synthetic_loadtest:
+                await context.send_activity(slash_result)
+            return
+        user_text = slash_result
 
         if not runner.is_ready():
             if synthetic_loadtest:

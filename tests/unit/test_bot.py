@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 from onboarding_agent.integrations.teams.bot import (
     _apply_card_side_effects_from_tool_results,
+    _expand_slash_command,
     _refresh_cards_from_session_context,
     _refresh_draft_result_surfaces,
     _run_deterministic_card_action_in_background,
@@ -20,6 +21,35 @@ def test_should_refresh_cards_only_for_relevant_tool_results() -> None:
     assert _should_refresh_cards([
         ToolMessage(content='{"success": true}', tool_call_id="1", name="send_onboarding_email"),
     ]) is False
+
+
+def test_expand_slash_command_returns_help_text() -> None:
+    handled, text = _expand_slash_command("/help")
+
+    assert handled is True
+    assert "/status <email>" in text
+    assert "Examples:" in text
+
+
+def test_expand_slash_command_translates_status_to_agent_prompt() -> None:
+    handled, text = _expand_slash_command("/status ncruz@bridgeprepacademy.com")
+
+    assert handled is False
+    assert text == "Get onboarding status for ncruz@bridgeprepacademy.com."
+
+
+def test_expand_slash_command_translates_capacity_with_multi_word_group() -> None:
+    handled, text = _expand_slash_command('/capacity Collier "Support Staff"')
+
+    assert handled is False
+    assert text == "Check staff roster capacity at Collier for group Support Staff."
+
+
+def test_expand_slash_command_reports_usage_when_required_args_missing() -> None:
+    handled, text = _expand_slash_command("/vacancies")
+
+    assert handled is True
+    assert text == "Usage: /vacancies <location>"
 
 
 @pytest.mark.asyncio

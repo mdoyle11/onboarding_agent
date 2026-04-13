@@ -45,6 +45,22 @@
               "description": "Check onboarding status for an employee."
             },
             {
+              "title": "stages",
+              "description": "Show tracker stages for an employee."
+            },
+            {
+              "title": "capacity",
+              "description": "Check staff-roster capacity for one group."
+            },
+            {
+              "title": "vacancies",
+              "description": "List staff-roster groups below capacity."
+            },
+            {
+              "title": "find-roster",
+              "description": "Find an employee in the staff roster."
+            },
+            {
               "title": "help",
               "description": "Show supported onboarding actions."
             }
