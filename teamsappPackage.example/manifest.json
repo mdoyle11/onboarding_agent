@@ -41,6 +41,10 @@
           ],
           "commands": [
             {
+              "title": "help",
+              "description": "Show supported onboarding actions."
+            },
+            {
               "title": "status",
               "description": "Check onboarding status for an employee."
             },
@@ -65,16 +69,8 @@
               "description": "Find an employee in the staff roster."
             },
             {
-              "title": "drafts",
-              "description": "List unsent DocuSign drafts."
-            },
-            {
               "title": "leave",
               "description": "Start or end staff-roster leave status."
-            },
-            {
-              "title": "clear-stage",
-              "description": "Clear a tracker stage cell."
             },
             {
               "title": "update-field",
@@ -83,10 +79,6 @@
             {
               "title": "update-stage",
               "description": "Mark a tracker stage complete or incomplete."
-            },
-            {
-              "title": "help",
-              "description": "Show supported onboarding actions."
             }
           ]
         }

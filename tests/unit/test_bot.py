@@ -37,7 +37,9 @@ def test_expand_slash_command_returns_help_text() -> None:
     assert "**Status And Lookup**" in text
     assert "**Staff Roster**" in text
     assert "**Natural Language Examples**" in text
+    assert "*Examples*" in text
     assert "/status <email>" in text
+    assert "- `/status employee@example.com`" in text
     assert '`/drafts`' in text
 
 

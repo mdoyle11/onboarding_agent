@@ -49,56 +49,43 @@ _SLASH_COMMAND_HELP = """\
 **Onboarding Agent Help**
 
 **Status And Lookup**
-`/status <email>`
-Check the employee's onboarding status.
-Example: `/status employee@example.com`
+- `/status <email>` - Check onboarding status.
+- `/stages <email>` - Show tracker stages.
+- `/find-tracker <email>` - Find an onboarding tracker row.
+- `/find-roster <email> <location>` - Find a staff roster row.
 
-`/stages <email>`
-Show tracker stages for an employee.
-Example: `/stages employee@example.com`
-
-`/find-tracker <email>`
-Find an employee in the onboarding tracker.
-Example: `/find-tracker employee@example.com`
-
-`/find-roster <email> <location>`
-Find an employee in the staff roster.
-Example: `/find-roster employee@example.com Collier`
+*Examples*
+- `/status employee@example.com`
+- `/find-roster employee@example.com Collier`
 
 **Staff Roster**
-`/capacity <location> <group>`
-Check capacity for one staff-roster group.
-Example: `/capacity Collier Teacher`
+- `/capacity <location> <group>` - Check one group's capacity.
+- `/vacancies <location>` - List groups below capacity.
+- `/leave <email> <start|end>` - Start or end leave status.
 
-`/vacancies <location>`
-List staff-roster groups below capacity.
-Example: `/vacancies Collier`
-
-`/leave <email> <start|end>`
-Start or end staff-roster leave status.
-Examples: `/leave employee@example.com start`, `/leave employee@example.com end`
+*Examples*
+- `/capacity Collier Teacher`
+- `/vacancies Collier`
+- `/leave employee@example.com start`
 
 **Updates**
-`/update-field <tracker|roster> <email> <column> <value>`
-Update a non-stage tracker or roster field.
-Examples: `/update-field tracker employee@example.com "Requested Start Date" "2026-08-03"`, `/update-field roster employee@example.com "Grade Level" "3"`
+- `/update-field <tracker|roster> <email> <column> <value>` - Update a non-stage field.
+- `/update-stage <email> <stage> <complete|incomplete>` - Complete or clear a tracker stage.
+- `/clear-stage <email> <stage>` - Clear a tracker stage.
 
-`/update-stage <email> <stage> <complete|incomplete>`
-Mark a tracker stage complete or clear it.
-Examples: `/update-stage employee@example.com "Background Submission" complete`, `/update-stage employee@example.com "Background Submission" incomplete`
-
-`/clear-stage <email> <stage>`
-Clear a tracker stage cell.
-Example: `/clear-stage employee@example.com "Background Submission"`
+*Examples*
+- `/update-field tracker employee@example.com "Requested Start Date" "2026-08-03"`
+- `/update-field roster employee@example.com "Grade Level" "3"`
+- `/update-stage employee@example.com "Background Submission" complete`
+- `/clear-stage employee@example.com "Background Submission"`
 
 **DocuSign**
-`/drafts`
-List unsent DocuSign drafts waiting to be sent.
+- `/drafts` - List unsent DocuSign drafts.
 
 **Natural Language Examples**
-`Is employee@example.com clear to start?`
-`Mark Background Submission complete for employee@example.com submission ID 143.`
-`Move employee@example.com to the Separations sheet as Transfer Out.`
+- `Is employee@example.com clear to start?`
+- `Mark Background Submission complete for employee@example.com submission ID 143.`
+- `Move employee@example.com to the Separations sheet as Transfer Out.`
 """
 
 
