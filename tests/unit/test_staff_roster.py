@@ -671,6 +671,81 @@ async def test_check_staff_roster_capacity_counts_personal_email_only_rows():
 
 
 @pytest.mark.asyncio
+async def test_list_staff_roster_vacancies_returns_groups_below_capacity():
+    client = StaffRosterClient()
+    capacity_rows = [
+        ["Group", "Capacity"],
+        ["Teacher", "2"],
+        ["Support Staff", "1"],
+        ["Leadership", "1"],
+    ]
+    roster_rows = [
+        ["Employee Name", "Work Email", "Personal Email", "Group"],
+        ["Alice Example", "", "alice@example.com", "Teacher"],
+        ["Totals", "1", "", "Teacher"],
+        ["Bob Example", "bob@example.com", "", "Support Staff"],
+        ["Carol Example", "carol@example.com", "", "Leadership"],
+        ["Dana Example", "dana@example.com", "", "Leadership"],
+    ]
+
+    with (
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(side_effect=[capacity_rows, roster_rows]),
+        ),
+    ):
+        result = await client.list_staff_roster_vacancies("Collier")
+
+    assert result["success"] is True
+    assert result["location"] == "Collier"
+    assert result["vacancy_count"] == 1
+    assert result["vacancies"] == [
+        {
+            "job_category": "Teacher",
+            "current_count": 1,
+            "max_capacity": 2,
+            "remaining_capacity": 1,
+            "has_capacity": True,
+        }
+    ]
+    categories = {category["job_category"]: category for category in result["categories"]}
+    assert categories["Support Staff"]["has_capacity"] is False
+    assert categories["Leadership"]["remaining_capacity"] == -1
+
+
+@patch("onboarding_agent.mcp_server.tools_staff_roster._staff_roster")
+@pytest.mark.asyncio
+async def test_list_staff_roster_vacancies_tool_returns_client_result(mock_staff_roster_factory):
+    staff_roster = AsyncMock()
+    staff_roster.list_staff_roster_vacancies.return_value = {
+        "success": True,
+        "location": "Bronx",
+        "vacancies": [{"job_category": "Teacher", "remaining_capacity": 2}],
+    }
+    mock_staff_roster_factory.return_value = staff_roster
+
+    mcp = FastMCP(name="test-roster-vacancies")
+    register(mcp)
+    tool_fn = await _get_tool_fn(mcp, "list_staff_roster_vacancies")
+    result = await tool_fn(location="Bronx")
+
+    assert result["success"] is True
+    assert result["vacancies"][0]["job_category"] == "Teacher"
+    staff_roster.list_staff_roster_vacancies.assert_awaited_once_with("Bronx")
+
+
+@pytest.mark.asyncio
 async def test_add_employee_to_staff_roster_rejects_personal_email_only_capacity_full_group():
     client = StaffRosterClient()
     roster_rows = [

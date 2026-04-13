@@ -337,6 +337,95 @@ class StaffRosterClient(WorkbookGraphClient):
                 "error": str(exc),
             }
 
+    async def list_staff_roster_vacancies(self, location: str) -> dict[str, Any]:
+        try:
+            workbook = self._staff_roster_workbook(location)
+            capacity_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["capacity_sheet_name"],
+            )
+            roster_rows = await self._used_range_rows(
+                drive_id=workbook["drive_id"],
+                item_id=workbook["item_id"],
+                sheet_name=workbook["roster_sheet_name"],
+            )
+
+            if not capacity_rows:
+                return {"success": False, "location": location, "error": "Capacity sheet is empty"}
+            if not roster_rows:
+                return {"success": False, "location": location, "error": "Roster sheet is empty"}
+
+            capacity_header = _header_map(capacity_rows[0], CAPACITY_ALIASES)
+            if "group" not in capacity_header or "capacity" not in capacity_header:
+                return {"success": False, "location": location, "error": "Capacity sheet must contain Group and Capacity columns"}
+
+            roster_aliases = {**ROSTER_REQUIRED_ALIASES, **ROSTER_OPTIONAL_ALIASES}
+            roster_header = _header_map(roster_rows[0], roster_aliases)
+            missing = [key for key in ROSTER_REQUIRED_ALIASES if key not in roster_header]
+            if missing:
+                missing_list = ", ".join(missing)
+                return {"success": False, "location": location, "error": f"Roster sheet is missing required columns: {missing_list}"}
+
+            current_counts: dict[str, int] = {}
+            for row in roster_rows[1:]:
+                if self._is_totals_row(row, roster_header):
+                    continue
+                group = _cell(row, roster_header.get("group"))
+                if not group:
+                    continue
+                normalized_group = group.lower()
+                current_counts[normalized_group] = current_counts.get(normalized_group, 0) + 1
+
+            vacancies: list[dict[str, Any]] = []
+            categories: list[dict[str, Any]] = []
+            seen_groups: set[str] = set()
+            for row in capacity_rows[1:]:
+                group = _cell(row, capacity_header.get("group"))
+                if not group:
+                    continue
+                normalized_group = group.lower()
+                if normalized_group in seen_groups:
+                    continue
+                seen_groups.add(normalized_group)
+
+                capacity_text = _cell(row, capacity_header.get("capacity"))
+                if not capacity_text:
+                    continue
+                max_capacity = int(float(capacity_text))
+                current_count = current_counts.get(normalized_group, 0)
+                remaining_capacity = max_capacity - current_count
+                category = {
+                    "job_category": group,
+                    "current_count": current_count,
+                    "max_capacity": max_capacity,
+                    "remaining_capacity": remaining_capacity,
+                    "has_capacity": current_count < max_capacity,
+                }
+                categories.append(category)
+                if current_count < max_capacity:
+                    vacancies.append(category)
+
+            return {
+                "success": True,
+                "location": location,
+                "vacancies": vacancies,
+                "categories": categories,
+                "vacancy_count": len(vacancies),
+                "summary": (
+                    f"{len(vacancies)} staff roster groups have vacancies at {location}."
+                    if vacancies
+                    else f"No staff roster groups have vacancies at {location}."
+                ),
+            }
+        except Exception as exc:
+            logger.exception("list_staff_roster_vacancies failed")
+            return {
+                "success": False,
+                "location": location,
+                "error": str(exc),
+            }
+
     async def _insert_roster_row(
         self,
         *,

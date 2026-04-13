@@ -25,6 +25,18 @@ def register(mcp: FastMCP) -> None:
         return await _staff_roster().check_staff_roster_capacity(location, job_category)
 
     @mcp.tool()
+    async def list_staff_roster_vacancies(location: str) -> dict[str, Any]:
+        """List all staff roster groups with open capacity at one location.
+
+        Use this for questions like "Are there any vacancies?", "What groups
+        have openings?", or "Which job categories are below capacity?". The
+        result includes only groups/job categories where current roster count
+        is below max capacity in `vacancies`, plus all capacity categories in
+        `categories` for context.
+        """
+        return await _staff_roster().list_staff_roster_vacancies(location)
+
+    @mcp.tool()
     async def find_employee_in_staff_roster(
         employee_email: str,
         location: str,

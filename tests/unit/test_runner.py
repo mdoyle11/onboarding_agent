@@ -114,6 +114,21 @@ def test_derive_session_context_uses_source_driven_employee_name_and_job_categor
     assert result["intent"] == "check_onboarding_status"
 
 
+def test_derive_session_context_tracks_staff_roster_vacancy_location():
+    messages = [
+        ToolMessage(
+            content='{"success": true, "location": "Collier", "vacancy_count": 1}',
+            tool_call_id="1",
+            name="list_staff_roster_vacancies",
+        ),
+    ]
+
+    result = derive_session_context(messages)
+
+    assert result["work_location"] == "Collier"
+    assert result["intent"] == "staff_roster"
+
+
 def test_derive_session_context_preserves_separation_follow_up_identity() -> None:
     messages = [
         ToolMessage(

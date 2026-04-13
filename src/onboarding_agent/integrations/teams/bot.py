@@ -58,6 +58,7 @@ _CARD_REFRESH_TOOL_NAMES = {
     "send_docusign_envelope",
     "delete_offer_letter_draft_from_tracker",
     "check_staff_roster_capacity",
+    "list_staff_roster_vacancies",
     "find_employee_in_staff_roster",
     "add_employee_to_staff_roster",
     "remove_employee_from_staff_roster",

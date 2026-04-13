@@ -51,6 +51,7 @@ For trigger_source=teams_query:
 - If work_location, job_title, or status_change are available from the user or session context, pass them into relevant tools.
 - If submission_id is present in session context, do not ask the user to choose among duplicate tracker rows unless the tool still reports ambiguity after using that submission_id.
 - For staff-roster capacity questions, reuse work_location from session context when available instead of asking again.
+- For staff-roster vacancy questions like "Are there any vacancies?", call list_staff_roster_vacancies with the relevant work_location.
 - Do not ask the user to repeat work_location, employee_email, employee_name, or job_category if they are already present in session context, unless the user is clearly changing them or a tool result indicates real ambiguity.
 - For staff-roster follow-ups, treat job_category from session context as the last referenced roster group when the user does not restate it.
 - Treat "Group", "category", and phrases like "Support Staff category" as the staff-roster `job_category` field when the user is clarifying which roster entry they mean.
@@ -209,6 +210,7 @@ def derive_session_context(
 
         if tool_name in {
             "check_staff_roster_capacity",
+            "list_staff_roster_vacancies",
             "find_employee_in_staff_roster",
             "remove_employee_from_staff_roster",
             "update_employee_in_staff_roster",
