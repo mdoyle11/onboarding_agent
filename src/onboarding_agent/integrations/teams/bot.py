@@ -8,6 +8,7 @@ import shlex
 from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from microsoft_agents.activity import Activity, Attachment
 from microsoft_agents.hosting.core import TurnContext, TurnState
 
 from onboarding_agent.agent import runner
@@ -27,6 +28,7 @@ from onboarding_agent.integrations.teams.card_actions import (
     card_action_already_completed,
     execute_new_hire_card_action_without_context,
     extract_card_action,
+    handle_clear_to_start_card_action,
     handle_separation_card_action,
     handle_staff_roster_card_action,
     notify_card_action_failure,
@@ -72,12 +74,14 @@ _SLASH_COMMAND_HELP = """\
 - `/update-field <tracker|roster> <email> <column> <value>` - Update a non-stage field.
 - `/update-stage <email> <stage> <complete|incomplete>` - Complete or clear a tracker stage.
 - `/clear-stage <email> <stage>` - Clear a tracker stage.
+- `/clear-to-start <email> [submission_id]` - Open the Clear to Start email form.
 
 *Examples*
 - `/update-field tracker employee@example.com "Requested Start Date" "2026-08-03"`
 - `/update-field roster employee@example.com "Grade Level" "3"`
 - `/update-stage employee@example.com "Background Submission" complete`
 - `/clear-stage employee@example.com "Background Submission"`
+- `/clear-to-start employee@example.com`
 
 **DocuSign**
 - `/drafts` - List unsent DocuSign drafts.
@@ -175,6 +179,64 @@ def _expand_slash_command(user_text: str) -> tuple[bool, str]:
         return True, "Usage: /update-stage <email> <stage> <complete|incomplete>"
 
     return True, f"Unknown command '/{command}'.\n\n{_SLASH_COMMAND_HELP}"
+
+
+def _parse_clear_to_start_command(user_text: str) -> tuple[bool, list[str], str]:
+    try:
+        parts = shlex.split(user_text.strip())
+    except ValueError:
+        parts = user_text.strip().split()
+    if not parts or parts[0].lstrip("/").lower() not in {"clear-to-start", "clearstart"}:
+        return False, [], ""
+    if len(parts) < 2:
+        return True, [], "Usage: /clear-to-start <email> [submission_id]"
+    return True, parts[1:], ""
+
+
+async def _send_clear_to_start_card_from_command(context: TurnContext, args: list[str]) -> str:
+    from onboarding_agent.integrations.adaptive_cards import clear_to_start_card
+    from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
+
+    employee_email = args[0]
+    submission_id = args[1] if len(args) > 1 else ""
+    tracker_record = await TrackerClient().find_employee_in_tracker(
+        employee_email,
+        submission_id=submission_id,
+    )
+    if not tracker_record.get("found"):
+        return str(tracker_record.get("error") or f"No tracker row found for {employee_email}.")
+
+    employee_name = str(tracker_record.get("name", "") or tracker_record.get("staff_name", "") or employee_email)
+    work_location = str(tracker_record.get("location", "") or tracker_record.get("work_location", "") or "")
+    job_title = str(tracker_record.get("job_title", "") or tracker_record.get("position", "") or "")
+    status_change = str(tracker_record.get("status_change", "") or "")
+    requested_start_date = str(tracker_record.get("start_date", "") or tracker_record.get("requested_start_date", "") or "")
+    resolved_submission_id = str(tracker_record.get("submission_id", "") or submission_id or "")
+    requesting_manager = str(tracker_record.get("requesting_manager", "") or tracker_record.get("manager_name", "") or "")
+
+    card = clear_to_start_card(
+        employee_email=employee_email,
+        employee_name=employee_name,
+        submission_id=resolved_submission_id,
+        work_location=work_location,
+        job_title=job_title,
+        status_change=status_change,
+        requested_start_date=requested_start_date,
+        requesting_manager=requesting_manager,
+    )
+    await context.send_activity(
+        Activity(
+            type="message",
+            text="",
+            attachments=[
+                Attachment(
+                    content_type="application/vnd.microsoft.card.adaptive",
+                    content=card,
+                )
+            ],
+        )
+    )
+    return ""
 
 
 _CARD_REFRESH_TOOL_NAMES = {
@@ -306,6 +368,9 @@ def register_handlers(agent_app: Any) -> None:
             (activity.text or "")[:200],
         )
         card_action = extract_card_action(activity)
+        if card_action and card_action["action"] == "send_clear_to_start":
+            await handle_clear_to_start_card_action(context, card_action)
+            return
         if card_action and card_action["action"] == "add_to_staff_roster":
             await handle_staff_roster_card_action(context, card_action)
             return
@@ -335,6 +400,17 @@ def register_handlers(agent_app: Any) -> None:
             user_text = (activity.text or "").strip()
 
         if not user_text:
+            return
+
+        is_clear_to_start_command, clear_to_start_args, clear_to_start_usage = _parse_clear_to_start_command(user_text)
+        if is_clear_to_start_command:
+            if not synthetic_loadtest:
+                if clear_to_start_usage:
+                    await context.send_activity(clear_to_start_usage)
+                else:
+                    result_text = await _send_clear_to_start_card_from_command(context, clear_to_start_args)
+                    if result_text:
+                        await context.send_activity(result_text)
             return
 
         slash_handled, slash_result = _expand_slash_command(user_text)

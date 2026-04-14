@@ -10,6 +10,7 @@ from microsoft_agents.hosting.core import TurnContext
 
 from onboarding_agent.domain.identity import EmployeeIdentity
 from onboarding_agent.integrations.adaptive_cards import (
+    clear_to_start_card,
     docusign_status_card,
     new_hire_card,
     separation_card,
@@ -48,6 +49,11 @@ def extract_card_action(activity: Any) -> dict[str, str] | None:
         "work_location": str(value.get("work_location", "")).strip(),
         "job_title": str(value.get("job_title", "")).strip(),
         "status_change": str(value.get("status_change", "")).strip(),
+        "clear_to_start_date": str(value.get("clear_to_start_date", "")).strip(),
+        "treasurer_name": str(value.get("treasurer_name", "")).strip(),
+        "treasurer_email": str(value.get("treasurer_email", "")).strip(),
+        "hiring_manager_email": str(value.get("hiring_manager_email", "")).strip(),
+        "cc_emails": str(value.get("cc_emails", "")).strip(),
         "message_id": str(getattr(activity, "reply_to_id", "") or getattr(activity, "id", "") or "").strip(),
     }
     logger.info(
@@ -272,6 +278,84 @@ async def handle_staff_roster_card_action(context: TurnContext, card_action: dic
         await context.send_activity(
             f"Staff roster update failed for {identity.email} as {job_category}. {exc}"
         )
+
+
+async def handle_clear_to_start_card_action(context: TurnContext, card_action: dict[str, str]) -> None:
+    identity = _identity_from_action(card_action)
+    clear_date = str(card_action.get("clear_to_start_date", "") or "").strip()
+    treasurer_name = str(card_action.get("treasurer_name", "") or "").strip()
+    treasurer_email = str(card_action.get("treasurer_email", "") or "").strip()
+    hiring_manager_email = str(card_action.get("hiring_manager_email", "") or "").strip()
+    cc_emails = str(card_action.get("cc_emails", "") or "").strip()
+
+    missing_fields = [
+        label
+        for label, value in {
+            "Clear to Start date": clear_date,
+            "Treasurer name": treasurer_name,
+            "Treasurer email": treasurer_email,
+            "Hiring Manager email": hiring_manager_email,
+        }.items()
+        if not value
+    ]
+    if missing_fields:
+        await context.send_activity("Please complete these fields before sending: " + ", ".join(missing_fields))
+        return
+
+    try:
+        from onboarding_agent.mcp_server.tools_tracker import update_tracker_stage_for_employee
+
+        result = await update_tracker_stage_for_employee(
+            identity.email,
+            "Clear to Start",
+            stage_value=clear_date,
+            location=identity.work_location,
+            job_title=identity.job_title,
+            status_change=identity.status_change,
+            submission_id=str(card_action.get("submission_id", "") or ""),
+            cc_emails=cc_emails,
+            treasurer_name=treasurer_name,
+            treasurer_email=treasurer_email,
+            hiring_manager_email=hiring_manager_email,
+        )
+        email_result = result.get("clear_to_start_email", {})
+        if result.get("success") and isinstance(email_result, dict) and email_result.get("success"):
+            await _update_card_via_context(
+                context,
+                {"message_id": card_action.get("message_id", "")},
+                clear_to_start_card(
+                    employee_email=identity.email,
+                    submission_id=str(card_action.get("submission_id", "") or ""),
+                    work_location=identity.work_location,
+                    job_title=identity.job_title,
+                    status_change=identity.status_change,
+                    requested_start_date=clear_date,
+                    email_sent=True,
+                ),
+                "Clear to Start",
+            )
+            await context.send_activity(
+                f"Clear to Start email sent to {identity.email} and the tracker stage was marked complete."
+            )
+            return
+
+        if result.get("success"):
+            error = (
+                str(email_result.get("error", "unknown error"))
+                if isinstance(email_result, dict)
+                else "unknown error"
+            )
+            await context.send_activity(
+                f"Clear to Start stage was marked complete for {identity.email}, but the email failed: {error}"
+            )
+            return
+
+        await context.send_activity(
+            f"Clear to Start failed for {identity.email}: {result.get('error', 'unknown error')}"
+        )
+    except Exception as exc:
+        logger.exception("Clear to Start card action failed")
+        await context.send_activity(f"Clear to Start action failed for {identity.email}. {exc}")
 
 
 async def handle_separation_card_action(context: TurnContext, card_action: dict[str, str]) -> None:

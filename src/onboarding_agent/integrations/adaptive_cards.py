@@ -282,6 +282,107 @@ def background_clearance_card(
     }
 
 
+def clear_to_start_card(
+    employee_email: str,
+    employee_name: str = "",
+    submission_id: str = "",
+    work_location: str = "",
+    job_title: str = "",
+    status_change: str = "",
+    requested_start_date: str = "",
+    requesting_manager: str = "",
+    email_sent: bool = False,
+) -> dict[str, Any]:
+    """Card used by HR to collect Clear to Start email fields."""
+    formatted_date = format_date(requested_start_date) or requested_start_date
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {
+                "type": "ColumnSet",
+                "columns": [
+                    {"type": "Column", "width": "auto", "items": [{"type": "TextBlock", "text": "\u2705", "size": "Large"}]},
+                    {
+                        "type": "Column",
+                        "width": "stretch",
+                        "items": [
+                            {"type": "TextBlock", "text": "Clear to Start Email", "weight": "Bolder", "size": "Medium", "wrap": True},
+                            {"type": "TextBlock", "text": f"{employee_name or employee_email} ({employee_email})", "spacing": "None", "isSubtle": True, "wrap": True},
+                        ],
+                    },
+                ],
+            },
+            {"type": "TextBlock", "text": " ", "separator": True},
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Clear Date", "value": formatted_date or "Today unless changed below"},
+                    {"title": "Job Title", "value": job_title or "N/A"},
+                    {"title": "Work Location", "value": work_location or "N/A"},
+                    {"title": "Hiring Manager", "value": requesting_manager or "N/A"},
+                ],
+            },
+            {"type": "TextBlock", "text": " ", "separator": True},
+            {
+                "type": "Input.Date",
+                "id": "clear_to_start_date",
+                "label": "Clear to Start date",
+                "value": requested_start_date,
+                "isRequired": True,
+                "errorMessage": "Enter the Clear to Start date.",
+            },
+            {
+                "type": "Input.Text",
+                "id": "treasurer_name",
+                "label": "Treasurer name",
+                "placeholder": "Taylor Treasurer",
+                "isRequired": True,
+                "errorMessage": "Enter the Treasurer name.",
+            },
+            {
+                "type": "Input.Text",
+                "id": "treasurer_email",
+                "label": "Treasurer email",
+                "placeholder": "treasurer@example.com",
+                "style": "Email",
+                "isRequired": True,
+                "errorMessage": "Enter the Treasurer email.",
+            },
+            {
+                "type": "Input.Text",
+                "id": "hiring_manager_email",
+                "label": "Hiring Manager email",
+                "placeholder": "manager@example.com",
+                "style": "Email",
+                "isRequired": True,
+                "errorMessage": "Enter the Hiring Manager email.",
+            },
+            {
+                "type": "Input.Text",
+                "id": "cc_emails",
+                "label": "Additional CC emails",
+                "placeholder": "optional@example.com, another@example.com",
+                "isMultiline": False,
+            },
+        ],
+        "actions": [
+            _action_button(
+                "send_clear_to_start",
+                "Send Clear to Start Email",
+                "\u2713 Clear to Start Email Sent",
+                email_sent,
+                employee_email=employee_email,
+                submission_id=submission_id,
+                work_location=work_location,
+                job_title=job_title,
+                status_change=status_change,
+            )
+        ],
+    }
+
+
 def separation_card(
     employee_name: str,
     employee_email: str,

@@ -69,8 +69,8 @@
               "description": "Find an employee in the staff roster."
             },
             {
-              "title": "leave",
-              "description": "Start or end staff-roster leave status."
+              "title": "clear-to-start",
+              "description": "Open the Clear to Start email form."
             },
             {
               "title": "update-field",

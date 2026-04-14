@@ -22,6 +22,8 @@ class OutlookEmailClient:
         subject: str,
         body_html: str,
         reply_to: str = "",
+        cc_emails: list[str] | None = None,
+        attachments: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Send an HTML email via Graph API. Returns {success, message_id}."""
         if not settings.outlook_sender_email:
@@ -44,6 +46,18 @@ class OutlookEmailClient:
             },
             "saveToSentItems": True,
         }
+        clean_cc_emails = [email.strip() for email in (cc_emails or []) if email.strip()]
+        if clean_cc_emails:
+            message_payload["message"]["ccRecipients"] = [
+                {
+                    "emailAddress": {
+                        "address": email,
+                    }
+                }
+                for email in clean_cc_emails
+            ]
+        if attachments:
+            message_payload["message"]["attachments"] = attachments
         if reply_to:
             message_payload["message"]["replyTo"] = [
                 {

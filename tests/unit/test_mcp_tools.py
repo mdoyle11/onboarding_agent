@@ -1361,6 +1361,89 @@ class TestTrackerTools:
         )
 
     @pytest.mark.asyncio
+    async def test_update_tracker_stage_sends_clear_to_start_email_with_cc(self):
+        self.tracker.find_employee_in_tracker.side_effect = [
+            {
+                "found": True,
+                "email": "alice@example.com",
+                "stages": {"Clear to Start": ""},
+            },
+            {
+                "found": True,
+                "email": "alice@example.com",
+                "name": "Alice Example",
+                "requested_start_date": "2026-08-03",
+                "location": "Collier",
+                "job_title": "Teacher",
+                "requesting_manager": "Morgan Manager",
+                "stages": {"Clear to Start": "2026-04-14"},
+            },
+        ]
+        self.tracker.update_stage.return_value = {"success": True, "value": "2026-04-14"}
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        send_clear_to_start = AsyncMock(return_value={"success": True, "cc_emails": ["manager@example.com"]})
+        mcp = FastMCP(name="tracker-clear-to-start-email-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
+        with patch(
+            "onboarding_agent.mcp_server.tools_email.send_clear_to_start_email",
+            new=send_clear_to_start,
+        ):
+            result = await tool_fn(
+                employee_email="alice@example.com",
+                stage_name="Clear to Start",
+                location="Collier",
+                job_title="Teacher",
+                status_change="New Hire",
+                cc_emails="ops@example.com",
+                treasurer_name="Taylor Treasurer",
+                treasurer_email="treasurer@example.com",
+                hiring_manager_email="manager@example.com",
+            )
+
+        assert result["success"] is True
+        assert result["clear_to_start_email"]["success"] is True
+        send_clear_to_start.assert_awaited_once_with(
+            "alice@example.com",
+            "Alice Example",
+            requested_start_date="2026-04-14",
+            treasurer_name="Taylor Treasurer",
+            treasurer_email="treasurer@example.com",
+            hiring_manager_name="Morgan Manager",
+            hiring_manager_email="manager@example.com",
+            cc_emails="ops@example.com",
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_tracker_stage_requires_clear_to_start_email_fields(self):
+        self.tracker.find_employee_in_tracker.return_value = {
+            "found": True,
+            "email": "alice@example.com",
+            "stages": {"Clear to Start": ""},
+        }
+
+        from onboarding_agent.mcp_server.tools_tracker import register
+
+        mcp = FastMCP(name="tracker-clear-to-start-missing-email-fields-test")
+        register(mcp)
+        tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
+        result = await tool_fn(
+            employee_email="alice@example.com",
+            stage_name="Clear to Start",
+        )
+
+        assert result["success"] is False
+        assert result["needs_clarification"] is True
+        assert result["missing_fields"] == [
+            "treasurer_name",
+            "treasurer_email",
+            "hiring_manager_email",
+        ]
+        self.tracker.update_stage.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_update_tracker_stage_returns_clarification_for_unknown_stage(self):
         self.tracker.find_employee_in_tracker.return_value = {
             "found": True,

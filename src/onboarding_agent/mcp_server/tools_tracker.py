@@ -247,6 +247,118 @@ def _employee_matches_filters(
     return not (start_date_to and (employee_start_date is None or employee_start_date > start_date_to))
 
 
+async def update_tracker_stage_for_employee(
+    employee_email: str,
+    stage_name: str,
+    stage_value: str = "",
+    location: str = "",
+    job_title: str = "",
+    status_change: str = "",
+    submission_id: str = "",
+    cc_emails: str = "",
+    treasurer_name: str = "",
+    treasurer_email: str = "",
+    hiring_manager_email: str = "",
+) -> dict[str, Any]:
+    """Set one tracker stage, sending Clear to Start email when that stage is completed."""
+    stage_resolution = _resolve_stage_for_update(stage_name)
+    if not stage_resolution.get("success"):
+        return {
+            **stage_resolution,
+            "employee_email": employee_email,
+        }
+    resolved_stage_name = str(stage_resolution["field"])
+    identity = EmployeeIdentity(employee_email, location, job_title, status_change)
+    guarded = await _guard_inactive_stage_update(
+        identity=identity,
+        stage_name=resolved_stage_name,
+        submission_id=submission_id,
+    )
+    if guarded is not None:
+        return guarded
+
+    tracker_record: dict[str, Any] = {}
+    if resolved_stage_name == "Clear to Start":
+        missing_fields = [
+            field_name
+            for field_name, value in {
+                "treasurer_name": treasurer_name,
+                "treasurer_email": treasurer_email,
+                "hiring_manager_email": hiring_manager_email,
+            }.items()
+            if not str(value or "").strip()
+        ]
+        if missing_fields:
+            return {
+                "success": False,
+                "employee_email": identity.email,
+                "stage": resolved_stage_name,
+                "needs_clarification": True,
+                "missing_fields": missing_fields,
+                "error": (
+                    "Clear to Start email requires Treasurer name, Treasurer email, "
+                    "and Hiring Manager email before the stage can be marked complete."
+                ),
+            }
+        tracker_record = await _tracker().find_employee_in_tracker(
+            identity.email,
+            location=identity.work_location,
+            job_title=identity.job_title,
+            status_change=identity.status_change,
+            submission_id=submission_id,
+        )
+
+    result = await _tracker().update_stage(
+        identity.email,
+        resolved_stage_name,
+        value=stage_value or None,
+        location=identity.work_location,
+        job_title=identity.job_title,
+        status_change=identity.status_change,
+        submission_id=submission_id,
+    )
+    if not result.get("success") or resolved_stage_name != "Clear to Start":
+        return result
+    if not str(result.get("value", "") or "").strip():
+        return result
+
+    try:
+        employee_name = str(
+            tracker_record.get("name", "")
+            or tracker_record.get("staff_name", "")
+            or identity.email
+        )
+        hiring_manager_name = str(
+            tracker_record.get("requesting_manager", "")
+            or tracker_record.get("manager_name", "")
+            or "Hiring Manager"
+        )
+
+        from onboarding_agent.mcp_server.tools_email import send_clear_to_start_email
+
+        email_result = await send_clear_to_start_email(
+            identity.email,
+            employee_name,
+            requested_start_date=str(result.get("value", "") or stage_value or ""),
+            treasurer_name=treasurer_name,
+            treasurer_email=treasurer_email,
+            hiring_manager_name=hiring_manager_name,
+            hiring_manager_email=hiring_manager_email,
+            cc_emails=cc_emails,
+        )
+        return {**result, "clear_to_start_email": email_result}
+    except Exception as exc:
+        logger.exception("Clear to Start email failed after tracker stage update")
+        return {
+            **result,
+            "clear_to_start_email": {
+                "success": False,
+                "employee_email": identity.email,
+                "error": str(exc),
+            },
+        }
+
+
 def register(mcp: FastMCP) -> None:
     """Register tracker tools on the given FastMCP instance."""
 
@@ -458,37 +570,34 @@ def register(mcp: FastMCP) -> None:
         job_title: str = "",
         status_change: str = "",
         submission_id: str = "",
+        cc_emails: str = "",
+        treasurer_name: str = "",
+        treasurer_email: str = "",
+        hiring_manager_email: str = "",
     ) -> dict[str, Any]:
         """Set a tracker stage value for one employee row.
 
         Use this to mark any tracker stage complete or to set an explicit stage
         value such as a specific date or `N/A`. If `stage_value` is empty, the
-        tracker client uses today's date. If the stage is currently `N/A`, this
-        tool returns an inactive-stage response instead of writing.
+        tracker client uses today's date. When marking `Clear to Start`
+        complete, provide `treasurer_name`, `treasurer_email`, and
+        `hiring_manager_email`; this tool sends the Clear to Start email and
+        CCs those recipients. Use `cc_emails` for comma-separated extra CC
+        recipients. If the stage is currently `N/A`, this tool returns an
+        inactive-stage response instead of writing.
         """
-        stage_resolution = _resolve_stage_for_update(stage_name)
-        if not stage_resolution.get("success"):
-            return {
-                **stage_resolution,
-                "employee_email": employee_email,
-            }
-        resolved_stage_name = str(stage_resolution["field"])
-        identity = EmployeeIdentity(employee_email, location, job_title, status_change)
-        guarded = await _guard_inactive_stage_update(
-            identity=identity,
-            stage_name=resolved_stage_name,
+        return await update_tracker_stage_for_employee(
+            employee_email,
+            stage_name,
+            stage_value=stage_value,
+            location=location,
+            job_title=job_title,
+            status_change=status_change,
             submission_id=submission_id,
-        )
-        if guarded is not None:
-            return guarded
-        return await _tracker().update_stage(
-            identity.email,
-            resolved_stage_name,
-            value=stage_value or None,
-            location=identity.work_location,
-            job_title=identity.job_title,
-            status_change=identity.status_change,
-            submission_id=submission_id,
+            cc_emails=cc_emails,
+            treasurer_name=treasurer_name,
+            treasurer_email=treasurer_email,
+            hiring_manager_email=hiring_manager_email,
         )
 
     @mcp.tool()

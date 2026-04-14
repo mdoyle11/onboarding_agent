@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     # Email template
     email_template_path: str = "templates/onboarding_email.html"
     email_subject_template: str = "Welcome to the team, $employee_name!"
+    clear_to_start_cc_emails: str = ""
+    i9_documents_attachment_path: str = "attachments/List of acceptable I9 documents.pdf"
 
     # ---------------------------------------------------------------------------
     # Server

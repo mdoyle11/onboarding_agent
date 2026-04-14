@@ -6,11 +6,13 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from onboarding_agent.integrations.teams.bot import (
     _apply_card_side_effects_from_tool_results,
     _expand_slash_command,
+    _parse_clear_to_start_command,
     _refresh_cards_from_session_context,
     _refresh_draft_result_surfaces,
     _run_deterministic_card_action_in_background,
     _should_refresh_cards,
 )
+from onboarding_agent.integrations.teams.card_actions import handle_clear_to_start_card_action
 
 
 def test_should_refresh_cards_only_for_relevant_tool_results() -> None:
@@ -41,6 +43,7 @@ def test_expand_slash_command_returns_help_text() -> None:
     assert "/status <email>" in text
     assert "- `/status employee@example.com`" in text
     assert '`/drafts`' in text
+    assert "/clear-to-start <email> [submission_id]" in text
 
 
 def test_expand_slash_command_translates_status_to_agent_prompt() -> None:
@@ -125,6 +128,22 @@ def test_expand_slash_command_translates_update_stage_incomplete() -> None:
 
     assert handled is False
     assert text == "Clear tracker stage 'Background Submission' for employee@example.com so it is blank."
+
+
+def test_parse_clear_to_start_command() -> None:
+    handled, args, usage = _parse_clear_to_start_command("/clear-to-start employee@example.com sub-123")
+
+    assert handled is True
+    assert args == ["employee@example.com", "sub-123"]
+    assert usage == ""
+
+
+def test_parse_clear_to_start_command_reports_usage() -> None:
+    handled, args, usage = _parse_clear_to_start_command("/clear-to-start")
+
+    assert handled is True
+    assert args == []
+    assert usage == "Usage: /clear-to-start <email> [submission_id]"
 
 
 def test_expand_slash_command_rejects_unknown_update_field_target() -> None:
@@ -292,3 +311,48 @@ async def test_background_draft_action_suppresses_failure_when_completion_can_be
 
     refresh_surfaces.assert_awaited_once()
     notify_failure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_clear_to_start_card_action_uses_form_inputs() -> None:
+    context = AsyncMock()
+    context.activity.reply_to_id = "msg-1"
+    update_stage = AsyncMock(return_value={
+        "success": True,
+        "clear_to_start_email": {"success": True},
+    })
+
+    with patch("onboarding_agent.mcp_server.tools_tracker.update_tracker_stage_for_employee", new=update_stage):
+        await handle_clear_to_start_card_action(
+            context,
+            {
+                "action": "send_clear_to_start",
+                "employee_email": "alice@example.com",
+                "submission_id": "sub-123",
+                "work_location": "Collier",
+                "job_title": "Teacher",
+                "status_change": "New Hire",
+                "clear_to_start_date": "2026-08-03",
+                "treasurer_name": "Taylor Treasurer",
+                "treasurer_email": "treasurer@example.com",
+                "hiring_manager_email": "manager@example.com",
+                "cc_emails": "ops@example.com",
+                "message_id": "msg-1",
+            },
+        )
+
+    update_stage.assert_awaited_once_with(
+        "alice@example.com",
+        "Clear to Start",
+        stage_value="2026-08-03",
+        location="Collier",
+        job_title="Teacher",
+        status_change="New Hire",
+        submission_id="sub-123",
+        cc_emails="ops@example.com",
+        treasurer_name="Taylor Treasurer",
+        treasurer_email="treasurer@example.com",
+        hiring_manager_email="manager@example.com",
+    )
+    context.update_activity.assert_awaited_once()
+    context.send_activity.assert_awaited_once()
