@@ -14,11 +14,13 @@ data/
 keys/
 config/staff_rosters.json
 tests/
+loadtest/
 scripts/
 devTools/
 payloads/
 infra/
 teamsappPackage/
+teamsappPackage.example/
 *.md
 Dockerfile
 .dockerignore

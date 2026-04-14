@@ -7,6 +7,7 @@ ENV PYTHONUNBUFFERED=1
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
 COPY templates/ templates/
+COPY attachments/ attachments/
 
 RUN pip install --no-cache-dir .
 
