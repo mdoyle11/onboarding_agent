@@ -19,6 +19,16 @@ variable "container_app_environment_id" {
   type        = string
 }
 
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace resource ID from foundation."
+  type        = string
+}
+
+variable "application_insights_connection_string" {
+  description = "Application Insights connection string from foundation."
+  type        = string
+}
+
 variable "container_registry_name" {
   description = "Azure Container Registry name from foundation."
   type        = string
@@ -249,6 +259,12 @@ variable "azure_storage_queue_name" {
   default     = "onboarding-jobs"
 }
 
+variable "queue_poll_interval_seconds" {
+  description = "Polling interval for the Azure Storage Queue worker. Increase to reduce background dependency telemetry."
+  type        = number
+  default     = 15
+}
+
 variable "teams_channel_id" {
   description = "Default Teams channel ID for notifications."
   type        = string
@@ -271,6 +287,116 @@ variable "staff_roster_locations_json" {
   description = "Serialized staff roster workbook mapping payload."
   type        = string
   sensitive   = true
+}
+
+variable "observability_enabled" {
+  description = "Enable OpenTelemetry setup in the application."
+  type        = bool
+  default     = false
+}
+
+variable "otel_service_name" {
+  description = "OpenTelemetry service name."
+  type        = string
+  default     = "onboarding-agent"
+}
+
+variable "azure_monitor_enabled" {
+  description = "Enable Azure Monitor OpenTelemetry export in the application."
+  type        = bool
+  default     = false
+}
+
+variable "phoenix_enabled" {
+  description = "Enable Phoenix OpenTelemetry export in the application."
+  type        = bool
+  default     = false
+}
+
+variable "phoenix_endpoint" {
+  description = "Phoenix OTLP HTTP traces endpoint."
+  type        = string
+  default     = ""
+}
+
+variable "phoenix_api_key" {
+  description = "Phoenix API key. Stored as a Container App secret when provided."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "phoenix_project_name" {
+  description = "Phoenix project name used for agent traces."
+  type        = string
+  default     = "onboarding-agent-prod"
+}
+
+variable "phoenix_otlp_headers" {
+  description = "Additional comma-separated OTLP headers for Phoenix export."
+  type        = string
+  default     = ""
+}
+
+variable "phoenix_span_name_prefixes" {
+  description = "Comma-separated span name prefixes exported to Phoenix. Azure Monitor still receives full telemetry."
+  type        = string
+  default     = "teams.,agent."
+}
+
+variable "trace_sample_rate" {
+  description = "OpenTelemetry trace sampling rate from 0.0 to 1.0."
+  type        = number
+  default     = 1.0
+}
+
+variable "trace_capture_full_payloads" {
+  description = "Allow raw prompt/tool payload capture. Keep false in production."
+  type        = bool
+  default     = false
+}
+
+variable "trace_hash_salt" {
+  description = "Secret salt used to hash identifiers in traces. Stored as a Container App secret when provided."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "evals_enabled" {
+  description = "Enable sampled online deterministic agent evals."
+  type        = bool
+  default     = false
+}
+
+variable "eval_sample_rate" {
+  description = "Online eval sampling rate from 0.0 to 1.0."
+  type        = number
+  default     = 0.05
+}
+
+variable "azure_monitor_alerts_enabled" {
+  description = "Create Azure Monitor scheduled query alerts for baseline app observability."
+  type        = bool
+  default     = false
+}
+
+variable "azure_monitor_action_group_name" {
+  description = "Azure Monitor action group name for onboarding-agent alerts."
+  type        = string
+  default     = "ag-onboarding-agent"
+}
+
+variable "azure_monitor_action_group_short_name" {
+  description = "Short name for the Azure Monitor action group."
+  type        = string
+  default     = "onboardops"
+}
+
+variable "azure_monitor_alert_email_receivers" {
+  description = "Map of alert receiver names to email addresses."
+  type        = map(string)
+  default     = {}
 }
 
 variable "tags" {

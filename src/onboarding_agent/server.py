@@ -15,6 +15,11 @@ from onboarding_agent.config import settings
 from onboarding_agent.integrations.teams import proactive as teams_proactive
 from onboarding_agent.integrations.teams.bot import register_handlers
 from onboarding_agent.integrations.teams.runtime import load_agents_sdk_config
+from onboarding_agent.observability.setup import (
+    configure_noisy_observability_loggers,
+    configure_observability,
+)
+from onboarding_agent.observability.tracing import start_span
 from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.job_queue import JobQueue, create_job_queue
 from onboarding_agent.runtime.jobs import process_job
@@ -65,17 +70,25 @@ def _setup_teams(app: web.Application) -> None:
         if "application/json" not in request.content_type:
             return web.Response(status=415)
         synthetic_loadtest = _is_synthetic_teams_loadtest(request)
-        try:
-            response = await adapter.process(request, agent_app)
-            if response is None:
-                return web.Response(status=201)
-            return cast(web.Response, response)
-        except Exception as exc:
-            if synthetic_loadtest:
-                logger.warning("Ignoring synthetic Teams load-test reply error: %s", exc)
-                return web.Response(status=201)
-            logger.exception("Error processing Teams activity")
-            return web.Response(status=500, text=str(exc))
+        with start_span(
+            "teams.http_message",
+            {
+                "http.route": "/api/messages",
+                "http.request.content_type": request.content_type,
+                "onboarding.synthetic_loadtest": synthetic_loadtest,
+            },
+        ):
+            try:
+                response = await adapter.process(request, agent_app)
+                if response is None:
+                    return web.Response(status=201)
+                return cast(web.Response, response)
+            except Exception as exc:
+                if synthetic_loadtest:
+                    logger.warning("Ignoring synthetic Teams load-test reply error: %s", exc)
+                    return web.Response(status=201)
+                logger.exception("Error processing Teams activity")
+                return web.Response(status=500, text=str(exc))
 
     async def handle_messages_probe(_request: web.Request) -> web.Response:
         return web.Response(status=200, text="ok")
@@ -149,6 +162,8 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
+    configure_observability(settings)
+    configure_noisy_observability_loggers()
     logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
     logging.getLogger("azure.cosmos._cosmos_http_logging_policy").setLevel(logging.WARNING)
     logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)

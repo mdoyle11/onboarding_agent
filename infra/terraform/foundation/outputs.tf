@@ -38,6 +38,22 @@ output "log_analytics_workspace_id" {
   value       = azurerm_log_analytics_workspace.this.id
 }
 
+output "application_insights_id" {
+  description = "Application Insights resource ID."
+  value       = azurerm_application_insights.this.id
+}
+
+output "application_insights_name" {
+  description = "Application Insights resource name."
+  value       = azurerm_application_insights.this.name
+}
+
+output "application_insights_connection_string" {
+  description = "Application Insights connection string consumed by OpenTelemetry Azure Monitor exporter."
+  value       = azurerm_application_insights.this.connection_string
+  sensitive   = true
+}
+
 output "storage_account_id" {
   description = "Storage account resource ID."
   value       = azurerm_storage_account.this.id

@@ -35,6 +35,11 @@ variable "log_analytics_workspace_name" {
   type        = string
 }
 
+variable "application_insights_name" {
+  description = "Application Insights resource name for app telemetry."
+  type        = string
+}
+
 variable "storage_account_name" {
   description = "Storage account name used for queues and other app storage."
   type        = string

@@ -121,6 +121,31 @@ class Settings(BaseSettings):
     queue_poll_interval_seconds: float = 1.0
 
     # ---------------------------------------------------------------------------
+    # Observability — OpenTelemetry, Azure Monitor, Phoenix
+    # ---------------------------------------------------------------------------
+    observability_enabled: bool = False
+    otel_service_name: str = "onboarding-agent"
+    otel_environment: str = "development"
+    otel_service_version: str = ""
+
+    azure_monitor_enabled: bool = False
+    azure_monitor_connection_string: str = ""
+
+    phoenix_enabled: bool = False
+    phoenix_endpoint: str = ""
+    phoenix_api_key: str = ""
+    phoenix_project_name: str = "onboarding-agent"
+    phoenix_otlp_headers: str = ""
+    phoenix_span_name_prefixes: str = "teams.,agent."
+
+    trace_sample_rate: float = 1.0
+    trace_capture_full_payloads: bool = False
+    trace_hash_salt: str = ""
+
+    evals_enabled: bool = False
+    eval_sample_rate: float = 0.05
+
+    # ---------------------------------------------------------------------------
     # Convenience helpers
     # ---------------------------------------------------------------------------
     def is_gemini(self) -> bool:

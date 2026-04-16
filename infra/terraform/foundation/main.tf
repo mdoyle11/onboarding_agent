@@ -27,6 +27,15 @@ resource "azurerm_log_analytics_workspace" "this" {
   tags                = local.base_tags
 }
 
+resource "azurerm_application_insights" "this" {
+  name                = var.application_insights_name
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  application_type    = "web"
+  workspace_id        = azurerm_log_analytics_workspace.this.id
+  tags                = local.base_tags
+}
+
 resource "azurerm_container_registry" "this" {
   name                = var.container_registry_name
   resource_group_name = azurerm_resource_group.this.name

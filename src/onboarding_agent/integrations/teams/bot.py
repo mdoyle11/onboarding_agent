@@ -44,6 +44,9 @@ from onboarding_agent.integrations.teams.memory import (
 from onboarding_agent.integrations.teams.mentions import is_mentioned, strip_mention
 from onboarding_agent.integrations.teams.proactive import save_conversation_reference
 from onboarding_agent.integrations.teams.reply import extract_reply, should_suppress_reply
+from onboarding_agent.observability.evals import record_online_evals
+from onboarding_agent.observability.pii import identifier_attributes, redact_text
+from onboarding_agent.observability.tracing import set_span_attributes, start_span
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +182,30 @@ def _expand_slash_command(user_text: str) -> tuple[bool, str]:
         return True, "Usage: /update-stage <email> <stage> <complete|incomplete>"
 
     return True, f"Unknown command '/{command}'.\n\n{_SLASH_COMMAND_HELP}"
+
+
+def _activity_identifier_attrs(activity: Any) -> dict[str, str]:
+    return identifier_attributes(
+        teams_conversation_id=getattr(getattr(activity, "conversation", None), "id", "") or "",
+        teams_user_id=getattr(getattr(activity, "from_property", None), "aad_object_id", "") or "",
+        salt=settings.trace_hash_salt,
+    )
+
+
+def _card_action_trace_attrs(activity: Any, card_action: dict[str, str]) -> dict[str, Any]:
+    return {
+        "onboarding.route": "card_action",
+        "onboarding.card.action": card_action.get("action", ""),
+        "onboarding.card.has_message_id": bool(card_action.get("message_id")),
+        "onboarding.card.has_submission_id": bool(card_action.get("submission_id")),
+        **identifier_attributes(
+            employee_email=card_action.get("employee_email", ""),
+            submission_id=card_action.get("submission_id", ""),
+            teams_conversation_id=getattr(getattr(activity, "conversation", None), "id", "") or "",
+            teams_user_id=getattr(getattr(activity, "from_property", None), "aad_object_id", "") or "",
+            salt=settings.trace_hash_salt,
+        ),
+    }
 
 
 def _parse_clear_to_start_command(user_text: str) -> tuple[bool, list[str], str]:
@@ -369,24 +396,40 @@ def register_handlers(agent_app: Any) -> None:
         )
         card_action = extract_card_action(activity)
         if card_action and card_action["action"] == "send_clear_to_start":
-            await handle_clear_to_start_card_action(context, card_action)
+            with start_span(
+                "teams.card_action.send_clear_to_start",
+                _card_action_trace_attrs(activity, card_action),
+            ):
+                await handle_clear_to_start_card_action(context, card_action)
             return
         if card_action and card_action["action"] == "add_to_staff_roster":
-            await handle_staff_roster_card_action(context, card_action)
+            with start_span(
+                "teams.card_action.add_to_staff_roster",
+                _card_action_trace_attrs(activity, card_action),
+            ):
+                await handle_staff_roster_card_action(context, card_action)
             return
         if card_action and card_action["action"] in {"record_separation", "update_leave_start", "update_leave_end"}:
-            if await card_action_already_completed(card_action):
-                await refresh_card_from_context(context, card_action)
-                await context.send_activity(already_completed_message(card_action))
-                return
-            await handle_separation_card_action(context, card_action)
+            with start_span(
+                f"teams.card_action.{card_action['action']}",
+                _card_action_trace_attrs(activity, card_action),
+            ):
+                if await card_action_already_completed(card_action):
+                    await refresh_card_from_context(context, card_action)
+                    await context.send_activity(already_completed_message(card_action))
+                    return
+                await handle_separation_card_action(context, card_action)
             return
         if card_action and card_action["action"] in {"send_onboarding_email", "create_docusign_draft", "refresh_review_link", "send_docusign"}:
-            if await card_action_already_completed(card_action):
-                await refresh_card_from_context(context, card_action)
-                await context.send_activity(already_completed_message(card_action))
-                return
-            asyncio.create_task(_run_deterministic_card_action_in_background(card_action=card_action))
+            with start_span(
+                f"teams.card_action.{card_action['action']}",
+                _card_action_trace_attrs(activity, card_action),
+            ):
+                if await card_action_already_completed(card_action):
+                    await refresh_card_from_context(context, card_action)
+                    await context.send_activity(already_completed_message(card_action))
+                    return
+                asyncio.create_task(_run_deterministic_card_action_in_background(card_action=card_action))
             return
 
         if conversation_type in ("channel", "groupChat"):
@@ -404,19 +447,46 @@ def register_handlers(agent_app: Any) -> None:
 
         is_clear_to_start_command, clear_to_start_args, clear_to_start_usage = _parse_clear_to_start_command(user_text)
         if is_clear_to_start_command:
-            if not synthetic_loadtest:
-                if clear_to_start_usage:
-                    await context.send_activity(clear_to_start_usage)
-                else:
-                    result_text = await _send_clear_to_start_card_from_command(context, clear_to_start_args)
-                    if result_text:
-                        await context.send_activity(result_text)
+            with start_span(
+                "teams.slash_command.clear_to_start",
+                {
+                    "onboarding.route": "slash_command",
+                    "onboarding.command": "clear-to-start",
+                    "onboarding.synthetic_loadtest": synthetic_loadtest,
+                    "onboarding.command_text": redact_text(
+                        user_text,
+                        salt=settings.trace_hash_salt,
+                        capture_full_payloads=settings.trace_capture_full_payloads,
+                    ),
+                    **_activity_identifier_attrs(activity),
+                },
+            ):
+                if not synthetic_loadtest:
+                    if clear_to_start_usage:
+                        await context.send_activity(clear_to_start_usage)
+                    else:
+                        result_text = await _send_clear_to_start_card_from_command(context, clear_to_start_args)
+                        if result_text:
+                            await context.send_activity(result_text)
             return
 
         slash_handled, slash_result = _expand_slash_command(user_text)
         if slash_handled:
-            if not synthetic_loadtest:
-                await context.send_activity(slash_result)
+            with start_span(
+                "teams.slash_command.expand",
+                {
+                    "onboarding.route": "slash_command",
+                    "onboarding.synthetic_loadtest": synthetic_loadtest,
+                    "onboarding.command_text": redact_text(
+                        user_text,
+                        salt=settings.trace_hash_salt,
+                        capture_full_payloads=settings.trace_capture_full_payloads,
+                    ),
+                    **_activity_identifier_attrs(activity),
+                },
+            ):
+                if not synthetic_loadtest:
+                    await context.send_activity(slash_result)
             return
         user_text = slash_result
 
@@ -440,11 +510,37 @@ def register_handlers(agent_app: Any) -> None:
         messages: list[BaseMessage] = history + [HumanMessage(content=user_text)]
 
         try:
-            result_messages = await runner.run_agent(
-                messages,
-                trigger_source="teams_query",
-                session_context=session_context,
-            )
+            with start_span(
+                "teams.agent_query",
+                {
+                    "onboarding.route": "natural_language",
+                    "onboarding.synthetic_loadtest": synthetic_loadtest,
+                    "onboarding.user_text": redact_text(
+                        user_text,
+                        salt=settings.trace_hash_salt,
+                        capture_full_payloads=settings.trace_capture_full_payloads,
+                    ),
+                    **identifier_attributes(
+                        employee_email=str(session_context.get("employee_email", "") or ""),
+                        submission_id=str(session_context.get("submission_id", "") or ""),
+                        teams_conversation_id=getattr(getattr(activity, "conversation", None), "id", "") or "",
+                        teams_user_id=user_id,
+                        salt=settings.trace_hash_salt,
+                    ),
+                },
+            ) as span:
+                result_messages = await runner.run_agent(
+                    messages,
+                    trigger_source="teams_query",
+                    session_context=session_context,
+                )
+                set_span_attributes(
+                    span,
+                    {
+                        "onboarding.result_message_count": len(result_messages),
+                        "onboarding.reply_suppressed": should_suppress_reply(result_messages),
+                    },
+                )
             await save_chat_history(session_key, result_messages)
             updated_session_context = await merge_session_context(
                 session_key,
@@ -458,6 +554,7 @@ def register_handlers(agent_app: Any) -> None:
                 "" if should_suppress_reply(result_messages)
                 else extract_reply(result_messages)
             )
+            record_online_evals(result_messages, reply_text)
         except Exception as exc:
             logger.exception("Agent invocation failed")
             reply_text = f"Sorry, something went wrong: {exc}"

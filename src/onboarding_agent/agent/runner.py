@@ -17,6 +17,8 @@ from pydantic import SecretStr
 
 from onboarding_agent.agent.session_context import SESSION_CONTEXT_FIELDS
 from onboarding_agent.config import settings
+from onboarding_agent.observability.pii import redact_text
+from onboarding_agent.observability.tracing import set_span_attributes, start_span
 
 logger = logging.getLogger(__name__)
 
@@ -348,30 +350,51 @@ async def _execute_tool_calls(
 
         if name not in tool_map:
             return ToolMessage(content=f"Unknown tool: {name}", tool_call_id=call_id, name=name)
-        try:
-            tool = tool_map[name]
-            logger.info(
-                "Executing tool %s with arg_keys=%s",
-                name,
-                sorted(str(key) for key in args),
-            )
-            result = (
-                await tool.arun(args)
-                if inspect.iscoroutinefunction(tool.arun)
-                else tool.run(args)
-            )
-            result_type = type(result).__name__
-            result_size = len(result) if isinstance(result, (str, list, dict, tuple, set)) else None
-            logger.info(
-                "Tool %s completed result_type=%s result_size=%s",
-                name,
-                result_type,
-                result_size if result_size is not None else "n/a",
-            )
-            return ToolMessage(content=str(result), tool_call_id=call_id, name=name)
-        except Exception as exc:
-            logger.exception("Tool %s failed", name)
-            return ToolMessage(content=f"Error: {exc}", tool_call_id=call_id, name=name)
+        with start_span(
+            f"agent.tool.{name}",
+            {
+                "onboarding.tool_name": name,
+                "onboarding.tool_arg_keys": sorted(str(key) for key in args),
+                "onboarding.tool_args": args,
+            },
+        ) as span:
+            try:
+                tool = tool_map[name]
+                logger.info(
+                    "Executing tool %s with arg_keys=%s",
+                    name,
+                    sorted(str(key) for key in args),
+                )
+                result = (
+                    await tool.arun(args)
+                    if inspect.iscoroutinefunction(tool.arun)
+                    else tool.run(args)
+                )
+                result_type = type(result).__name__
+                result_size = len(result) if isinstance(result, (str, list, dict, tuple, set)) else None
+                set_span_attributes(
+                    span,
+                    {
+                        "onboarding.tool_result_type": result_type,
+                        "onboarding.tool_result_size": result_size,
+                        "onboarding.tool_result_preview": redact_text(
+                            str(result)[:1000],
+                            salt=settings.trace_hash_salt,
+                            capture_full_payloads=settings.trace_capture_full_payloads,
+                        ),
+                    },
+                )
+                logger.info(
+                    "Tool %s completed result_type=%s result_size=%s",
+                    name,
+                    result_type,
+                    result_size if result_size is not None else "n/a",
+                )
+                return ToolMessage(content=str(result), tool_call_id=call_id, name=name)
+            except Exception as exc:
+                span.set_attribute("onboarding.tool_failed", True)
+                logger.exception("Tool %s failed", name)
+                return ToolMessage(content=f"Error: {exc}", tool_call_id=call_id, name=name)
 
     return list(await asyncio.gather(*[_run_tool(tc) for tc in tool_calls]))
 
@@ -387,45 +410,67 @@ async def run_agent(
     if not _tools:
         raise RuntimeError("Agent not initialized — call initialize() first")
 
-    llm = _build_llm(_tools)
+    with start_span(
+        "agent.run",
+        {
+            "onboarding.trigger_source": trigger_source or "unknown",
+            "onboarding.max_retries": max_retries,
+            "onboarding.message_count": len(messages),
+            "onboarding.session_context_keys": sorted((session_context or {}).keys()),
+        },
+    ) as span:
+        llm = _build_llm(_tools)
 
-    # Ensure system prompt is first
-    if not messages or not isinstance(messages[0], SystemMessage):
-        messages = [SystemMessage(content=_SYSTEM_PROMPT)] + messages
+        # Ensure system prompt is first
+        if not messages or not isinstance(messages[0], SystemMessage):
+            messages = [SystemMessage(content=_SYSTEM_PROMPT)] + messages
 
-    context_message = _format_session_context(session_context)
-    if context_message is not None:
-        messages = [messages[0], context_message, *messages[1:]]
+        context_message = _format_session_context(session_context)
+        if context_message is not None:
+            messages = [messages[0], context_message, *messages[1:]]
 
-    # Trim for Teams queries
-    messages = _trim_messages(messages, trigger_source)
+        # Trim for Teams queries
+        messages = _trim_messages(messages, trigger_source)
+        span.set_attribute("onboarding.trimmed_message_count", len(messages))
 
-    for attempt in range(max_retries):
-        try:
-            for _ in range(_MAX_TOOL_LOOPS):
-                response = cast(AIMessage, await llm.ainvoke(messages))
-                messages.append(response)
-                logger.info(
-                    "Agent response for %s: tool_calls=%d has_content=%s content_length=%d",
-                    trigger_source or "unknown",
-                    len(response.tool_calls),
-                    bool(response.content),
-                    len(str(response.content or "")),
-                )
+        for attempt in range(max_retries):
+            try:
+                for loop_index in range(_MAX_TOOL_LOOPS):
+                    with start_span(
+                        "agent.llm.invoke",
+                        {
+                            "onboarding.trigger_source": trigger_source or "unknown",
+                            "onboarding.attempt": attempt + 1,
+                            "onboarding.tool_loop_index": loop_index,
+                        },
+                    ):
+                        response = cast(AIMessage, await llm.ainvoke(messages))
+                    messages.append(response)
+                    logger.info(
+                        "Agent response for %s: tool_calls=%d has_content=%s content_length=%d",
+                        trigger_source or "unknown",
+                        len(response.tool_calls),
+                        bool(response.content),
+                        len(str(response.content or "")),
+                    )
 
-                if not response.tool_calls:
-                    return messages
+                    if not response.tool_calls:
+                        span.set_attribute("onboarding.agent_completed", True)
+                        span.set_attribute("onboarding.final_message_count", len(messages))
+                        return messages
 
-                tool_results = await _execute_tool_calls(response.tool_calls, _tool_map)
-                messages.extend(tool_results)
+                    tool_results = await _execute_tool_calls(response.tool_calls, _tool_map)
+                    messages.extend(tool_results)
 
-            # Safety: if we hit the tool loop limit, return what we have
-            logger.warning("Agent hit tool loop limit (%d iterations)", _MAX_TOOL_LOOPS)
-            return messages
+                # Safety: if we hit the tool loop limit, return what we have
+                span.set_attribute("onboarding.tool_loop_limit_hit", True)
+                logger.warning("Agent hit tool loop limit (%d iterations)", _MAX_TOOL_LOOPS)
+                return messages
 
-        except Exception as exc:
-            if attempt == max_retries - 1:
-                raise
-            logger.warning("Agent attempt %d failed: %s", attempt + 1, exc)
+            except Exception as exc:
+                span.set_attribute("onboarding.retry_attempt", attempt + 1)
+                if attempt == max_retries - 1:
+                    raise
+                logger.warning("Agent attempt %d failed: %s", attempt + 1, exc)
 
-    return messages
+        return messages

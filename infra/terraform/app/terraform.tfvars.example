@@ -3,6 +3,8 @@
 environment                = "prod"
 resource_group_name        = "OnboardingAgent-Prod"
 container_app_environment_id      = "/subscriptions/REPLACE_ME/resourceGroups/OnboardingAgent-Prod/providers/Microsoft.App/managedEnvironments/onboarding-agent-prod-env"
+log_analytics_workspace_id        = "/subscriptions/REPLACE_ME/resourceGroups/OnboardingAgent-Prod/providers/Microsoft.OperationalInsights/workspaces/onboarding-agent-prod-logs"
+application_insights_connection_string = "REPLACE_ME_FOUNDATION_APPLICATION_INSIGHTS_CONNECTION_STRING"
 container_registry_name           = "onboardingagentprodacr"
 key_vault_name                    = "onboarding-agent-prod-kv"
 storage_account_name              = "onboardingagentprodst"
@@ -59,9 +61,35 @@ cosmos_state_container_name      = "state-records"
 conversation_session_cosmos_container_name = "conversation-sessions"
 conversation_session_cosmos_default_ttl    = 259200
 
-azure_storage_queue_name          = "onboarding-jobs"
+azure_storage_queue_name     = "onboarding-jobs"
+queue_poll_interval_seconds  = 15
 
 # Optional legacy fallback. Leave empty when using managed identity for Queue Storage.
 # storage_account_connection_string = "REPLACE_ME_FOUNDATION_STORAGE_CONNECTION_STRING"
 
 outlook_sender_email = "hr@example.com"
+
+# Observability. Start with Azure Monitor, then enable Phoenix/evals after
+# verifying traces are redacted and volume is acceptable.
+observability_enabled       = true
+otel_service_name           = "onboarding-agent"
+azure_monitor_enabled       = true
+trace_capture_full_payloads = false
+trace_hash_salt             = "REPLACE_ME_SECRET_RANDOM_HASH_SALT"
+
+phoenix_enabled      = false
+phoenix_endpoint     = ""
+phoenix_api_key      = ""
+phoenix_project_name = "onboarding-agent-prod"
+phoenix_otlp_headers = ""
+phoenix_span_name_prefixes = "teams.,agent."
+phoenix_span_name_prefixes = "teams.,agent."
+queue_poll_interval_seconds = 15
+
+evals_enabled    = false
+eval_sample_rate = 0.05
+
+azure_monitor_alerts_enabled = true
+azure_monitor_alert_email_receivers = {
+  hr_ops = "alerts@example.com"
+}

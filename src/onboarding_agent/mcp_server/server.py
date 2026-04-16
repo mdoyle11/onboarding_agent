@@ -12,10 +12,12 @@ from onboarding_agent.mcp_server.tools_separations import register as register_s
 from onboarding_agent.mcp_server.tools_staff_roster import register as register_staff_roster
 from onboarding_agent.mcp_server.tools_teams import register as register_teams
 from onboarding_agent.mcp_server.tools_tracker import register as register_tracker
+from onboarding_agent.observability.setup import configure_noisy_observability_loggers
 from onboarding_agent.runtime import state_store as store_mod
 from onboarding_agent.runtime.state_store import create_state_store
 
 logging.basicConfig(level=logging.WARNING)
+configure_noisy_observability_loggers()
 logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 
 

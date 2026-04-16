@@ -42,3 +42,13 @@ output "attached_user_assigned_identity_ids" {
   description = "User-assigned identity resource IDs attached to the Container App."
   value       = azurerm_container_app.this.identity[0].identity_ids
 }
+
+output "azure_monitor_action_group_id" {
+  description = "Azure Monitor action group ID for observability alerts, when enabled."
+  value       = try(azurerm_monitor_action_group.observability[0].id, "")
+}
+
+output "azure_monitor_alert_names" {
+  description = "Scheduled query alert names created for baseline observability."
+  value       = keys(azurerm_monitor_scheduled_query_rules_alert_v2.observability)
+}
