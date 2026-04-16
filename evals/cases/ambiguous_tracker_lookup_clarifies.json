@@ -1,0 +1,24 @@
+{
+  "name": "ambiguous_tracker_lookup_clarifies",
+  "type": "trace_behavior",
+  "tool_messages": [
+    {
+      "name": "find_employee_in_tracker",
+      "content": {
+        "found": false,
+        "multiple_matches": true,
+        "matches": [
+          {"submission_id": "143", "location": "Collier", "job_title": "Teacher"},
+          {"submission_id": "144", "location": "Collier", "job_title": "Coach"}
+        ],
+        "error": "Multiple tracker rows matched this email."
+      }
+    }
+  ],
+  "reply_text": "I found multiple tracker rows. Which submission ID should I use?",
+  "expected_evals": {
+    "clarification_response": true,
+    "no_write_after_clarification": true,
+    "failure_truthfulness": true
+  }
+}

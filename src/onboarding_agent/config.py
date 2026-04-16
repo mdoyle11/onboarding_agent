@@ -136,7 +136,7 @@ class Settings(BaseSettings):
     phoenix_api_key: str = ""
     phoenix_project_name: str = "onboarding-agent"
     phoenix_otlp_headers: str = ""
-    phoenix_span_name_prefixes: str = "teams.,agent."
+    phoenix_span_name_prefixes: str = "teams.,agent.,tracker.,graph.excel.tracker."
 
     trace_sample_rate: float = 1.0
     trace_capture_full_payloads: bool = False

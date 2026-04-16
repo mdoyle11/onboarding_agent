@@ -36,6 +36,8 @@ from onboarding_agent.integrations.workbook.schema import (
     TRACKER_OPTIONAL_ALIASES,
     TRACKER_REQUIRED_ALIASES,
 )
+from onboarding_agent.observability.pii import identifier_attributes
+from onboarding_agent.observability.tracing import set_span_attributes, start_span
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +120,18 @@ class TrackerClient(WorkbookGraphClient):
         cls._cache_email_to_row_ids = {}
 
     async def _refresh_index(self) -> tuple[int, list[list[Any]]]:
-        header_row, rows = await self._tracker_rows_with_start_row()
-        self._rebuild_email_index(header_row, rows)
-        return header_row, rows
+        with start_span("tracker.refresh_index") as span:
+            header_row, rows = await self._tracker_rows_with_start_row()
+            self._rebuild_email_index(header_row, rows)
+            set_span_attributes(
+                span,
+                {
+                    "tracker.header_row": header_row,
+                    "tracker.row_count": max(len(rows) - 1, 0),
+                    "tracker.stage_column_count": len(self._stage_columns),
+                },
+            )
+            return header_row, rows
 
     async def _get_row_by_row_id(self, row_id: str) -> list[Any] | None:
         try:
@@ -129,16 +140,26 @@ class TrackerClient(WorkbookGraphClient):
             return None
 
         range_address = quote(f"A{row_number}:{_column_letter(self._tracker_row_width - 1)}{row_number}")
-        data = await self._graph_workbook_request(
-            "GET",
-            f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
-        )
+        with start_span(
+            "graph.excel.tracker.get_row",
+            {
+                "graph.excel.sheet": settings.graph_excel_sheet_name,
+                "graph.excel.row_id": row_id,
+            },
+        ) as span:
+            data = await self._graph_workbook_request(
+                "GET",
+                f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
+            )
         values = data.get("values", []) if isinstance(data, dict) else []
         if not values:
+            span.set_attribute("tracker.row_found", False)
             return None
         first_row = values[0]
         if not isinstance(first_row, list):
+            span.set_attribute("tracker.row_found", False)
             return None
+        span.set_attribute("tracker.row_found", True)
         return first_row
 
     @staticmethod
@@ -751,80 +772,189 @@ class TrackerClient(WorkbookGraphClient):
         status_change: str = "",
         submission_id: str = "",
     ) -> dict[str, Any]:
-        if not self._stage_columns:
-            await self._refresh_index()
-        resolved_stage_name = _resolve_stage_name(stage_name, self._stage_columns)
-        if resolved_stage_name is None:
-            await self._refresh_index()
-            resolved_stage_name = _resolve_stage_name(stage_name, self._stage_columns)
-        if resolved_stage_name is None:
-            return {
-                "success": False,
-                "error": f"Unknown stage '{stage_name}'. Valid stages: {list(self._stage_columns)}",
-            }
-
-        employee = await self.resolve_employee_relaxed(
-            employee_email,
-            location=location,
-            job_title=job_title,
-            status_change=status_change,
-            submission_id=submission_id,
-        )
-        if not employee.get("found"):
-            response: dict[str, Any] = {
-                "success": False,
-                "employee_email": employee_email,
-                "location": location,
-                "job_title": job_title,
-                "status_change": status_change,
-                "submission_id": submission_id,
-                "multiple_matches": bool(employee.get("multiple_matches", False)),
-                "matches": employee.get("matches", []),
-            }
-            if employee.get("multiple_matches"):
-                response["error"] = str(
-                    employee.get(
-                        "error",
-                        "Multiple tracker rows matched this email. Provide location, job_title, status_change, or submission_id.",
-                    )
+        with start_span(
+            "tracker.update_stage",
+            {
+                "tracker.stage.requested": stage_name,
+                "onboarding.stage.requested": stage_name,
+                "tracker.lookup.has_location": bool(location),
+                "tracker.lookup.has_job_title": bool(job_title),
+                "tracker.lookup.has_status_change": bool(status_change),
+                "tracker.lookup.has_submission_id": bool(submission_id),
+                **identifier_attributes(
+                    employee_email=employee_email,
+                    submission_id=submission_id,
+                    salt=settings.trace_hash_salt,
+                ),
+            },
+        ) as span:
+            if not self._stage_columns:
+                await self._refresh_index()
+            with start_span(
+                "tracker.resolve_stage",
+                {
+                    "tracker.stage.requested": stage_name,
+                    "tracker.stage_column_count": len(self._stage_columns),
+                },
+            ) as resolve_span:
+                resolved_stage_name = _resolve_stage_name(stage_name, self._stage_columns)
+                if resolved_stage_name is None:
+                    await self._refresh_index()
+                    resolved_stage_name = _resolve_stage_name(stage_name, self._stage_columns)
+                set_span_attributes(
+                    resolve_span,
+                    {
+                        "tracker.stage.resolved": resolved_stage_name or "",
+                        "tracker.stage.resolved_success": resolved_stage_name is not None,
+                        "onboarding.stage.resolved": resolved_stage_name or "",
+                    },
                 )
-                return response
-            filters = [
-                f"{name}={value}"
-                for name, value in {
+            set_span_attributes(
+                span,
+                {
+                    "tracker.stage.resolved": resolved_stage_name or "",
+                    "tracker.stage.resolved_success": resolved_stage_name is not None,
+                    "onboarding.stage.resolved": resolved_stage_name or "",
+                },
+            )
+            if resolved_stage_name is None:
+                span.set_attribute("onboarding.needs_clarification", True)
+                return {
+                    "success": False,
+                    "error": f"Unknown stage '{stage_name}'. Valid stages: {list(self._stage_columns)}",
+                }
+
+            with start_span(
+                "tracker.resolve_employee_for_stage_update",
+                {
+                    "tracker.stage.resolved": resolved_stage_name,
+                    "tracker.lookup.has_location": bool(location),
+                    "tracker.lookup.has_job_title": bool(job_title),
+                    "tracker.lookup.has_status_change": bool(status_change),
+                    "tracker.lookup.has_submission_id": bool(submission_id),
+                    **identifier_attributes(
+                        employee_email=employee_email,
+                        submission_id=submission_id,
+                        salt=settings.trace_hash_salt,
+                    ),
+                },
+            ) as lookup_span:
+                employee = await self.resolve_employee_relaxed(
+                    employee_email,
+                    location=location,
+                    job_title=job_title,
+                    status_change=status_change,
+                    submission_id=submission_id,
+                )
+                set_span_attributes(
+                    lookup_span,
+                    {
+                        "tracker.lookup.result": (
+                            "found"
+                            if employee.get("found")
+                            else "ambiguous"
+                            if employee.get("multiple_matches")
+                            else "not_found"
+                        ),
+                        "tracker.lookup.multiple_matches": bool(employee.get("multiple_matches", False)),
+                        "tracker.lookup.match_count": len(employee.get("matches", []) or []),
+                        "onboarding.lookup.result": (
+                            "found"
+                            if employee.get("found")
+                            else "ambiguous"
+                            if employee.get("multiple_matches")
+                            else "not_found"
+                        ),
+                        "onboarding.needs_clarification": bool(employee.get("multiple_matches", False)),
+                    },
+                )
+            if not employee.get("found"):
+                set_span_attributes(
+                    span,
+                    {
+                        "tracker.lookup.result": "ambiguous" if employee.get("multiple_matches") else "not_found",
+                        "tracker.write_performed": False,
+                        "onboarding.lookup.result": "ambiguous" if employee.get("multiple_matches") else "not_found",
+                        "onboarding.write_performed": False,
+                        "onboarding.needs_clarification": bool(employee.get("multiple_matches", False)),
+                    },
+                )
+                response: dict[str, Any] = {
+                    "success": False,
+                    "employee_email": employee_email,
                     "location": location,
                     "job_title": job_title,
                     "status_change": status_change,
                     "submission_id": submission_id,
-                }.items()
-                if value
-            ]
-            filter_text = f" with filters {', '.join(filters)}" if filters else ""
-            response["error"] = str(
-                employee.get("error") or f"Employee {employee_email} not found in tracker{filter_text}"
-            )
-            return response
+                    "multiple_matches": bool(employee.get("multiple_matches", False)),
+                    "matches": employee.get("matches", []),
+                }
+                if employee.get("multiple_matches"):
+                    response["error"] = str(
+                        employee.get(
+                            "error",
+                            "Multiple tracker rows matched this email. Provide location, job_title, status_change, or submission_id.",
+                        )
+                    )
+                    return response
+                filters = [
+                    f"{name}={value}"
+                    for name, value in {
+                        "location": location,
+                        "job_title": job_title,
+                        "status_change": status_change,
+                        "submission_id": submission_id,
+                    }.items()
+                    if value
+                ]
+                filter_text = f" with filters {', '.join(filters)}" if filters else ""
+                response["error"] = str(
+                    employee.get("error") or f"Employee {employee_email} not found in tracker{filter_text}"
+                )
+                return response
 
-        try:
-            row_id = employee["row_id"]
-            stage_idx = self._stage_columns[resolved_stage_name]
-            col_letter = _column_letter(stage_idx)
-            cell_value = value if value is not None else _today()
-            range_address = quote(f"{col_letter}{row_id}")
-            await self._graph_workbook_request(
-                "PATCH",
-                f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
-                {"values": [[cell_value]]},
-            )
-            return {
-                "success": True,
-                "employee_email": employee_email,
-                "stage": stage_name,
-                "value": cell_value,
-            }
-        except Exception as exc:
-            logger.exception("update_stage failed")
-            return {"success": False, "error": str(exc)}
+            try:
+                row_id = employee["row_id"]
+                stage_idx = self._stage_columns[resolved_stage_name]
+                col_letter = _column_letter(stage_idx)
+                cell_value = value if value is not None else _today()
+                range_address = quote(f"{col_letter}{row_id}")
+                with start_span(
+                    "graph.excel.tracker.update_stage_cell",
+                    {
+                        "graph.excel.sheet": settings.graph_excel_sheet_name,
+                        "tracker.row_id": str(row_id),
+                        "tracker.stage.resolved": resolved_stage_name,
+                        "tracker.stage.column": col_letter,
+                    },
+                ):
+                    await self._graph_workbook_request(
+                        "PATCH",
+                        f"/worksheets/{quote(settings.graph_excel_sheet_name)}/range(address='{range_address}')",
+                        {"values": [[cell_value]]},
+                    )
+                set_span_attributes(
+                    span,
+                    {
+                        "tracker.lookup.result": "found",
+                        "tracker.write_performed": True,
+                        "tracker.row_id": str(row_id),
+                        "onboarding.lookup.result": "found",
+                        "onboarding.write_performed": True,
+                        "onboarding.needs_clarification": False,
+                    },
+                )
+                return {
+                    "success": True,
+                    "employee_email": employee_email,
+                    "stage": stage_name,
+                    "value": cell_value,
+                }
+            except Exception as exc:
+                span.set_attribute("tracker.write_performed", False)
+                span.set_attribute("onboarding.write_performed", False)
+                logger.exception("update_stage failed")
+                return {"success": False, "error": str(exc)}
 
     async def update_tracker_status(self, row_id: str, new_status: str) -> dict[str, Any]:
         logger.warning("update_tracker_status called with row_id=%s; prefer update_stage", row_id)

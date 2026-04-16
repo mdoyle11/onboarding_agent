@@ -51,3 +51,12 @@ jobs:
           MICROSOFT_APP_PASSWORD: test-app-password
           WEBHOOK_SECRET: test-webhook-secret
         run: pytest tests/unit/ -v --tb=short
+
+      - name: Run regression evals
+        env:
+          DOCUSIGN_ACCOUNT_ID: test-account
+          DOCUSIGN_INTEGRATION_KEY: test-integration-key
+          DOCUSIGN_USER_ID: test-user-id
+          DOCUSIGN_TEMPLATE_ID: test-template
+          WEBHOOK_SECRET: test-webhook-secret
+        run: python -m evals.run

@@ -1,0 +1,19 @@
+{
+  "name": "status_update_failure_truthful",
+  "type": "trace_behavior",
+  "tool_messages": [
+    {
+      "name": "update_tracker_stage",
+      "content": {
+        "success": false,
+        "error": "Graph write failed."
+      }
+    }
+  ],
+  "reply_text": "I could not update the tracker because the Graph write failed.",
+  "expected_evals": {
+    "clarification_response": true,
+    "no_write_after_clarification": true,
+    "failure_truthfulness": true
+  }
+}

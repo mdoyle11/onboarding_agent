@@ -3,6 +3,10 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from onboarding_agent.integrations.workbook.schema import HEADER_ROW
 from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
@@ -15,6 +19,19 @@ def _build_row(values: dict[str, str]) -> list[str]:
     for header, value in values.items():
         row[_HEADER_INDEX[header]] = value
     return row
+
+
+@pytest.fixture()
+def span_exporter():
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    original_provider = trace._TRACER_PROVIDER  # type: ignore[attr-defined]
+    trace._TRACER_PROVIDER = provider  # type: ignore[attr-defined]
+    try:
+        yield exporter
+    finally:
+        trace._TRACER_PROVIDER = original_provider  # type: ignore[attr-defined]
 
 
 @pytest.fixture(autouse=True)
@@ -394,6 +411,60 @@ async def test_update_stage_relaxes_stale_identity_filters_for_unique_email_matc
 
     assert result["success"] is True
     assert mock_request.await_args_list[-1].args[0] == "PATCH"
+
+
+@pytest.mark.asyncio
+async def test_update_stage_emits_tracker_latency_spans(span_exporter):
+    client = TrackerClient()
+    row = _build_row(
+        {
+            "Staff Name": "Nancy Cruz",
+            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Work Location": "Collier",
+            "Job Title": "Teacher",
+            "Status Change": "New Hire",
+        }
+    )
+
+    with (
+        patch("onboarding_agent.integrations.workbook.tracker_client.settings.graph_excel_table_name", "OnboardingTable"),
+        patch.object(
+            client,
+            "_graph_workbook_request",
+            AsyncMock(
+                side_effect=[
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {"address": "Onboarding!A1:AA2", "values": [HEADER_ROW, row]},
+                    {},
+                ]
+            ),
+        ),
+    ):
+        result = await client.update_stage(
+            "ncruz@bridgeprepacademy.com",
+            "Background Submission",
+            location="Collier",
+            job_title="Wrong Title",
+            status_change="Leave Start",
+        )
+
+    assert result["success"] is True
+    spans = {span.name: span for span in span_exporter.get_finished_spans()}
+    assert "tracker.update_stage" in spans
+    assert "tracker.resolve_stage" in spans
+    assert "tracker.resolve_employee_for_stage_update" in spans
+    assert "graph.excel.tracker.update_stage_cell" in spans
+    update_attrs = spans["tracker.update_stage"].attributes
+    assert update_attrs["tracker.lookup.result"] == "found"
+    assert update_attrs["tracker.write_performed"] is True
+    assert update_attrs["onboarding.lookup.result"] == "found"
+    assert update_attrs["onboarding.write_performed"] is True
+    assert update_attrs["onboarding.needs_clarification"] is False
+    assert update_attrs["onboarding.stage.resolved"] == "Background Submission"
+    assert update_attrs["employee.email_hash"]
+    assert "ncruz" not in str(update_attrs)
 
 
 @pytest.mark.asyncio

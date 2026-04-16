@@ -1,0 +1,25 @@
+{
+  "name": "duplicate_title_separation_clarifies",
+  "type": "trace_behavior",
+  "tool_messages": [
+    {
+      "name": "record_separation",
+      "content": {
+        "success": false,
+        "needs_clarification": true,
+        "multiple_active_cards": true,
+        "matches": [
+          {"submission_id": "201", "location": "Collier", "job_title": "Teacher"},
+          {"submission_id": "202", "location": "Collier", "job_title": "Coach"}
+        ],
+        "error": "Multiple active separation workflow cards matched this employee."
+      }
+    }
+  ],
+  "reply_text": "Please specify which job title or submission this separation/transfer-out applies to.",
+  "expected_evals": {
+    "clarification_response": true,
+    "no_write_after_clarification": true,
+    "failure_truthfulness": true
+  }
+}

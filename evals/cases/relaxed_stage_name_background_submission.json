@@ -1,0 +1,7 @@
+{
+  "name": "relaxed_stage_name_background_submission",
+  "type": "stage_resolution",
+  "input": "background clearance submission",
+  "expected_success": true,
+  "expected_field": "Background Submission"
+}

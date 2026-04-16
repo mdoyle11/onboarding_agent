@@ -1,0 +1,24 @@
+{
+  "name": "email_lookup_work_email_supported",
+  "type": "trace_behavior",
+  "tool_messages": [
+    {
+      "name": "find_employee_in_staff_roster",
+      "content": {
+        "found": true,
+        "identifier_type": "work_email",
+        "employee_email": "employee@example.com",
+        "location": "Collier"
+      }
+    }
+  ],
+  "reply_text": "I found the staff roster row for that work email.",
+  "payload_contains": [
+    {"found": true, "identifier_type": "work_email"}
+  ],
+  "expected_evals": {
+    "clarification_response": true,
+    "no_write_after_clarification": true,
+    "failure_truthfulness": true
+  }
+}

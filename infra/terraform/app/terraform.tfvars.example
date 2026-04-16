@@ -82,11 +82,11 @@ phoenix_endpoint     = ""
 phoenix_api_key      = ""
 phoenix_project_name = "onboarding-agent-prod"
 phoenix_otlp_headers = ""
-phoenix_span_name_prefixes = "teams.,agent."
+phoenix_span_name_prefixes = "teams.,agent.,tracker.,graph.excel.tracker."
 phoenix_span_name_prefixes = "teams.,agent."
 queue_poll_interval_seconds = 15
 
-evals_enabled    = false
+evals_enabled    = true
 eval_sample_rate = 0.05
 
 azure_monitor_alerts_enabled = true

@@ -341,7 +341,7 @@ variable "phoenix_otlp_headers" {
 variable "phoenix_span_name_prefixes" {
   description = "Comma-separated span name prefixes exported to Phoenix. Azure Monitor still receives full telemetry."
   type        = string
-  default     = "teams.,agent."
+  default     = "teams.,agent.,tracker.,graph.excel.tracker."
 }
 
 variable "trace_sample_rate" {

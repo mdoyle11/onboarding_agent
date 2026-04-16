@@ -1,0 +1,10 @@
+{
+  "name": "vacancies_exclude_full_and_over_capacity",
+  "type": "vacancy_filter",
+  "categories": [
+    {"group": "Teacher", "current_count": 8, "max_capacity": 10},
+    {"group": "Counselor", "current_count": 2, "max_capacity": 2},
+    {"group": "Coach", "current_count": 4, "max_capacity": 3}
+  ],
+  "expected_vacancies": ["Teacher"]
+}
