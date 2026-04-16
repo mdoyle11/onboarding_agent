@@ -815,7 +815,10 @@ async def process_docusign_job(payload: dict[str, Any]) -> None:
             if _card_state_available()
             else None
         )
-        existing_message_id = str((existing_card or {}).get("message_id", "") or "").strip()
+        existing_card_status = str((existing_card or {}).get("status", "") or "").strip().lower()
+        existing_message_id = ""
+        if status != "completed" or existing_card_status == "completed":
+            existing_message_id = str((existing_card or {}).get("message_id", "") or "").strip()
         teams_result = await _send_or_update_card(
             teams_messenger,
             existing_message_id=existing_message_id,

@@ -255,6 +255,56 @@ async def test_process_docusign_job_preserves_existing_staff_roster_state_on_com
 
 
 @pytest.mark.asyncio
+async def test_process_docusign_completed_posts_top_level_when_existing_card_is_draft_thread() -> None:
+    payload = {
+        "envelope_id": "env-123",
+        "status": "completed",
+        "employee_email": "alice@example.com",
+        "work_location": "Bronx",
+        "job_title": "Teacher",
+        "status_change": "New Hire",
+        "submission_id": "sub-123",
+    }
+    tracker = AsyncMock()
+    tracker.update_stage.return_value = {"success": True, "value": "2026-04-01"}
+    tracker.find_employee_in_tracker.return_value = {
+        "found": True,
+        "name": "Alice Example",
+        "position": "Teacher",
+        "job_title": "Teacher",
+    }
+    teams = AsyncMock()
+    teams.send_channel_notification.return_value = {"success": True, "message_id": "signed-msg"}
+    docusign = AsyncMock()
+    staff_roster = AsyncMock()
+    staff_roster.find_employee_in_staff_roster.return_value = {"found": False}
+    existing_draft_thread_card = {
+        "message_id": "draft-thread-reply-msg",
+        "status": "created",
+    }
+
+    with (
+        patch("onboarding_agent.runtime.jobs.TrackerClient", return_value=tracker),
+        patch("onboarding_agent.runtime.jobs.TeamsMessenger", return_value=teams),
+        patch("onboarding_agent.runtime.jobs.DocuSignClient", return_value=docusign),
+        patch("onboarding_agent.runtime.jobs.StaffRosterClient", return_value=staff_roster),
+        patch("onboarding_agent.runtime.jobs._card_state_available", return_value=True),
+        patch("onboarding_agent.runtime.jobs.get_docusign_status_card", new=AsyncMock(return_value=existing_draft_thread_card)),
+        patch("onboarding_agent.runtime.jobs.update_proactive_card", new=AsyncMock()) as update_card,
+        patch("onboarding_agent.runtime.jobs.save_docusign_status_card", new=AsyncMock()) as save_card,
+    ):
+        from onboarding_agent.runtime.jobs import process_docusign_job
+
+        await process_docusign_job(payload)
+
+    update_card.assert_not_awaited()
+    teams.send_channel_notification.assert_awaited_once()
+    assert "reply_to_id" not in teams.send_channel_notification.await_args.kwargs
+    assert save_card.await_args.kwargs["message_id"] == "signed-msg"
+    assert save_card.await_args.kwargs["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_process_background_clearance_job_uses_composite_identity_for_stage_updates() -> None:
     payload = {
         "staffEmail": "alice@example.com",
