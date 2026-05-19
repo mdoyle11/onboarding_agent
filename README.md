@@ -1,5 +1,7 @@
 # Onboarding Agent
 
+> Originally a personal project; now adopted and in production use at a former employer.
+
 AI-assisted HR onboarding system. The agent listens for new-hire events, drives an Excel-based onboarding tracker, sends offer letters via DocuSign, sends onboarding emails via Outlook, and lets HR run the workflow conversationally from Microsoft Teams.
 
 Surfaces wired in:
@@ -81,8 +83,6 @@ uv run python -m evals.run
 
 Full step-by-step: [`docs/walkthrough/RUNBOOK.md`](docs/walkthrough/RUNBOOK.md).
 
-> ⚠️ `scripts/deploy_container_app.sh` is legacy — it targets a removed `infra/terraform/container-app/` directory. Apply `foundation/` and `app/` with `terraform apply` directly.
-
 ## Teams behavior
 
 Primary HR surface is Teams (DM the bot, mention it in a channel, or click adaptive-card buttons).
@@ -115,6 +115,10 @@ The LangChain runner discovers tools from the MCP client at startup — no chang
 - Microsoft Graph uses client credentials with tenant-level admin consent.
 - DocuSign uses JWT Grant with a 2048-bit RSA key pair.
 - Sensitive secrets in production live in Key Vault (`webhook_secret`, `microsoft_app_password`, `azure_client_secret`, `docusign_private_key`) and are surfaced to the Container App as Key Vault-backed secrets.
+
+## Not included in this repo
+
+The production deployment also integrates with ADP's APIs for HRIS functions. That code is not published here as ADP API access is gated and the integration is too org-specific to be useful as a reference.
 
 ## Documentation
 

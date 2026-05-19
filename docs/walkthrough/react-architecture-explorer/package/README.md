@@ -1,46 +1,36 @@
-# Portable Package
+# Architecture Explorer Package
 
-This folder is the copy boundary for the future website repo.
+The reusable React component that renders the onboarding agent's architecture graph. Consumed by `example-nextjs/` in this folder.
 
-The package consumes a generated artifact from:
+## Contents
 
-- `../data/architectureGraphs.source.json`
+- `src/ArchitectureExplorer.tsx` — main component
+- `src/ArchitectureExplorer.module.css` — scoped styles
+- `src/types.ts` — graph data types
+- `src/graphData.ts` — graph loader
+- `src/architectureGraphs.json` — exported graph data (regenerated from `../data/architectureGraphs.source.json`)
+- `src/index.ts` — public exports
 
-## Copy Target
+## Runtime dependencies
 
-Copy `package/src/` into the destination site, for example:
-
-```text
-src/components/architecture-explorer/
-  ArchitectureExplorer.tsx
-  ArchitectureExplorer.module.css
-  architectureGraphs.json
-  graphData.ts
-  index.ts
-  types.ts
-```
-
-## Runtime Dependencies
-
-Install these in the destination site:
+The package depends on React and Mermaid:
 
 ```bash
 npm install mermaid
 ```
 
-The host app also needs React and a bundler/framework that supports CSS modules.
-Next.js works as-is.
+The host app also needs React and a bundler/framework that supports CSS modules. Next.js works as-is.
 
 ## Exports
 
 `src/index.ts` exports:
 
-- `ArchitectureExplorer`
+- `ArchitectureExplorer` — the React component
 - `architectureGraphData`
 - `architectureGraphs`
-- graph/type definitions
+- graph and type definitions
 
-## Expected Usage
+## Usage
 
 ```tsx
 "use client";
@@ -62,8 +52,10 @@ export default function OnboardingAgentArchitecturePage() {
 }
 ```
 
-## Notes
+## Updating the graph data
 
-- The current graph data is maintained in `../data/architectureGraphs.source.json`
-  and exported into `architectureGraphs.json`.
-- The website-facing boundary is `architectureGraphs.json`.
+The source of truth lives one level up:
+
+- `../data/architectureGraphs.source.json`
+
+After editing the source, regenerate `src/architectureGraphs.json` with `../scripts/export-architecture-graphs-json.mjs`.

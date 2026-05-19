@@ -1,35 +1,24 @@
 # Example Next.js App
 
-This is a minimal Next.js app that mounts a local copy of the portable
-architecture explorer package.
+Minimal Next.js host for the architecture explorer. Run this to view the interactive graph locally.
 
-## Run Locally
+## Run locally
 
 ```bash
-cd /home/matthewdoyle/projects/onboarding_agent/docs/explain/react-architecture-explorer/example-nextjs
+cd docs/walkthrough/react-architecture-explorer/example-nextjs
 npm install
 npm run dev
 ```
 
-Open:
+Open `http://localhost:3000`.
 
-```text
-http://localhost:3000
-```
+## Where the component comes from
 
-## Relationship To The Portable Package
+This app mounts a local snapshot of the explorer package, copied from `../package/src/` into `components/architecture-explorer/` so Next can resolve it via the app's tsconfig paths.
 
-The reusable source of truth lives in:
-
-- `../package/src`
-
-This example uses a local copied snapshot under:
-
-- `components/architecture-explorer`
-
-Refresh that snapshot after package changes:
+Refresh that snapshot after editing the package:
 
 ```bash
-cd /home/matthewdoyle/projects/onboarding_agent/docs/explain/react-architecture-explorer
+cd docs/walkthrough/react-architecture-explorer
 ./scripts/sync-package-into-example.sh
 ```

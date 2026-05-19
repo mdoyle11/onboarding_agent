@@ -288,25 +288,54 @@ The app's bot messaging endpoint is set automatically from the Container App FQD
 
 ## 6. Build and deploy
 
+The deploy is two phases:
+
+1. Build and push an immutable container image to ACR.
+2. Re-apply the `app/` Terraform layer with the new `image_tag`, which triggers a new Container App revision.
+
+`foundation/` is not touched in routine deploys — it only re-applies when shared platform resources change (Cosmos containers, Key Vault, identity, etc.).
+
 ### 6.1 Build and push the image
 
 ```bash
 scripts/build_and_push_container_app.sh <acr-name> <image-tag> [image-repo]
-# example
-scripts/build_and_push_container_app.sh onboardingagentprodacr 2026-05-19-abc1234 onboarding-agent
+# example — tag with date + short SHA
+scripts/build_and_push_container_app.sh onboardingagentprodacr "$(date +%Y-%m-%d)-$(git rev-parse --short HEAD)"
 ```
 
-Notes:
+The script runs `az acr login`, then `docker build` and `docker push`. Arguments:
 
-- The script runs `az acr login`, then `docker build` and `docker push`.
-- Use immutable tags (commit SHA or date+SHA) — never `latest` in prod.
-- The Dockerfile copies `attachments/` into the image so the I-9 PDF ships with the build.
+- `<acr-name>` — the ACR name from `terraform output container_registry_name` in `foundation/` (or from the foundation tfvars). Just the name, not the `.azurecr.io` suffix.
+- `<image-tag>` — immutable tag. Use commit SHA or `YYYY-MM-DD-<sha>` format. Never use `latest` in prod.
+- `[image-repo]` — defaults to `onboarding-agent`. Override only if you're publishing under a different repo name in the same ACR.
+
+The Dockerfile copies `attachments/` into the image so the I-9 PDF ships with the build.
 
 ### 6.2 Roll the Container App to the new image
 
-Update `image_tag` in the active tfvars file, then `terraform apply` in `infra/terraform/app/`. The Container App will create a new revision with the new image; traffic shifts according to your revision-mode setting (single-revision mode by default — the new revision replaces the old one).
+```bash
+cd infra/terraform/app
 
-> ⚠️ `scripts/deploy_container_app.sh` is **legacy** and points to a removed `infra/terraform/container-app/` directory. Don't use it — apply `foundation/` and `app/` directly with `terraform apply` until the script is updated.
+# Re-sync roster JSON into tfvars if config/staff_rosters.json changed
+../../../scripts/sync_staff_rosters_to_tfvars.sh terraform-prod.tfvars
+
+# Bump image_tag to the value you pushed in 6.1
+$EDITOR terraform-prod.tfvars   # set: image_tag = "<the-tag-you-just-pushed>"
+
+terraform init                                       # safe to run every time
+terraform plan  -var-file=terraform-prod.tfvars      # review the diff
+terraform apply -var-file=terraform-prod.tfvars      # creates a new revision
+```
+
+What this does:
+
+- Updates the Container App's image reference, which causes Azure to spin up a new revision with the new image.
+- In single-revision mode (the default), the new revision takes 100% of traffic once it's healthy and the previous revision is deactivated.
+- Key Vault-backed secrets, env vars, Cosmos containers, and queue config are re-applied from tfvars at the same time. If you changed one of those, that change goes live with the same `terraform apply`.
+
+For a dev environment, swap `terraform-prod.tfvars` for `terraform-dev.tfvars` everywhere above.
+
+After apply, jump to [section 8 — Smoke tests](#8-smoke-tests).
 
 ---
 
@@ -654,7 +683,6 @@ For agent-level debugging, the most useful tool is Phoenix: filter by the user's
 
 ## 16. Known limitations and gotchas
 
-- **`scripts/deploy_container_app.sh` is stale.** It targets `infra/terraform/container-app/` which was removed when the split happened. Use `terraform apply` in `foundation/` and `app/` directly. Either update or delete the script.
 - **Terraform state is local.** Both layers store state on disk. Move to a remote backend before any second maintainer joins. Back up `terraform.tfstate*` after every apply.
 - **No automated deploy.** CI runs lint/test/eval only. Production deploys are manual (build image → bump tag → `terraform apply` → smoke test).
 - **One Container App, no separate worker tier.** The same process serves Teams traffic and drains the queue. Under a sustained burst this can starve interactive responsiveness. The code is structured to split (pluggable queue / store backends), but no infra split exists today. See `ARCHITECTURE.md` for the relevant abstraction points.
@@ -679,4 +707,3 @@ For agent-level debugging, the most useful tool is Phoenix: filter by the user's
 | `scripts/package_teams_app.sh` | Render manifest + zip Teams sideload package |
 | `scripts/reset_runtime_state.py` | Delete Cosmos state for a test employee |
 | `scripts/test_docusign_webhook.sh` | Curl a synthetic DocuSign Connect event |
-| `scripts/deploy_container_app.sh` | ⚠️ Legacy — points to removed `container-app/` Terraform dir |
