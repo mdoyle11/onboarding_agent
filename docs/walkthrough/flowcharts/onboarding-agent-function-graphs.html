@@ -1,0 +1,2549 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Onboarding Agent Architecture Explorer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fa;
+      --panel: #ffffff;
+      --text: #18202a;
+      --muted: #5c6875;
+      --border: #d7dee8;
+      --accent: #0067b8;
+      --accent-2: #107c10;
+      --warn: #a15c00;
+      --code: #eef2f7;
+      --shadow: 0 10px 28px rgba(24, 32, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(8px);
+    }
+
+    .header-inner {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 14px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 9px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    main {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 20px 22px;
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 20px;
+    }
+
+    aside {
+      position: sticky;
+      top: 74px;
+      align-self: start;
+      max-height: calc(100vh - 94px);
+      overflow: auto;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .nav-section {
+      padding: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-section:last-child {
+      border-bottom: 0;
+    }
+
+    .nav-section h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .nav-button {
+      width: 100%;
+      margin: 0 0 6px;
+      padding: 9px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .nav-button:hover {
+      background: var(--code);
+    }
+
+    .nav-button.active {
+      border-color: #93c5fd;
+      background: #e8f3ff;
+      color: #064b83;
+      font-weight: 650;
+    }
+
+    .content {
+      min-width: 0;
+      display: grid;
+      gap: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-title h2 {
+      margin: 0 0 4px;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .panel-title p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 84ch;
+    }
+
+    .controls {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .control {
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 9px;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .control:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .viewport {
+      height: min(72vh, 820px);
+      min-height: 440px;
+      overflow: hidden;
+      position: relative;
+      background:
+        linear-gradient(#edf1f5 1px, transparent 1px),
+        linear-gradient(90deg, #edf1f5 1px, transparent 1px);
+      background-size: 24px 24px;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .viewport:active {
+      cursor: grabbing;
+    }
+
+    .canvas {
+      transform-origin: 0 0;
+      min-width: 100%;
+      min-height: 100%;
+      display: inline-block;
+      padding: 24px;
+    }
+
+    .canvas svg {
+      display: block;
+      max-width: none;
+      height: auto;
+      background: #ffffff;
+      border: 1px solid var(--border);
+    }
+
+    .canvas .node {
+      cursor: pointer;
+    }
+
+    .canvas .node[data-drill-key] rect,
+    .canvas .node[data-drill-key] polygon,
+    .canvas .node[data-drill-key] circle,
+    .canvas .node[data-drill-key] ellipse {
+      stroke: var(--accent) !important;
+      stroke-width: 2px !important;
+    }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    .copy {
+      padding: 16px;
+    }
+
+    .copy h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .copy p {
+      margin: 0 0 10px;
+      color: var(--muted);
+    }
+
+    .copy p:last-child {
+      margin-bottom: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border-top: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    code {
+      background: var(--code);
+      border-radius: 4px;
+      padding: 2px 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+
+    .source {
+      display: none;
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      border-top: 1px solid var(--border);
+      background: #101820;
+      color: #e8eef5;
+      font-size: 13px;
+    }
+
+    .source.visible {
+      display: block;
+    }
+
+    .hint {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend {
+      display: grid;
+      gap: 8px;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    .legend li {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      background: #e8f3ff;
+      flex: 0 0 auto;
+    }
+
+    .swatch.external {
+      background: #ecfdf3;
+    }
+
+    .swatch.state {
+      background: #fff7e6;
+    }
+
+    .error {
+      border: 1px solid #c33;
+      background: #fff3f3;
+      color: #721c24;
+      padding: 16px;
+    }
+
+    @media (max-width: 960px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        position: static;
+        max-height: none;
+      }
+
+      .panel-header {
+        flex-direction: column;
+      }
+
+      .controls {
+        justify-content: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Onboarding Agent Architecture Explorer</h1>
+      <div class="header-actions">
+        <span class="pill">Click overview nodes to drill down</span>
+        <a class="pill" href="../ARCHITECTURE.md">Architecture Hub</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="nav-section">
+        <h2>Graphs</h2>
+        <div id="nav"></div>
+      </div>
+      <div class="nav-section">
+        <h2>Legend</h2>
+        <ul class="legend">
+          <li><span class="swatch"></span> Application function or module</li>
+          <li><span class="swatch state"></span> Durable state or queue</li>
+          <li><span class="swatch external"></span> External service</li>
+        </ul>
+      </div>
+    </aside>
+
+    <section class="content">
+      <article class="panel" id="diagram-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h2 id="diagram-title"></h2>
+            <p id="diagram-summary"></p>
+          </div>
+          <div class="controls">
+            <button type="button" class="control" data-action="overview">Overview</button>
+            <button type="button" class="control" data-action="zoom-in">Zoom In</button>
+            <button type="button" class="control" data-action="zoom-out">Zoom Out</button>
+            <button type="button" class="control" data-action="reset">Reset</button>
+            <button type="button" class="control" data-action="source">Source</button>
+          </div>
+        </div>
+        <div class="viewport" id="viewport">
+          <div class="canvas" id="canvas"></div>
+        </div>
+        <pre class="source" id="source"></pre>
+        <div class="hint" id="hint"></div>
+      </article>
+
+      <article class="panel">
+        <div class="copy">
+          <h3>What This Graph Explains</h3>
+          <div id="explanation"></div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <table>
+          <thead>
+            <tr>
+              <th>Edge</th>
+              <th>Data Passed / Return / Side Effect</th>
+            </tr>
+          </thead>
+          <tbody id="edges"></tbody>
+        </table>
+      </article>
+    </section>
+  </main>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+        primaryColor: "#e8f3ff",
+        primaryTextColor: "#18202a",
+        primaryBorderColor: "#93c5fd",
+        lineColor: "#52606d",
+        secondaryColor: "#ecfdf3",
+        tertiaryColor: "#fff7e6"
+      },
+      flowchart: {
+        htmlLabels: true,
+        curve: "basis",
+        rankSpacing: 76,
+        nodeSpacing: 34
+      }
+    });
+
+    const graphs = {
+      overview: {
+        title: "System Overview",
+        summary: "The complete application at the service-role level. Click any major application node to drill into the function graph for that area.",
+        hint: "Click: Startup, Webhooks, Queue, Jobs, Teams Bot, Session Memory, Agent + MCP, MCP Tools, Card Actions, Integrations, State, or Observability.",
+        drillNodes: {
+          startup: "startup",
+          webhooks: "webhooks",
+          queue: "queue",
+          jobs: "jobs",
+          teamsBot: "teams",
+          memory: "memory",
+          agentMcp: "agent",
+          mcpTools: "mcp",
+          cardActions: "cards",
+          integrations: "integrations",
+          state: "state",
+          observability: "observability"
+        },
+        explanation: [
+          "The hosted deployment is one Azure Container App process plus a FastMCP subprocess. Webhooks and Teams share the same Python server.",
+          "Webhook work is accepted quickly and handed to a queue. Teams natural language goes through the agent and MCP tools. Card buttons and webhook jobs use deterministic Python flows.",
+          "Durable state lives in Cosmos DB or local JSON, jobs live in Azure Storage Queue, and external business operations go through Microsoft Graph, DocuSign, Teams, Outlook, and optional LLM providers."
+        ],
+        code: `
+flowchart TD
+    startup["Startup"]
+    webhooks["Webhook Ingress"]
+    queue["Job Queue"]
+    jobs["Deterministic Jobs"]
+    teamsBot["Teams Bot"]
+    memory["Session Memory"]
+    agentMcp["Agent + MCP"]
+    mcpTools["MCP Tools"]
+    cardActions["Card Actions"]
+    integrations["Integration Clients"]
+    state["State Stores"]
+    observability["Observability"]
+
+    extForms["Power Automate"]
+    extTeams["Microsoft Teams"]
+    extDocu["DocuSign Connect"]
+    extGraph["Microsoft Graph"]
+    extDocusignApi["DocuSign API"]
+    extLlm["LLM Provider"]
+    extTelemetry["Azure Monitor / Phoenix"]
+
+    startup -- "initializes" --> state
+    startup -- "starts worker" --> queue
+    startup -- "loads tools" --> agentMcp
+    startup -- "registers handlers" --> teamsBot
+    startup -- "configures" --> observability
+
+    extForms -- "JSON webhooks" --> webhooks
+    extDocu -- "envelope webhooks" --> webhooks
+    webhooks -- "job_type + payload" --> queue
+    queue -- "QueueJob" --> jobs
+    jobs -- "deterministic workflow args" --> integrations
+
+    extTeams -- "activity POST /api/messages" --> teamsBot
+    teamsBot -- "conversation refs / history / context" --> memory
+    teamsBot -- "natural-language messages" --> agentMcp
+    teamsBot -- "Adaptive Card submit payload" --> cardActions
+    cardActions -- "explicit action args" --> integrations
+
+    agentMcp -- "tool call args over stdio" --> mcpTools
+    agentMcp -- "messages + tool schemas" --> extLlm
+    mcpTools -- "client method args" --> integrations
+
+    integrations -- "Excel/mail/Teams Graph requests" --> extGraph
+    integrations -- "envelope CRUD/status" --> extDocusignApi
+    integrations -- "card/session/conversation state" --> state
+    observability -- "spans/logs" --> extTelemetry
+
+`,
+        edges: [
+          ["Startup -> State Stores", "Creates `store_mod.store` and `store_mod.session_store`."],
+          ["Startup -> Agent + MCP", "Starts the MCP subprocess and loads tool schemas."],
+          ["Webhooks -> Queue", "Passes `job_type` plus parsed webhook payload."],
+          ["Queue -> Deterministic Jobs", "Passes `QueueJob(job_type, payload)` to `process_job()`."],
+          ["Teams Bot -> Agent + MCP", "Passes chat history, current user message, and structured session context."],
+          ["Agent + MCP -> MCP Tools", "Passes LLM-generated tool call names and args over stdio."],
+          ["Card Actions -> Integrations", "Passes explicit button/form action args without an LLM."],
+          ["Integrations -> External Services", "Calls Graph, DocuSign, Teams proactive APIs, Outlook, state stores, and telemetry exporters."]
+        ]
+      },
+
+      startup: {
+        title: "Startup Function Graph",
+        summary: "Cold start wiring from the container entrypoint to state stores, Teams handlers, the MCP subprocess, and the queue worker.",
+        hint: "This graph runs once per process start.",
+        parentKey: "overview",
+        reconcileFrom: "queueStart",
+        drillNodes: {
+          main: "serverFile",
+          obs: "observabilityFile",
+          app: "serverFile",
+          setupTeams: "serverFile",
+          startup: "serverFile",
+          stores: "stateFile",
+          runnerInit: "runnerFile",
+          mcpTools: "runnerFile",
+          mcpMain: "mcpServerFile",
+          registerTools: "mcpServerFile",
+          queueFactory: "jobQueueFile",
+          queueStart: "jobQueueFile"
+        },
+        explanation: [
+          "`server.py::main()` configures observability, builds the aiohttp app, and starts the HTTP server.",
+          "`create_app()` registers webhook routes and Teams routes. Startup callbacks initialize stores, the agent, and the queue worker.",
+          "`runner.initialize()` starts the MCP subprocess with inherited environment variables and loads all tool schemas into LangChain."
+        ],
+        code: `
+flowchart TD
+    main["server.py::main()"]
+    obs["configure_observability(settings)"]
+    app["create_app()"]
+    setupTeams["_setup_teams(app)"]
+    sdkConfig["load_agents_sdk_config()"]
+    handlers["register_handlers(agent_app)"]
+    startup["_on_startup(app)"]
+    stores["create_state_store(...)"]
+    runnerInit["runner.initialize()"]
+    mcpTools["MultiServerMCPClient.get_tools()"]
+    mcpMain["mcp_server.server::main()"]
+    registerTools["tools_*.register(mcp)"]
+    queueFactory["create_job_queue(..., handler=process_job)"]
+    queueStart["JobQueue.start()"]
+
+    main -- "settings" --> obs
+    main -- "build app" --> app
+    app -- "app" --> setupTeams
+    setupTeams -- "settings -> SDK env" --> sdkConfig
+    setupTeams -- "AgentApplication" --> handlers
+    app -- "startup hook" --> startup
+    startup -- "state backend config" --> stores
+    startup -- "initialize agent runtime" --> runnerInit
+    runnerInit -- "stdio command config" --> mcpTools
+    mcpTools -- "python -m onboarding_agent.mcp_server.server" --> mcpMain
+    mcpMain -- "FastMCP instance" --> registerTools
+    startup -- "queue settings + handler" --> queueFactory
+    startup -- "start worker/poller" --> queueStart
+`,
+        edges: [
+          ["main() -> configure_observability()", "Settings decide Azure Monitor, Phoenix OTLP, LangChain instrumentation, and log correlation."],
+          ["create_app() -> _setup_teams()", "Creates the Microsoft 365 Agents SDK adapter/application and registers `/api/messages`."],
+          ["_on_startup() -> create_state_store()", "Creates global state stores for card/conversation/session data."],
+          ["_on_startup() -> runner.initialize()", "Initializes agent tools before Teams messages can invoke the LLM path."],
+          ["runner.initialize() -> MCP subprocess", "Spawns `python -m onboarding_agent.mcp_server.server` over stdio."],
+          ["_on_startup() -> create_job_queue()", "Passes `process_job` as the queue handler."],
+          ["JobQueue.start()", "Local backend becomes ready; Azure backend creates/reuses queue and starts polling."]
+        ]
+      },
+
+      webhooks: {
+        title: "Webhook Ingress Function Graph",
+        summary: "Request-time parsing and durable handoff. Webhook handlers enqueue jobs and return quickly.",
+        hint: "Webhook handlers do not perform expensive tracker, DocuSign, or email work inline.",
+        parentKey: "overview",
+        reconcileFrom: "queueStore",
+        drillNodes: {
+          newHandler: "webhooksFile",
+          bgHandler: "webhooksFile",
+          dsHandler: "webhooksFile",
+          newEnqueue: "jobQueueFile",
+          bgEnqueue: "jobQueueFile",
+          dsEnqueue: "jobQueueFile"
+        },
+        explanation: [
+          "Power Automate webhooks validate `X-Webhook-Secret`, parse JSON, and enqueue a queue job.",
+          "DocuSign webhooks parse XML or JSON envelope status data and enqueue a DocuSign job.",
+          "The accepted HTTP response only means the job was accepted by the queue path."
+        ],
+        code: `
+flowchart TD
+    powerNew["Power Automate: HR submission"]
+    powerBg["Power Automate: background clearance"]
+    docuConnect["DocuSign Connect"]
+
+    subgraph NewHireLane["New-hire / HR-submission route"]
+      direction TB
+      newRoute["POST /webhook/new-hire"]
+      newHandler["handle_new_hire_webhook(request)"]
+      newSecret["is_valid_webhook_secret(...)"]
+      newParse["parse_json_payload(body)"]
+      newQueue["_job_queue(request)"]
+      newEnqueue["JobQueue.enqueue(JOB_NEW_HIRE, payload)"]
+      newOk["_accepted_response()"]
+    end
+
+    subgraph BackgroundLane["Background-clearance route"]
+      direction TB
+      bgRoute["POST /webhook/background-clearance"]
+      bgHandler["handle_background_clearance_webhook(request)"]
+      bgSecret["is_valid_webhook_secret(...)"]
+      bgParse["parse_json_payload(body)"]
+      bgNormalize["payload_value(...) normalizes key fields"]
+      bgEnqueue["JobQueue.enqueue(JOB_BACKGROUND_CLEARANCE, payload)"]
+      bgOk["_accepted_response()"]
+    end
+
+    subgraph DocusignLane["DocuSign route"]
+      direction TB
+      dsRoute["POST /webhook/docusign"]
+      dsHandler["handle_docusign_webhook(request)"]
+      dsParse["parse_docusign_payload(body, content_type)"]
+      dsXml["_parse_docusign_xml(body)"]
+      dsJson["_parse_docusign_json(payload)"]
+      dsEnqueue["JobQueue.enqueue(JOB_DOCUSIGN, parsed)"]
+      dsOk["_accepted_response()"]
+    end
+
+    queueStore["Durable queue message"]
+
+    powerNew -- "JSON + X-Webhook-Secret" --> newRoute
+    newRoute --> newHandler
+    newHandler -- "shared secret" --> newSecret
+    newSecret -- "valid" --> newParse
+    newParse -- "dict payload" --> newQueue
+    newQueue -- "queue instance" --> newEnqueue
+    newEnqueue -- "job_type + payload" --> queueStore
+    newEnqueue --> newOk
+
+    powerBg -- "JSON + X-Webhook-Secret" --> bgRoute
+    bgRoute --> bgHandler
+    bgHandler -- "shared secret" --> bgSecret
+    bgSecret -- "valid" --> bgParse
+    bgParse -- "dict payload" --> bgNormalize
+    bgNormalize -- "canonical email/name/location/title/status" --> bgEnqueue
+    bgEnqueue -- "job_type + payload" --> queueStore
+    bgEnqueue --> bgOk
+
+    docuConnect -- "XML or JSON envelope event" --> dsRoute
+    dsRoute --> dsHandler
+    dsHandler -- "raw body + content type" --> dsParse
+    dsParse -- "XML" --> dsXml
+    dsParse -- "JSON" --> dsJson
+    dsXml -- "envelope/status/custom fields" --> dsEnqueue
+    dsJson -- "envelope/status/custom fields" --> dsEnqueue
+    dsEnqueue -- "job_type + parsed payload" --> queueStore
+    dsEnqueue --> dsOk
+`,
+        edges: [
+          ["handle_new_hire_webhook() -> JobQueue.enqueue()", "`JOB_NEW_HIRE` and original Power Automate payload."],
+          ["handle_background_clearance_webhook() -> payload_value()", "Normalizes employee email/name/location/title/status fields."],
+          ["handle_background_clearance_webhook() -> JobQueue.enqueue()", "`JOB_BACKGROUND_CLEARANCE` and normalized payload."],
+          ["handle_docusign_webhook() -> parse_docusign_payload()", "Returns envelope ID, status, employee email, location, job title, status change, submission ID."],
+          ["handle_docusign_webhook() -> JobQueue.enqueue()", "`JOB_DOCUSIGN` and parsed envelope payload."]
+        ]
+      },
+
+      queue: {
+        title: "Queue Function Graph",
+        summary: "Local and Azure queue backends convert webhook jobs into calls to `process_job()`.",
+        hint: "Azure queue messages are deleted only after successful processing.",
+        parentKey: "overview",
+        reconcileFrom: "process",
+        drillNodes: {
+          factory: "jobQueueFile",
+          local: "jobQueueFile",
+          azure: "jobQueueFile",
+          process: "jobsFile"
+        },
+        explanation: [
+          "`create_job_queue()` chooses local in-process tasks for development or Azure Storage Queue for production.",
+          "The Azure worker polls one message at a time, deserializes the JSON job, calls `process_job()`, and deletes the message on success.",
+          "Malformed or over-dequeued poison messages are deleted."
+        ],
+        code: `
+flowchart TD
+    factory["create_job_queue(backend, handler, **kwargs)"]
+    local["LocalJobQueue(handler)"]
+    azure["AzureStorageJobQueue(handler, queue settings)"]
+    localEnq["LocalJobQueue.enqueue(job_type, payload)"]
+    localRun["LocalJobQueue._run(job)"]
+    azureStart["AzureStorageJobQueue.start()"]
+    worker["AzureStorageJobQueue._run_worker()"]
+    receive["_receive_message()"]
+    handle["_handle_message(message)"]
+    process["process_job(job)"]
+    storage["Azure Storage Queue"]
+
+    factory -- "backend=local" --> local
+    factory -- "backend=azure" --> azure
+    localEnq -- "QueueJob dataclass" --> localRun
+    localRun -- "QueueJob" --> process
+    azureStart -- "create queue if missing" --> storage
+    azureStart -- "asyncio worker task" --> worker
+    worker -- "receive_messages()" --> receive
+    receive -- "message or None" --> handle
+    handle -- "json.loads(message.content)" --> process
+    handle -- "delete on success / poison" --> storage
+`,
+        edges: [
+          ["create_job_queue() -> LocalJobQueue", "Local dev backend. `enqueue()` creates an `asyncio.Task`."],
+          ["create_job_queue() -> AzureStorageJobQueue", "Production backend. Uses account URL with managed identity or connection string."],
+          ["LocalJobQueue._run() -> process_job()", "Passes `QueueJob(job_type, payload)`."],
+          ["AzureStorageJobQueue.enqueue() -> Azure Storage Queue", "Writes JSON `{ job_type, payload }`."],
+          ["_handle_message() -> process_job()", "Passes parsed queue job."],
+          ["_handle_message() -> Azure Storage Queue", "Deletes message after success or poison detection."]
+        ]
+      },
+
+      jobs: {
+        title: "Deterministic Job Function Graph",
+        summary: "Webhook jobs dispatch into three deterministic workflow families. Click a branch to drill into the detailed job graph.",
+        hint: "Click HR Submission Job, DocuSign Status Job, or Background-Clearance Job for the lower-level function flow.",
+        parentKey: "overview",
+        reconcileFrom: "state",
+        drillNodes: {
+          dispatch: "jobsFile",
+          hrJob: "hrJob",
+          docuJob: "docusignJob",
+          bgJob: "backgroundJob"
+        },
+        explanation: [
+          "`process_job()` dispatches by job type.",
+          "Each branch is deterministic and does not call the LLM.",
+          "The detailed branch graphs show the tracker, email, DocuSign, Teams, and card-state calls."
+        ],
+        code: `
+flowchart TD
+    job["QueueJob(job_type, payload)"]
+    dispatch["process_job(job)"]
+    hrJob["HR Submission Job"]
+    docuJob["DocuSign Status Job"]
+    bgJob["Background-Clearance Job"]
+    tracker["Tracker / roster workbooks"]
+    sideEffects["Email / DocuSign side effects"]
+    cards["Adaptive Card builder"]
+    teams["Teams post or card update"]
+    state["Card state + thread context"]
+
+    job -- "job_type + payload" --> dispatch
+    dispatch -- "JOB_NEW_HIRE" --> hrJob
+    dispatch -- "JOB_DOCUSIGN" --> docuJob
+    dispatch -- "JOB_BACKGROUND_CLEARANCE" --> bgJob
+
+    hrJob -- "ensure tracker row + policy stages" --> tracker
+    docuJob -- "sent/signed stages + roster check" --> tracker
+    bgJob -- "background stage update" --> tracker
+    hrJob -- "draft welcome email when needed" --> sideEffects
+    docuJob -- "recover envelope identity if needed" --> sideEffects
+    bgJob -- "confirmation email" --> sideEffects
+    hrJob -- "workflow notification card" --> cards
+    docuJob -- "DocuSign status card" --> cards
+    bgJob -- "background clearance card" --> cards
+    cards -- "Adaptive Card dict + session context" --> teams
+    teams -- "message_id" --> state
+`,
+        edges: [
+          ["process_job() -> process_new_hire_job()", "HR submission payload."],
+          ["process_job() -> process_docusign_job()", "Envelope ID/status and identity fields."],
+          ["process_job() -> process_background_clearance_job()", "Background form payload."],
+          ["HR Submission Job -> downstream systems", "Ensures tracker row, applies workflow policy, drafts/sends allowed email actions, posts Teams workflow card."],
+          ["DocuSign Status Job -> downstream systems", "Updates sent/signed tracker stages, checks roster state, posts/updates DocuSign status card."],
+          ["Background-Clearance Job -> downstream systems", "Updates background stage, sends confirmation email, posts/updates background card."]
+        ]
+      },
+
+      hrJob: {
+        title: "HR Submission Job Detail",
+        summary: "Detailed deterministic flow for Power Automate HR submissions.",
+        hint: "The workflow type controls which handler runs and which Teams card actions are exposed.",
+        parentKey: "jobs",
+        reconcileFrom: "save",
+        drillNodes: {
+          entry: "jobsFile",
+          find: "trackerFile",
+          add: "trackerFile",
+          updateStage: "trackerFile",
+          emailDraft: "emailToolsFile",
+          send: "teamsProactiveFile",
+          save: "cardStateFile"
+        },
+        explanation: [
+          "`process_new_hire_job()` is the queue consumer for all HR submission workflows, not just literal new hires.",
+          "It normalizes `statusChange`, routes to the right workflow handler, ensures the tracker row exists, applies policy stage updates, then posts or updates the Teams workflow card.",
+          "The same common field extraction and composite identity checks are used across new-hire, onboarding, offboarding, and temporary-status workflows."
+        ],
+        code: `
+flowchart TD
+    entry["process_new_hire_job(payload)"]
+    normalize["normalize_workflow_type(statusChange)"]
+    route{"workflow type"}
+
+    newHire["_process_new_hire_submission(payload)"]
+    onboard["_process_onboarding_submission(payload, workflow_type)"]
+    offboard["_process_offboarding_submission(payload, workflow_type)"]
+    temporary["_process_temporary_submission(payload, workflow_type)"]
+
+    fields["_new_hire_fields(payload)"]
+    identity["_require_composite_identity(fields, label)"]
+    ensure["_ensure_tracker_record(tracker_client, fields)"]
+    find["TrackerClient.find_employee_in_tracker(...)"]
+    add["TrackerClient.add_employee_to_tracker(**fields)"]
+
+    policy["workflow policy functions"]
+    updateStage["TrackerClient.update_stage(...)"]
+    emailDraft["draft_onboarding_email_for_employee(...)"]
+    card["new_hire_card(...) or separation_card(...)"]
+    send["TeamsMessenger.send_channel_notification(...) / update_proactive_card(...)"]
+    save["save_new_hire_card(...) or save_separation_card(...)"]
+
+    entry -- "statusChange" --> normalize
+    normalize -- "canonical workflow type" --> route
+    route -- "New Hire" --> newHire
+    route -- "Rehire / Promotion / Transfer / Second Position" --> onboard
+    route -- "Separation / Transfer Out" --> offboard
+    route -- "Leave Start / Leave End" --> temporary
+
+    newHire --> fields
+    onboard --> fields
+    offboard --> fields
+    temporary --> fields
+    fields -- "canonical employee fields" --> identity
+    identity -- "email + location + job title present" --> ensure
+    ensure -- "lookup first" --> find
+    find -- "not found" --> add
+    find -- "found or added summary" --> policy
+    add -- "row_id" --> policy
+    policy -- "excluded stages / leave target / action flags" --> updateStage
+    updateStage -- "policy result summary" --> card
+    newHire -- "welcome email draft" --> emailDraft
+    emailDraft -- "draft result summary" --> card
+    card -- "Adaptive Card dict + session context" --> send
+    send -- "message_id" --> save
+`,
+        edges: [
+          ["process_new_hire_job() -> normalize_workflow_type()", "Raw `statusChange`; returns canonical workflow type."],
+          ["workflow handler -> _new_hire_fields()", "Extracts canonical employee fields from the Power Automate payload."],
+          ["workflow handler -> _require_composite_identity()", "Requires email, location, and job title before tracker writes."],
+          ["_ensure_tracker_record() -> TrackerClient.find_employee_in_tracker()", "Looks up row by email/location/title/status/submission ID."],
+          ["_ensure_tracker_record() -> TrackerClient.add_employee_to_tracker()", "Adds row when no matching tracker row exists."],
+          ["policy functions -> TrackerClient.update_stage()", "Marks workflow-specific stages as `N/A` or updates roster workflow stage state."],
+          ["card builder -> TeamsMessenger", "Posts or updates a workflow card and stores the returned Teams message ID."]
+        ]
+      },
+
+      docusignJob: {
+        title: "DocuSign Status Job Detail",
+        summary: "Detailed deterministic flow for DocuSign Connect envelope status callbacks.",
+        hint: "This job reconciles DocuSign status into the tracker and Teams.",
+        parentKey: "jobs",
+        reconcileFrom: "save",
+        drillNodes: {
+          entry: "jobsFile",
+          lookup: "docusignClientFile",
+          sent: "trackerFile",
+          completed: "trackerFile",
+          trackerRecord: "trackerFile",
+          roster: "staffRosterFile",
+          send: "teamsProactiveFile",
+          save: "cardStateFile"
+        },
+        explanation: [
+          "The webhook parser extracts envelope ID, status, and identity custom fields before this job runs.",
+          "If the callback does not include employee email, the job asks DocuSign for envelope recipients.",
+          "Sent and completed envelope statuses update tracker stages and produce or update a DocuSign status card."
+        ],
+        code: `
+flowchart TD
+    entry["process_docusign_job(payload)"]
+    validate["validate envelope_id and status"]
+    hasEmail{"employee email present?"}
+    lookup["DocuSignClient.get_envelope_status(envelope_id)"]
+    status{"status"}
+    sent["TrackerClient.update_stage('Sent Offer Letter')"]
+    completed["TrackerClient.update_stage('Offer Letter Signed')"]
+    trackerRecord["TrackerClient.find_employee_in_tracker(...)"]
+    roster["StaffRosterClient.find_employee_in_staff_roster(...)"]
+    card["docusign_status_card(...)"]
+    existing["get_docusign_status_card(identity, submission_id)"]
+    send["TeamsMessenger / update_proactive_card"]
+    save["save_docusign_status_card(...)"]
+
+    entry -- "envelope/status/custom fields" --> validate
+    validate --> hasEmail
+    hasEmail -- "no" --> lookup
+    lookup -- "recipient email" --> status
+    hasEmail -- "yes" --> status
+    status -- "sent" --> sent
+    status -- "completed" --> completed
+    completed -- "employee identity" --> trackerRecord
+    trackerRecord -- "name/title/location" --> roster
+    sent -- "stage result" --> card
+    completed -- "stage + roster result" --> card
+    roster -- "roster_added + job_category" --> card
+    card -- "identity/submission_id" --> existing
+    existing -- "message_id or none" --> send
+    send -- "message_id" --> save
+`,
+        edges: [
+          ["process_docusign_job() -> DocuSignClient.get_envelope_status()", "Only when webhook payload lacks employee email."],
+          ["status=sent -> TrackerClient.update_stage()", "Marks `Sent Offer Letter`."],
+          ["status=completed -> TrackerClient.update_stage()", "Marks `Offer Letter Signed`."],
+          ["completed -> TrackerClient.find_employee_in_tracker()", "Finds tracker row for display and roster lookup."],
+          ["completed -> StaffRosterClient.find_employee_in_staff_roster()", "Determines whether the signed employee is already in the roster."],
+          ["docusign_status_card() -> Teams", "Posts or updates the DocuSign status card."],
+          ["Teams message_id -> save_docusign_status_card()", "Persists card state for later updates/actions."]
+        ]
+      },
+
+      backgroundJob: {
+        title: "Background-Clearance Job Detail",
+        summary: "Detailed deterministic flow for background-clearance webhook jobs.",
+        hint: "This job updates one tracker stage, sends a confirmation email, and posts/updates one Teams card.",
+        parentKey: "jobs",
+        reconcileFrom: "save",
+        drillNodes: {
+          entry: "jobsFile",
+          find: "trackerFile",
+          stage: "trackerFile",
+          email: "emailToolsFile",
+          send: "teamsProactiveFile",
+          save: "cardStateFile"
+        },
+        explanation: [
+          "The webhook normalizes the employee identity fields before enqueueing this job.",
+          "The job finds the tracker row, marks `Background Submission`, sends a confirmation email, and notifies Teams.",
+          "Existing card state is checked so the notification can update an existing card instead of duplicating it."
+        ],
+        code: `
+flowchart TD
+    entry["process_background_clearance_job(payload)"]
+    extract["payload_value(...) for email/name"]
+    require{"employee email present?"}
+    find["TrackerClient.find_employee_in_tracker(...)"]
+    stage["TrackerClient.update_stage('Background Submission')"]
+    email["send_background_clearance_confirmation_email(...)"]
+    card["background_clearance_card(...)"]
+    existing["get_background_clearance_card(identity)"]
+    send["TeamsMessenger / update_proactive_card"]
+    save["save_background_clearance_card(...)"]
+
+    entry -- "payload" --> extract
+    extract -- "employee email/name/location/title/status" --> require
+    require -- "yes" --> find
+    find -- "tracker record + resolved name" --> stage
+    stage -- "stage result summary" --> email
+    email -- "email result" --> card
+    stage -- "stage result summary" --> card
+    card -- "identity" --> existing
+    existing -- "message_id or none" --> send
+    send -- "message_id" --> save
+`,
+        edges: [
+          ["process_background_clearance_job() -> payload_value()", "Extracts employee email and name with alternate field names."],
+          ["process_background_clearance_job() -> TrackerClient.find_employee_in_tracker()", "Finds existing tracker row and resolved employee name."],
+          ["process_background_clearance_job() -> TrackerClient.update_stage()", "Marks `Background Submission`."],
+          ["process_background_clearance_job() -> send_background_clearance_confirmation_email()", "Sends confirmation email through Outlook/Graph."],
+          ["background_clearance_card() -> Teams", "Posts or updates the Teams notification card."],
+          ["Teams message_id -> save_background_clearance_card()", "Persists card state for future updates."]
+        ]
+      },
+
+      teams: {
+        title: "Teams Message Function Graph",
+        summary: "Teams activities route to conversation reference storage, card actions, slash commands, or the LLM agent.",
+        hint: "Channel messages are ignored unless the bot is mentioned.",
+        parentKey: "overview",
+        reconcileFrom: "send",
+        drillNodes: {
+          http: "serverFile",
+          message: "teamsBotFile",
+          saveRef: "teamsProactiveFile",
+          extractAction: "cardActionsFile",
+          session: "teamsMemoryFile",
+          merge: "teamsMemoryFile",
+          history: "teamsMemoryFile",
+          agent: "runnerFile",
+          saveHistory: "teamsMemoryFile",
+          derive: "runnerFile",
+          send: "teamsBotFile"
+        },
+        explanation: [
+          "All useful Teams activities store a conversation reference so future proactive card posts can continue the conversation.",
+          "Adaptive Card submit payloads are routed to deterministic handlers.",
+          "Natural-language text loads session memory, runs the agent, saves updated history/context, refreshes cards when needed, and replies."
+        ],
+        code: `
+flowchart TD
+    http["server.py::handle_messages(request)"]
+    adapter["CloudAdapter.process(request, agent_app)"]
+    added["on_members_added(context, state)"]
+    install["on_installation_update(context, state)"]
+    message["on_message(context, state)"]
+    saveRef["save_conversation_reference(activity)"]
+    extractAction["extract_card_action(activity)"]
+    cardRouter["card action handlers"]
+    mention["is_mentioned(activity)"]
+    strip["strip_mention(activity)"]
+    slash["_expand_slash_command(user_text)"]
+    clearCmd["_parse_clear_to_start_command(user_text)"]
+    clearCard["_send_clear_to_start_card_from_command(context,args)"]
+    session["get_or_create_session_key(activity)"]
+    patch["extract_context_patch_from_text(user_text)"]
+    merge["merge_session_context(session_key, patch)"]
+    history["load_chat_history(session_key)"]
+    agent["run_agent(messages, trigger_source, session_context)"]
+    saveHistory["save_chat_history(session_key, result_messages)"]
+    derive["derive_session_context(result_messages, existing)"]
+    effects["_apply_card_side_effects_from_tool_results(result_messages)"]
+    refresh["_refresh_cards_from_session_context(updated_context)"]
+    reply["extract_reply(result_messages)"]
+    send["TurnContext.send_activity(reply_text)"]
+
+    http -- "HTTP request" --> adapter
+    adapter -- "conversation update" --> added
+    adapter -- "installationUpdate" --> install
+    adapter -- "message activity" --> message
+    added -- "activity" --> saveRef
+    install -- "activity" --> saveRef
+    message -- "activity" --> saveRef
+    message -- "activity.value" --> extractAction
+    extractAction -- "card_action dict" --> cardRouter
+    message -- "channel/group activity" --> mention
+    mention -- "true" --> strip
+    strip -- "user text" --> clearCmd
+    message -- "DM text" --> clearCmd
+    clearCmd -- "email + optional submission_id" --> clearCard
+    clearCmd -- "not clear-to-start" --> slash
+    slash -- "expanded NL text" --> session
+    session -- "session_key" --> patch
+    patch -- "email/intent hints" --> merge
+    session -- "session_key" --> history
+    history -- "BaseMessage history" --> agent
+    merge -- "session_context" --> agent
+    agent -- "result_messages" --> saveHistory
+    agent -- "tool results" --> derive
+    derive -- "context patch" --> merge
+    agent -- "tool result names" --> effects
+    effects -- "employee context" --> refresh
+    agent -- "AIMessage content" --> reply
+    reply -- "reply_text" --> send
+`,
+        edges: [
+          ["handle_messages() -> CloudAdapter.process()", "Teams HTTP request plus registered `AgentApplication`."],
+          ["on_message() -> save_conversation_reference()", "Stores Teams continuation reference."],
+          ["on_message() -> extract_card_action()", "Reads `activity.value`; returns card action dict or `None`."],
+          ["on_message() -> get_or_create_session_key()", "Uses Teams conversation/thread/user IDs."],
+          ["on_message() -> run_agent()", "Passes history, current `HumanMessage`, trigger source, and session context."],
+          ["on_message() -> save_chat_history()", "Persists bounded human/AI history after agent run."],
+          ["on_message() -> derive_session_context()", "Extracts reusable context from tool results."],
+          ["on_message() -> TurnContext.send_activity()", "Sends final reply text."]
+        ]
+      },
+
+      memory: {
+        title: "Session Memory Function Graph",
+        summary: "Conversation history and compact session context connect proactive card threads to later natural-language replies.",
+        hint: "This is backed by `store_mod.session_store`, which is Cosmos in production or files locally.",
+        parentKey: "overview",
+        reconcileFrom: "store",
+        drillNodes: {
+          get: "teamsMemoryFile",
+          seed: "teamsMemoryFile",
+          merge: "teamsMemoryFile",
+          loadHist: "teamsMemoryFile",
+          saveHist: "teamsMemoryFile",
+          store: "stateFile"
+        },
+        explanation: [
+          "Session keys differ for DMs, channels, and channel threads.",
+          "Proactive card posts seed thread context so replies in that thread inherit employee and submission identity.",
+          "Chat history is bounded; structured session context carries the high-value fields."
+        ],
+        code: `
+flowchart TD
+    get["get_or_create_session_key(activity)"]
+    convKey["_conversation_key(activity)"]
+    ensure["_ensure_session(key, category, is_channel_thread, increment_turns)"]
+    rotate["_should_rotate(session, now)"]
+    delete["_delete_session_artifacts(key, session_id)"]
+    loadSeed["_load_thread_seed_context(key)"]
+    seed["seed_channel_thread_context(channel_id,message_id,context)"]
+    merge["merge_session_context(session_key, patch)"]
+    loadCtx["load_session_context(session_key)"]
+    saveCtx["save_session_context(session_key, context)"]
+    loadHist["load_chat_history(session_key)"]
+    saveHist["save_chat_history(session_key, messages)"]
+    store["store_mod.session_store"]
+
+    get -- "Teams activity" --> convKey
+    get -- "conversation key" --> ensure
+    ensure -- "stored metadata" --> rotate
+    rotate -- "true + old session ID" --> delete
+    get -- "channel thread key" --> loadSeed
+    loadSeed -- "seed context" --> merge
+    seed -- "channel/message/context" --> ensure
+    seed -- "sanitized context + TTL" --> store
+    merge -- "session_key" --> loadCtx
+    loadCtx -- "StateStore.get" --> store
+    merge -- "merged context" --> saveCtx
+    saveCtx -- "StateStore.put" --> store
+    loadHist -- "StateStore.get" --> store
+    saveHist -- "StateStore.put" --> store
+`,
+        edges: [
+          ["get_or_create_session_key() -> _conversation_key()", "Returns stable DM/channel/thread key."],
+          ["_ensure_session() -> _should_rotate()", "Rotates old sessions by turn count, inactivity, or channel-thread expiry."],
+          ["seed_channel_thread_context() -> session_store.put()", "Stores context from proactive card with TTL."],
+          ["merge_session_context() -> save_session_context()", "Writes sanitized employee/submission/envelope/intent fields."],
+          ["save_chat_history() -> session_store.put()", "Stores bounded human/AI messages only."]
+        ]
+      },
+
+      agent: {
+        title: "Agent + MCP Runtime Graph",
+        summary: "Natural-language Teams messages pass through the LLM tool loop and MCP stdio boundary.",
+        hint: "The LLM selects tools; the deterministic MCP functions do the actual work.",
+        parentKey: "overview",
+        reconcileFrom: "run",
+        drillNodes: {
+          init: "runnerFile",
+          run: "runnerFile",
+          build: "runnerFile",
+          invoke: "runnerFile",
+          exec: "runnerFile",
+          mcpServer: "mcpServerFile",
+          toolFn: "mcpServerFile"
+        },
+        explanation: [
+          "`run_agent()` builds a tool-bound LLM from the configured provider.",
+          "The system prompt, compact session context, and recent conversation are sent to the LLM.",
+          "Tool calls are executed through LangChain MCP tools over stdio into the FastMCP subprocess."
+        ],
+        code: `
+flowchart TD
+    init["runner.initialize()"]
+    getTools["MultiServerMCPClient.get_tools()"]
+    ready["runner.is_ready()"]
+    run["run_agent(messages, trigger_source, session_context)"]
+    build["_build_llm(tools)"]
+    context["_format_session_context(session_context)"]
+    trim["_trim_messages(messages, trigger_source)"]
+    invoke["llm.ainvoke(messages)"]
+    exec["_execute_tool_calls(tool_calls, tool_map)"]
+    runTool["_run_tool(tool_call)"]
+    tool["BaseTool.arun(args)"]
+    decode["_decode_tool_content(content)"]
+    derive["derive_session_context(messages, existing)"]
+    mcpServer["FastMCP subprocess"]
+    toolFn["registered MCP tool function"]
+
+    init -- "server command + env" --> getTools
+    getTools -- "tool schemas" --> init
+    ready -- "bool(_tools)" --> run
+    run -- "MCP tools" --> build
+    run -- "context dict" --> context
+    run -- "Teams history" --> trim
+    trim -- "bounded messages" --> invoke
+    build -- "tool-bound LLM" --> invoke
+    invoke -- "AIMessage tool_calls" --> exec
+    exec -- "tool_call name,args,id" --> runTool
+    runTool -- "args" --> tool
+    tool -- "MCP stdio request" --> mcpServer
+    mcpServer -- "args" --> toolFn
+    toolFn -- "dict result" --> mcpServer
+    mcpServer -- "MCP response" --> tool
+    tool -- "result" --> runTool
+    runTool -- "ToolMessage" --> run
+    derive -- "ToolMessage.content" --> decode
+`,
+        edges: [
+          ["runner.initialize() -> MultiServerMCPClient.get_tools()", "Starts subprocess and returns LangChain tool wrappers."],
+          ["run_agent() -> _build_llm()", "Creates Azure OpenAI, Gemini, or Anthropic model bound to tools."],
+          ["run_agent() -> llm.ainvoke()", "Passes prompt, context, history, user request, and tool schemas."],
+          ["llm.ainvoke() -> _execute_tool_calls()", "Passes `AIMessage.tool_calls`."],
+          ["_run_tool() -> BaseTool.arun()", "Crosses MCP stdio boundary with tool args."],
+          ["derive_session_context() -> _decode_tool_content()", "Parses tool result payloads into reusable context."]
+        ]
+      },
+
+      mcp: {
+        title: "MCP Tool Graph",
+        summary: "The MCP subprocess registers tool modules and each tool creates integration clients through shared factories.",
+        hint: "This boundary keeps the LLM-facing tool surface deterministic and inspectable.",
+        parentKey: "overview",
+        reconcileFrom: "factories",
+        drillNodes: {
+          server: "mcpServerFile",
+          trackerTools: "mcpToolsFile",
+          rosterTools: "mcpToolsFile",
+          docuTools: "mcpToolsFile",
+          emailTools: "emailToolsFile",
+          teamsTools: "mcpToolsFile",
+          sepTools: "mcpToolsFile",
+          onboardTools: "mcpToolsFile",
+          factories: "mcpClientsFile"
+        },
+        explanation: [
+          "`mcp_server/server.py` creates one FastMCP server and registers all tool groups.",
+          "Tool functions call `mcp_server/clients.py` factories to instantiate tracker, roster, DocuSign, email, Teams, and separations clients.",
+          "Tool return values are dict-like payloads that LangChain wraps as `ToolMessage` content."
+        ],
+        code: `
+flowchart TD
+    server["mcp_server/server.py"]
+    trackerTools["tools_tracker.py"]
+    rosterTools["tools_staff_roster.py"]
+    docuTools["tools_docusign.py"]
+    emailTools["tools_email.py"]
+    teamsTools["tools_teams.py"]
+    sepTools["tools_separations.py"]
+    onboardTools["tools_onboarding.py"]
+    factories["mcp_server/clients.py"]
+    tracker["TrackerClient"]
+    roster["StaffRosterClient"]
+    sep["SeparationsClient"]
+    docu["DocuSignClient"]
+    email["OutlookEmailClient"]
+    messenger["TeamsMessenger"]
+
+    server -- "FastMCP instance" --> trackerTools
+    server -- "FastMCP instance" --> rosterTools
+    server -- "FastMCP instance" --> docuTools
+    server -- "FastMCP instance" --> emailTools
+    server -- "FastMCP instance" --> teamsTools
+    server -- "FastMCP instance" --> sepTools
+    server -- "FastMCP instance" --> onboardTools
+    trackerTools -- "tracker()" --> factories
+    rosterTools -- "staff_roster()" --> factories
+    sepTools -- "separations()" --> factories
+    docuTools -- "docusign()" --> factories
+    emailTools -- "email_client()" --> factories
+    teamsTools -- "messenger()" --> factories
+    onboardTools -- "multiple clients" --> factories
+    factories --> tracker
+    factories --> roster
+    factories --> sep
+    factories --> docu
+    factories --> email
+    factories --> messenger
+`,
+        edges: [
+          ["server.py -> tools_tracker.register()", "Registers tracker lookup, CRUD, field, and stage tools."],
+          ["server.py -> tools_staff_roster.register()", "Registers roster capacity, vacancy, lookup, add/remove/update tools."],
+          ["server.py -> tools_docusign.register()", "Registers draft, send, list, delete, and status tools."],
+          ["server.py -> tools_email.register()", "Registers email draft/send/confirmation tools."],
+          ["server.py -> tools_onboarding.register()", "Registers composite onboarding status tool."],
+          ["tool function -> clients.py factory", "Returns new integration client instance for the tool call."]
+        ]
+      },
+
+      cards: {
+        title: "Adaptive Card Action Graph",
+        summary: "Card button submits are deterministic action flows. Most bypass the LLM.",
+        hint: "Card state is used for idempotency and updating the original Teams card.",
+        parentKey: "overview",
+        reconcileFrom: "teams",
+        drillNodes: {
+          extract: "cardActionsFile",
+          done: "cardActionsFile",
+          clear: "cardActionsFile",
+          roster: "cardActionsFile",
+          sep: "cardActionsFile",
+          run: "cardActionsFile",
+          tracker: "trackerFile",
+          rosterClient: "staffRosterFile",
+          sepClient: "staffRosterFile",
+          docu: "docusignClientFile",
+          email: "emailToolsFile",
+          teams: "teamsProactiveFile"
+        },
+        explanation: [
+          "The bot extracts the submit payload from `activity.value`.",
+          "Idempotency checks prevent duplicate sends/adds/drafts.",
+          "Action handlers call integration clients directly, then update card state and refresh Teams surfaces."
+        ],
+        code: `
+flowchart TD
+    extract["extract_card_action(activity)"]
+    done["card_action_already_completed(card_action)"]
+    refresh["refresh_card_from_context(context, card_action)"]
+    clear["handle_clear_to_start_card_action(context, card_action)"]
+    roster["handle_staff_roster_card_action(context, card_action)"]
+    sep["handle_separation_card_action(context, card_action)"]
+    bg["_run_deterministic_card_action_in_background(card_action)"]
+    execute["execute_new_hire_card_action_without_context(card_action)"]
+    run["_run_new_hire_card_action(card_action)"]
+    fail["notify_card_action_failure(card_action)"]
+    tracker["TrackerClient"]
+    rosterClient["StaffRosterClient"]
+    sepClient["SeparationsClient"]
+    docu["DocuSignClient"]
+    email["Email helpers / OutlookEmailClient"]
+    teams["TeamsMessenger / card refresh"]
+
+    extract -- "action dict" --> done
+    done -- "already complete" --> refresh
+    extract -- "send_clear_to_start" --> clear
+    extract -- "add_to_staff_roster" --> roster
+    extract -- "record_separation/update_leave_*" --> sep
+    extract -- "send_email/create_draft/send_docusign" --> bg
+    bg -- "action dict" --> execute
+    execute -- "action dict" --> run
+    bg -- "exception or no update" --> fail
+    clear -- "Clear to Start stage" --> tracker
+    clear -- "clear-to-start email" --> email
+    roster -- "tracker record" --> tracker
+    roster -- "roster lookup/add" --> rosterClient
+    sep -- "separation record" --> sepClient
+    sep -- "roster remove/leave update" --> rosterClient
+    run -- "welcome email" --> email
+    run -- "offer draft/send" --> docu
+    run -- "sent stage update" --> tracker
+    clear --> teams
+    roster --> teams
+    sep --> teams
+    run --> teams
+`,
+        edges: [
+          ["extract_card_action() -> card_action_already_completed()", "Action dict and employee identity; returns idempotency boolean."],
+          ["handle_clear_to_start_card_action() -> update_tracker_stage_for_employee()", "Employee identity, date, treasurer and hiring manager fields."],
+          ["handle_staff_roster_card_action() -> StaffRosterClient.add_employee_to_staff_roster()", "Employee identity, location, and job category."],
+          ["handle_separation_card_action() -> SeparationsClient.add_separation_record()", "Roster-derived employee data."],
+          ["_run_new_hire_card_action(create_docusign_draft) -> DocuSignClient.create_envelope_draft()", "Tracker fields become DocuSign draft data."],
+          ["_run_new_hire_card_action(send_docusign) -> DocuSignClient.send_envelope()", "Envelope ID; sends offer letter."],
+          ["action handler -> Teams/card state", "Refreshes cards and persists completion flags."]
+        ]
+      },
+
+      integrations: {
+        title: "Integration Client Graph",
+        summary: "The final in-process layer before data leaves the container.",
+        hint: "Microsoft Graph is used for Excel, Outlook, and some Teams operations. Teams proactive messaging uses the Agents SDK adapter.",
+        parentKey: "overview",
+        reconcileFrom: "stateStore",
+        drillNodes: {
+          graphToken: "graphAuthFile",
+          workbookReq: "workbookClientFile",
+          tracker: "trackerFile",
+          roster: "staffRosterFile",
+          sep: "staffRosterFile",
+          email: "outlookEmailFile",
+          messenger: "teamsProactiveFile",
+          proactive: "teamsProactiveFile",
+          updateCard: "teamsProactiveFile",
+          docu: "docusignClientFile",
+          stateStore: "stateFile"
+        },
+        explanation: [
+          "Workbook clients use a shared Graph workbook request helper.",
+          "Outlook sends mail through Graph `sendMail`.",
+          "DocuSign uses JWT Grant and the DocuSign SDK.",
+          "Teams proactive card posts use stored conversation references and `CloudAdapter.continue_conversation()`."
+        ],
+        code: `
+flowchart TD
+    graphToken["graph_access_token()"]
+    credential["ClientSecretCredential.get_token()"]
+    workbookReq["WorkbookGraphClient._graph_workbook_request(...)"]
+    tracker["TrackerClient"]
+    roster["StaffRosterClient"]
+    sep["SeparationsClient"]
+    email["OutlookEmailClient.send_email(...)"]
+    messenger["TeamsMessenger"]
+    proactive["send_proactive_message(...)"]
+    updateCard["update_proactive_card(...)"]
+    docu["DocuSignClient"]
+    stateStore["StateStore"]
+
+    graphApi["Microsoft Graph"]
+    teamsApi["Microsoft Teams"]
+    docuApi["DocuSign API"]
+    cosmos["Cosmos DB or local JSON"]
+
+    graphToken -- "tenant/client/secret + scope" --> credential
+    credential -- "access_token" --> graphToken
+    workbookReq -- "needs bearer token" --> graphToken
+    workbookReq -- "workbook REST request" --> graphApi
+    tracker -- "tracker reads/writes" --> workbookReq
+    roster -- "roster/capacity reads/writes" --> workbookReq
+    sep -- "separations sheet reads/writes" --> workbookReq
+    email -- "sendMail payload" --> graphApi
+    messenger -- "channel/card/context" --> proactive
+    proactive -- "continue_conversation + Activity" --> teamsApi
+    updateCard -- "update_activity + card" --> teamsApi
+    docu -- "JWT grant + SDK calls" --> docuApi
+    stateStore -- "get/put/delete/list" --> cosmos
+`,
+        edges: [
+          ["graph_access_token() -> ClientSecretCredential.get_token()", "Returns Microsoft Graph bearer token."],
+          ["WorkbookGraphClient._graph_workbook_request() -> Graph", "Calls workbook REST endpoints for Excel reads/writes."],
+          ["TrackerClient -> WorkbookGraphClient", "Tracker table/range reads, row writes, and stage updates."],
+          ["StaffRosterClient -> WorkbookGraphClient", "Location-specific roster and capacity workbook operations."],
+          ["OutlookEmailClient.send_email() -> Graph", "`POST /users/{sender}/sendMail`; HTTP 202 means success."],
+          ["TeamsMessenger -> send_proactive_message()", "Channel/card/context; returns Teams message ID."],
+          ["DocuSignClient -> DocuSign API", "JWT auth plus envelope draft/status/send/delete/search operations."],
+          ["StateStore -> Cosmos/file", "Namespaced state reads and writes."]
+        ]
+      },
+
+      state: {
+        title: "State Namespace Graph",
+        summary: "State stores hold card metadata, proactive conversation references, chat history, and structured session context.",
+        hint: "Production uses Cosmos containers; local development uses JSON files.",
+        parentKey: "overview",
+        reconcileFrom: "sessionStore",
+        drillNodes: {
+          store: "stateFile",
+          sessionStore: "stateFile",
+          conv: "teamsProactiveFile",
+          newCard: "cardStateFile",
+          docuCard: "cardStateFile",
+          sepCard: "cardStateFile",
+          bgCard: "cardStateFile",
+          sessions: "teamsMemoryFile",
+          history: "teamsMemoryFile",
+          context: "teamsMemoryFile",
+          seed: "teamsMemoryFile"
+        },
+        explanation: [
+          "`store_mod.store` holds app/card/proactive state.",
+          "`store_mod.session_store` holds Teams session metadata, bounded chat history, compact context, and proactive thread seed context.",
+          "Cosmos documents are partitioned by `namespace`."
+        ],
+        code: `
+flowchart TD
+    store["store_mod.store"]
+    sessionStore["store_mod.session_store"]
+    conv["conversation_ref"]
+    newCard["new_hire_card state"]
+    docuCard["docusign_status_card state"]
+    sepCard["separation_card state"]
+    bgCard["background_clearance_card state"]
+    sessions["conversation_session"]
+    history["chat_history"]
+    context["session_context"]
+    seed["thread_seed_context"]
+
+    store --> conv
+    store --> newCard
+    store --> docuCard
+    store --> sepCard
+    store --> bgCard
+    sessionStore --> sessions
+    sessionStore --> history
+    sessionStore --> context
+    sessionStore --> seed
+`,
+        edges: [
+          ["conversation_ref", "Written by `save_conversation_reference()`, read by `get_conversation_reference()` for proactive sends."],
+          ["new_hire_card state", "Stores employee identity, Teams message ID, and email/DocuSign action flags."],
+          ["docusign_status_card state", "Stores employee identity, envelope ID, review URL, status, roster flag."],
+          ["conversation_session", "Stores session ID, category, turn count, and expiry metadata."],
+          ["chat_history", "Stores bounded human/AI messages."],
+          ["session_context", "Stores employee/submission/location/title/status/envelope/intent fields."],
+          ["thread_seed_context", "Seeds context for replies in proactive card threads."]
+        ]
+      },
+
+      observability: {
+        title: "Observability Graph",
+        summary: "OpenTelemetry setup and per-operation spans flow to Azure Monitor and Phoenix.",
+        hint: "Span attributes are sanitized before being written.",
+        parentKey: "overview",
+        reconcileFrom: "exporters",
+        drillNodes: {
+          configure: "observabilityFile",
+          span: "tracingFile",
+          attrs: "tracingFile",
+          safe: "tracingFile"
+        },
+        explanation: [
+          "Observability is configured once at process start.",
+          "Manual spans wrap Teams, agent, LLM, tool, and HTTP operations.",
+          "Attributes pass through PII safety logic before export."
+        ],
+        code: `
+flowchart TD
+    configure["configure_observability(settings)"]
+    metadata["_configure_service_metadata(settings)"]
+    azure["_configure_azure_monitor(settings)"]
+    phoenix["_configure_phoenix(settings)"]
+    langchain["_configure_langchain_instrumentation()"]
+    logging["_configure_logging_instrumentation()"]
+    span["start_span(name, attrs)"]
+    attrs["set_span_attributes(span, attrs)"]
+    safe["safe_attributes(attrs, salt, capture_full_payloads)"]
+    exporters["Azure Monitor / Phoenix"]
+
+    configure -- "service env/version/project" --> metadata
+    configure -- "connection string" --> azure
+    configure -- "OTLP endpoint + headers + prefixes" --> phoenix
+    configure -- "LangChain callbacks" --> langchain
+    configure -- "log correlation" --> logging
+    span -- "raw attrs" --> attrs
+    attrs -- "PII controls" --> safe
+    safe -- "sanitized attrs" --> span
+    azure --> exporters
+    phoenix --> exporters
+`,
+        edges: [
+          ["configure_observability() -> _configure_azure_monitor()", "Installs Azure Monitor exporter when enabled."],
+          ["configure_observability() -> _configure_phoenix()", "Installs OTLP exporter and optional prefix filter."],
+          ["configure_observability() -> _configure_langchain_instrumentation()", "Adds OpenInference LangChain instrumentation when available."],
+          ["runtime code -> start_span()", "Creates spans around Teams, agent, tool, and webhook operations."],
+          ["set_span_attributes() -> safe_attributes()", "Redacts/hashes sensitive values unless full payload capture is enabled."]
+        ]
+      },
+
+      serverFile: {
+        title: "File Graph: server.py",
+        summary: "HTTP app entrypoint, Teams route registration, startup, and cleanup.",
+        hint: "This file reconciles back to Startup and Teams message handling.",
+        parentKey: "startup",
+        reconcileFrom: "runApp",
+        explanation: [
+          "`server.py` is the process entrypoint and aiohttp app factory.",
+          "It registers webhook routes, builds the Teams Agents SDK runtime, initializes state stores, starts the agent, and starts the queue worker."
+        ],
+        code: `
+flowchart TD
+    main["main()"]
+    configure["configure_observability(settings)"]
+    create["create_app()"]
+    setup["_setup_teams(app)"]
+    routes["app.router.add_post(...)"]
+    startup["_on_startup(app)"]
+    stores["create_state_store(...)"]
+    agent["runner.initialize()"]
+    queue["create_job_queue(...process_job...)"]
+    cleanup["_on_cleanup(app)"]
+    runApp["web.run_app(app, host, port)"]
+
+    main --> configure
+    main --> create
+    create --> routes
+    create --> setup
+    create --> startup
+    startup --> stores
+    startup --> agent
+    startup --> queue
+    create --> cleanup
+    main --> runApp
+`,
+        edges: [
+          ["main() -> create_app()", "Builds and returns the aiohttp application."],
+          ["create_app() -> routes", "Registers webhook and Teams HTTP endpoints."],
+          ["_on_startup() -> stores/agent/queue", "Initializes runtime dependencies."],
+          ["_on_cleanup() -> JobQueue.close()", "Stops background queue worker."]
+        ]
+      },
+
+      webhooksFile: {
+        title: "File Graph: runtime/webhooks.py",
+        summary: "Webhook parsing, validation, and queue handoff functions.",
+        hint: "This file reconciles back to Webhook Ingress.",
+        parentKey: "webhooks",
+        reconcileFrom: "enqueue",
+        explanation: [
+          "`runtime/webhooks.py` keeps ingress work small: validate, parse, enqueue, return.",
+          "All expensive workflow processing is deferred to queue jobs."
+        ],
+        code: `
+flowchart TD
+    newHire["handle_new_hire_webhook()"]
+    background["handle_background_clearance_webhook()"]
+    docusign["handle_docusign_webhook()"]
+    secret["is_valid_webhook_secret()"]
+    parseJson["parse_json_payload()"]
+    parseDocu["parse_docusign_payload()"]
+    queue["_job_queue(request)"]
+    enqueue["JobQueue.enqueue(...)"]
+    accepted["_accepted_response()"]
+
+    newHire --> secret
+    newHire --> parseJson
+    newHire --> queue
+    background --> secret
+    background --> parseJson
+    docusign --> parseDocu
+    queue --> enqueue
+    parseJson --> enqueue
+    parseDocu --> enqueue
+    enqueue --> accepted
+`,
+        edges: [
+          ["handle_*_webhook() -> parse_*()", "Returns normalized payload dictionaries."],
+          ["handle_*_webhook() -> JobQueue.enqueue()", "Writes durable job handoff."],
+          ["enqueue -> _accepted_response()", "Returns HTTP 200 accepted JSON."]
+        ]
+      },
+
+      jobQueueFile: {
+        title: "File Graph: runtime/job_queue.py",
+        summary: "Queue abstraction, local backend, Azure Storage Queue backend, and worker loop.",
+        hint: "This file reconciles back to Queue.",
+        parentKey: "queue",
+        reconcileFrom: "process",
+        explanation: [
+          "`runtime/job_queue.py` abstracts local development execution and production Azure Storage Queue polling behind the same protocol."
+        ],
+        code: `
+flowchart TD
+    factory["create_job_queue()"]
+    local["LocalJobQueue"]
+    azure["AzureStorageJobQueue"]
+    enqueue["enqueue(job_type,payload)"]
+    worker["_run_worker()"]
+    receive["_receive_message()"]
+    handle["_handle_message(message)"]
+    process["process_job(QueueJob)"]
+
+    factory -- "backend=local" --> local
+    factory -- "backend=azure" --> azure
+    local --> enqueue
+    azure --> enqueue
+    azure --> worker
+    worker --> receive
+    receive --> handle
+    handle --> process
+`,
+        edges: [
+          ["create_job_queue() -> backend", "Selects local or Azure implementation."],
+          ["enqueue() -> queue storage/task", "Serializes job or starts local task."],
+          ["_handle_message() -> process_job()", "Passes parsed `QueueJob`."]
+        ]
+      },
+
+      jobsFile: {
+        title: "File Graph: runtime/jobs.py",
+        summary: "Deterministic job dispatcher and webhook-driven workflow handlers.",
+        hint: "This file reconciles back to Deterministic Jobs.",
+        parentKey: "jobs",
+        reconcileFrom: "notify",
+        explanation: [
+          "`runtime/jobs.py` owns deterministic workflow orchestration after webhooks have been accepted."
+        ],
+        code: `
+flowchart TD
+    process["process_job(job)"]
+    newHire["process_new_hire_job(payload)"]
+    docu["process_docusign_job(payload)"]
+    background["process_background_clearance_job(payload)"]
+    ensure["_ensure_tracker_record(...)"]
+    notify["_send_submission_notification(...) / _send_workflow_action_notification(...)"]
+    send["_send_or_update_card(...)"]
+    save["_save_card_state_safely(...)"]
+
+    process --> newHire
+    process --> docu
+    process --> background
+    newHire --> ensure
+    newHire --> notify
+    docu --> notify
+    background --> notify
+    notify --> send
+    send --> save
+`,
+        edges: [
+          ["process_job() -> handler", "Dispatches by job type."],
+          ["handler -> integration clients", "Tracker/email/DocuSign/Teams side effects."],
+          ["notification helper -> card state", "Stores message IDs and completion state."]
+        ]
+      },
+
+      runnerFile: {
+        title: "File Graph: agent/runner.py",
+        summary: "MCP tool loading, LLM construction, tool loop, and session-context derivation.",
+        hint: "This file reconciles back to Agent + MCP.",
+        parentKey: "agent",
+        reconcileFrom: "returnMessages",
+        explanation: [
+          "`agent/runner.py` binds MCP tools to the configured LLM and loops until the model stops calling tools."
+        ],
+        code: `
+flowchart TD
+    initialize["initialize()"]
+    tools["MultiServerMCPClient.get_tools()"]
+    run["run_agent(messages, trigger_source, session_context)"]
+    build["_build_llm(tools)"]
+    invoke["llm.ainvoke(messages)"]
+    exec["_execute_tool_calls(tool_calls, tool_map)"]
+    derive["derive_session_context(messages, existing)"]
+    returnMessages["return result_messages"]
+
+    initialize --> tools
+    run --> build
+    build --> invoke
+    invoke --> exec
+    exec --> invoke
+    invoke --> returnMessages
+    returnMessages --> derive
+`,
+        edges: [
+          ["initialize() -> MCP client", "Starts subprocess and loads tool schemas."],
+          ["run_agent() -> LLM", "Passes messages and tool schemas."],
+          ["tool calls -> MCP tools", "Returns `ToolMessage`s for the next LLM turn."]
+        ]
+      },
+
+      mcpServerFile: {
+        title: "File Graph: mcp_server/server.py",
+        summary: "FastMCP subprocess entrypoint and tool registration.",
+        hint: "This file reconciles back to MCP Tools.",
+        parentKey: "mcp",
+        reconcileFrom: "run",
+        explanation: [
+          "`mcp_server/server.py` is launched by the agent process over stdio and registers all tool modules."
+        ],
+        code: `
+flowchart TD
+    init["_initialize_runtime()"]
+    mcp["FastMCP(name='onboarding-tools')"]
+    register["register_* tools"]
+    run["mcp.run(transport='stdio')"]
+
+    init --> mcp
+    mcp --> register
+    register --> run
+`,
+        edges: [
+          ["_initialize_runtime() -> state store", "Initializes store for MCP tools when needed."],
+          ["register_* -> FastMCP", "Adds tool schemas/functions."],
+          ["mcp.run() -> stdio", "Serves MCP protocol to LangChain adapter."]
+        ]
+      },
+
+      mcpToolsFile: {
+        title: "File Graph: mcp_server/tools_*.py",
+        summary: "Tool definitions exposed to the LLM through FastMCP.",
+        hint: "This file group reconciles back to MCP Tools.",
+        parentKey: "mcp",
+        reconcileFrom: "result",
+        explanation: [
+          "Tool modules wrap deterministic integration-client calls in LLM-callable functions."
+        ],
+        code: `
+flowchart TD
+    args["MCP tool args"]
+    validate["tool-level validation / relaxed resolution"]
+    clients["mcp_server/clients.py factories"]
+    integration["integration client method"]
+    result["dict result"]
+
+    args --> validate
+    validate --> clients
+    clients --> integration
+    integration --> result
+`,
+        edges: [
+          ["tool args -> client factory", "Creates tracker, roster, DocuSign, email, Teams, or separations client."],
+          ["client result -> tool result", "Returns dict-like payload to the agent loop."]
+        ]
+      },
+
+      mcpClientsFile: {
+        title: "File Graph: mcp_server/clients.py",
+        summary: "Factory functions for MCP tool integration clients.",
+        hint: "This file reconciles back to MCP Tools.",
+        parentKey: "mcp",
+        reconcileFrom: "factories",
+        explanation: [
+          "`mcp_server/clients.py` keeps tool modules from duplicating client construction."
+        ],
+        code: `
+flowchart TD
+    factories["clients.py factory functions"]
+    tracker["TrackerClient()"]
+    roster["StaffRosterClient()"]
+    sep["SeparationsClient()"]
+    docu["DocuSignClient()"]
+    messenger["TeamsMessenger()"]
+    email["OutlookEmailClient()"]
+
+    factories --> tracker
+    factories --> roster
+    factories --> sep
+    factories --> docu
+    factories --> messenger
+    factories --> email
+`,
+        edges: [
+          ["factory -> integration client", "Returns a fresh client instance for the tool call."]
+        ]
+      },
+
+      teamsBotFile: {
+        title: "File Graph: integrations/teams/bot.py",
+        summary: "Teams activity routing, slash commands, agent invocation, and final replies.",
+        hint: "This file reconciles back to Teams Bot.",
+        parentKey: "teams",
+        reconcileFrom: "reply",
+        explanation: [
+          "`integrations/teams/bot.py` is the central router for Teams messages and card submit events."
+        ],
+        code: `
+flowchart TD
+    register["register_handlers(agent_app)"]
+    message["on_message(context,state)"]
+    saveRef["save_conversation_reference(activity)"]
+    card["extract_card_action(activity)"]
+    slash["_expand_slash_command(user_text)"]
+    agent["runner.run_agent(...)"]
+    history["save_chat_history(...)"]
+    reply["TurnContext.send_activity(reply_text)"]
+
+    register --> message
+    message --> saveRef
+    message --> card
+    message --> slash
+    message --> agent
+    agent --> history
+    agent --> reply
+`,
+        edges: [
+          ["on_message() -> card path", "Deterministic submit handling."],
+          ["on_message() -> agent path", "Natural-language tool loop."],
+          ["agent result -> reply", "Sends final Teams message."]
+        ]
+      },
+
+      teamsMemoryFile: {
+        title: "File Graph: integrations/teams/memory.py",
+        summary: "Session keys, chat history, session context, and thread seed context.",
+        hint: "This file reconciles back to Session Memory.",
+        parentKey: "memory",
+        reconcileFrom: "store",
+        explanation: [
+          "`integrations/teams/memory.py` preserves conversational continuity across Teams turns and proactive card threads."
+        ],
+        code: `
+flowchart TD
+    session["get_or_create_session_key(activity)"]
+    ensure["_ensure_session(...)"]
+    merge["merge_session_context(session_key, patch)"]
+    history["load_chat_history() / save_chat_history()"]
+    seed["seed_channel_thread_context(...)"]
+    store["store_mod.session_store"]
+
+    session --> ensure
+    seed --> ensure
+    ensure --> store
+    merge --> store
+    history --> store
+`,
+        edges: [
+          ["activity -> session key", "Uses DM/channel/thread identifiers."],
+          ["context/history -> session_store", "Persists compact context and bounded history."]
+        ]
+      },
+
+      cardActionsFile: {
+        title: "File Graph: integrations/teams/card_actions.py",
+        summary: "Adaptive Card submit parsing and deterministic action handlers.",
+        hint: "This file reconciles back to Card Actions.",
+        parentKey: "cards",
+        reconcileFrom: "refresh",
+        explanation: [
+          "`integrations/teams/card_actions.py` executes explicit user actions without asking the LLM to infer intent."
+        ],
+        code: `
+flowchart TD
+    extract["extract_card_action(activity)"]
+    complete["card_action_already_completed(card_action)"]
+    route["specific handler"]
+    clients["Tracker/Roster/DocuSign/Email clients"]
+    refresh["refresh_card_from_context(...)"]
+
+    extract --> complete
+    complete --> route
+    route --> clients
+    clients --> refresh
+`,
+        edges: [
+          ["card action -> handler", "Uses action name and employee identity."],
+          ["handler -> clients", "Performs explicit side effects."],
+          ["handler -> refresh", "Updates Teams card state/surface."]
+        ]
+      },
+
+      teamsProactiveFile: {
+        title: "File Graph: integrations/teams/proactive.py",
+        summary: "Conversation references, proactive sends, and card updates.",
+        hint: "This file reconciles back to Teams Bot and Integrations.",
+        parentKey: "integrations",
+        reconcileFrom: "send",
+        explanation: [
+          "`integrations/teams/proactive.py` uses stored conversation references to post or update Teams messages outside the current turn."
+        ],
+        code: `
+flowchart TD
+    saveRef["save_conversation_reference(activity)"]
+    getRef["get_conversation_reference(channel_id)"]
+    adapter["_ensure_adapter()"]
+    send["send_proactive_message(...)"]
+    update["update_proactive_card(...)"]
+    teams["CloudAdapter.continue_conversation(...)"]
+
+    saveRef --> getRef
+    send --> adapter
+    send --> getRef
+    update --> adapter
+    update --> getRef
+    adapter --> teams
+    getRef --> teams
+`,
+        edges: [
+          ["save_conversation_reference() -> state", "Stores continuation reference."],
+          ["send/update -> continue_conversation", "Posts or updates Teams activity."]
+        ]
+      },
+
+      cardStateFile: {
+        title: "File Graph: integrations/card_state.py",
+        summary: "Card metadata, message IDs, and action completion state.",
+        hint: "This file reconciles back to State.",
+        parentKey: "state",
+        reconcileFrom: "store",
+        explanation: [
+          "`integrations/card_state.py` persists enough metadata to update original Teams cards and enforce idempotency."
+        ],
+        code: `
+flowchart TD
+    save["save_*_card(...)"]
+    get["get_*_card(...)"]
+    mark["mark_*_complete(...)"]
+    refresh["refresh_*_card(...)"]
+    store["store_mod.store"]
+
+    save --> store
+    get --> store
+    mark --> store
+    refresh --> get
+`,
+        edges: [
+          ["save/get/mark -> store", "Writes and reads namespaced card state records."],
+          ["refresh_* -> Teams", "Rebuilds and updates visible cards."]
+        ]
+      },
+
+      graphAuthFile: {
+        title: "File Graph: integrations/graph/auth.py",
+        summary: "Microsoft Graph client-credentials token acquisition.",
+        hint: "This file reconciles back to Integration Clients.",
+        parentKey: "integrations",
+        reconcileFrom: "token",
+        explanation: [
+          "`integrations/graph/auth.py` centralizes Graph access token acquisition for workbook, email, and Graph Teams calls."
+        ],
+        code: `
+flowchart TD
+    settings["settings.azure_tenant_id/client_id/client_secret"]
+    credential["ClientSecretCredential(...)"]
+    getToken["credential.get_token(Graph .default scope)"]
+    token["access token"]
+
+    settings --> credential
+    credential --> getToken
+    getToken --> token
+`,
+        edges: [
+          ["settings -> ClientSecretCredential", "Uses app registration client credentials."],
+          ["get_token() -> token", "Returns bearer token for Graph API."]
+        ]
+      },
+
+      workbookClientFile: {
+        title: "File Graph: integrations/workbook/client.py",
+        summary: "Shared Microsoft Graph workbook request helper.",
+        hint: "This file reconciles back to Integration Clients.",
+        parentKey: "integrations",
+        reconcileFrom: "request",
+        explanation: [
+          "`integrations/workbook/client.py` builds Graph workbook URLs and executes requests for tracker, roster, and separations clients."
+        ],
+        code: `
+flowchart TD
+    token["graph_access_token()"]
+    request["_graph_workbook_request(method,path,json_body,drive_id,item_id)"]
+    graph["Microsoft Graph workbook endpoint"]
+    rows["_tracker_rows_with_start_row() / _used_range_rows(...)"]
+
+    rows --> request
+    request --> token
+    token --> graph
+    request --> graph
+`,
+        edges: [
+          ["_graph_workbook_request() -> Graph", "Sends workbook REST request and returns JSON."],
+          ["_used_range_rows() -> _graph_workbook_request()", "Reads sheet data for higher-level clients."]
+        ]
+      },
+
+      trackerFile: {
+        title: "File Graph: integrations/workbook/tracker_client.py",
+        summary: "Tracker workbook lookup, add, update, remove, and stage operations.",
+        hint: "This file reconciles back to Integration Clients.",
+        parentKey: "integrations",
+        reconcileFrom: "workbook",
+        explanation: [
+          "`TrackerClient` treats the Excel tracker as the workflow system of record."
+        ],
+        code: `
+flowchart TD
+    identity["email + location + job title + status + submission_id"]
+    resolve["resolve_employee_relaxed(...) / find_employee_in_tracker(...)"]
+    add["add_employee_to_tracker(...)"]
+    update["update_employee_in_tracker(...) / update_stage(...)"]
+    list["list_all_employees() / get_employee_stages(...)"]
+    workbook["WorkbookGraphClient._graph_workbook_request(...)"]
+
+    identity --> resolve
+    resolve --> add
+    resolve --> update
+    resolve --> list
+    add --> workbook
+    update --> workbook
+    list --> workbook
+`,
+        edges: [
+          ["identity -> resolve", "Composite identity disambiguates duplicate rows."],
+          ["add/update/list -> workbook", "Reads or writes Excel through Microsoft Graph."]
+        ]
+      },
+
+      staffRosterFile: {
+        title: "File Graph: integrations/workbook/staff_roster_client.py + separations_client.py",
+        summary: "Location workbook roster, capacity, leave, and separation-sheet operations.",
+        hint: "This file group reconciles back to Integration Clients.",
+        parentKey: "integrations",
+        reconcileFrom: "workbook",
+        explanation: [
+          "Roster and separation clients resolve a location to a configured workbook and then read/write the appropriate sheets through Graph."
+        ],
+        code: `
+flowchart TD
+    location["work_location"]
+    config["settings.staff_roster_workbook(location)"]
+    roster["StaffRosterClient roster/capacity methods"]
+    sep["SeparationsClient separation methods"]
+    workbook["WorkbookGraphClient._graph_workbook_request(...)"]
+
+    location --> config
+    config --> roster
+    config --> sep
+    roster --> workbook
+    sep --> workbook
+`,
+        edges: [
+          ["location -> workbook config", "Returns drive/item/sheet names."],
+          ["roster/separations -> workbook", "Performs Graph Excel reads/writes."]
+        ]
+      },
+
+      outlookEmailFile: {
+        title: "File Graph: integrations/outlook_email_client.py",
+        summary: "Graph `sendMail` wrapper for Outlook email sends.",
+        hint: "This file reconciles back to Integration Clients.",
+        parentKey: "integrations",
+        reconcileFrom: "result",
+        explanation: [
+          "`OutlookEmailClient` sends HTML email through Microsoft Graph as the configured sender mailbox."
+        ],
+        code: `
+flowchart TD
+    args["to/subject/html/cc/attachments"]
+    token["graph_access_token()"]
+    send["POST /users/{sender}/sendMail"]
+    result["success or error dict"]
+
+    args --> token
+    token --> send
+    send --> result
+`,
+        edges: [
+          ["send_email() -> graph_access_token()", "Gets bearer token."],
+          ["send_email() -> Graph sendMail", "HTTP 202 returns success."]
+        ]
+      },
+
+      docusignClientFile: {
+        title: "File Graph: integrations/docusign_client.py",
+        summary: "DocuSign JWT auth and envelope operations.",
+        hint: "This file reconciles back to Integration Clients.",
+        parentKey: "integrations",
+        reconcileFrom: "result",
+        explanation: [
+          "`DocuSignClient` wraps DocuSign SDK operations in async-friendly executor calls and caches JWT access tokens."
+        ],
+        code: `
+flowchart TD
+    jwt["_get_access_token() JWT grant"]
+    api["_get_api_client()"]
+    draft["create/check/list/delete draft"]
+    send["send_envelope(envelope_id)"]
+    status["get_envelope_status(envelope_id)"]
+    result["dict result"]
+
+    jwt --> api
+    api --> draft
+    api --> send
+    api --> status
+    draft --> result
+    send --> result
+    status --> result
+`,
+        edges: [
+          ["_get_access_token() -> DocuSign OAuth", "Signs JWT and caches access token."],
+          ["public methods -> DocuSign SDK", "Creates, sends, searches, deletes, and reads envelopes."]
+        ]
+      },
+
+      emailToolsFile: {
+        title: "File Graph: mcp_server/tools_email.py",
+        summary: "Email template rendering, draft state, and Graph email sends.",
+        hint: "This file reconciles back to MCP Tools or job/card flows.",
+        parentKey: "mcp",
+        reconcileFrom: "send",
+        explanation: [
+          "`tools_email.py` is used both as MCP tools and as deterministic helpers from jobs/card actions."
+        ],
+        code: `
+flowchart TD
+    render["_render_template(...)"]
+    draft["draft_onboarding_email_for_employee(...)"]
+    sendWelcome["send_onboarding_email_to_employee(...)"]
+    sendBg["send_background_clearance_confirmation_email(...)"]
+    sendClear["send_clear_to_start_email(...)"]
+    client["OutlookEmailClient.send_email(...)"]
+    store["state store draft payload"]
+    send["email sent result"]
+
+    render --> draft
+    draft --> store
+    render --> sendWelcome
+    render --> sendBg
+    render --> sendClear
+    sendWelcome --> client
+    sendBg --> client
+    sendClear --> client
+    client --> send
+`,
+        edges: [
+          ["draft helper -> state", "Stores rendered welcome email for review."],
+          ["send helper -> OutlookEmailClient", "Sends email through Graph."]
+        ]
+      },
+
+      stateFile: {
+        title: "File Graph: runtime/state_store.py + state_store_cosmos.py",
+        summary: "StateStore interface and file/Cosmos implementations.",
+        hint: "This file reconciles back to State.",
+        parentKey: "state",
+        reconcileFrom: "store",
+        explanation: [
+          "The app uses the same async state-store interface for local JSON files and Cosmos DB."
+        ],
+        code: `
+flowchart TD
+    factory["create_state_store(backend, **kwargs)"]
+    file["FileStateStore"]
+    cosmos["CosmosStateStore"]
+    methods["get / put / delete / list_keys / get_all"]
+    store["durable namespace/key payloads"]
+
+    factory -- "backend=file" --> file
+    factory -- "backend=cosmos" --> cosmos
+    file --> methods
+    cosmos --> methods
+    methods --> store
+`,
+        edges: [
+          ["create_state_store() -> implementation", "Selects file or Cosmos backend."],
+          ["StateStore methods -> durable records", "Stores namespaced payloads."]
+        ]
+      },
+
+      observabilityFile: {
+        title: "File Graph: observability/setup.py",
+        summary: "Exporter and instrumentation setup.",
+        hint: "This file reconciles back to Observability.",
+        parentKey: "observability",
+        reconcileFrom: "exporters",
+        explanation: [
+          "`observability/setup.py` configures Azure Monitor, Phoenix OTLP, LangChain instrumentation, and logging correlation."
+        ],
+        code: `
+flowchart TD
+    configure["configure_observability(settings)"]
+    metadata["_configure_service_metadata(settings)"]
+    azure["_configure_azure_monitor(settings)"]
+    phoenix["_configure_phoenix(settings)"]
+    langchain["_configure_langchain_instrumentation()"]
+    exporters["Azure Monitor / Phoenix exporters"]
+
+    configure --> metadata
+    configure --> azure
+    configure --> phoenix
+    configure --> langchain
+    azure --> exporters
+    phoenix --> exporters
+`,
+        edges: [
+          ["configure_observability() -> exporters", "Installs enabled OpenTelemetry exporters."],
+          ["configure_observability() -> instrumentation", "Adds LangChain/log instrumentation."]
+        ]
+      },
+
+      tracingFile: {
+        title: "File Graph: observability/tracing.py + pii.py",
+        summary: "Span helpers and safe attribute handling.",
+        hint: "This file reconciles back to Observability.",
+        parentKey: "observability",
+        reconcileFrom: "span",
+        explanation: [
+          "`tracing.py` wraps OpenTelemetry span creation and passes attributes through PII safety rules before export."
+        ],
+        code: `
+flowchart TD
+    start["start_span(name, attrs)"]
+    setAttrs["set_span_attributes(span, attrs)"]
+    safe["safe_attributes(...)"]
+    span["OpenTelemetry span"]
+
+    start --> setAttrs
+    setAttrs --> safe
+    safe --> span
+`,
+        edges: [
+          ["start_span() -> set_span_attributes()", "Adds sanitized attributes and records exceptions."],
+          ["safe_attributes() -> span", "Redacts/hashes sensitive values based on settings."]
+        ]
+      }
+    };
+
+    const nav = document.getElementById("nav");
+    const title = document.getElementById("diagram-title");
+    const summary = document.getElementById("diagram-summary");
+    const hint = document.getElementById("hint");
+    const canvas = document.getElementById("canvas");
+    const viewport = document.getElementById("viewport");
+    const source = document.getElementById("source");
+    const explanation = document.getElementById("explanation");
+    const edges = document.getElementById("edges");
+
+    let currentKey = "overview";
+    let currentState = { scale: 1, x: 24, y: 24 };
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    window.drill = (key) => {
+      if (graphs[key]) {
+        render(key);
+      }
+    };
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function slug(key) {
+      return `diagram-${key}`;
+    }
+
+    function codeForGraph(graph) {
+      let code = graph.code.trim();
+      if (graph.parentKey && graph.reconcileFrom && graphs[graph.parentKey]) {
+        const parentTitle = graphs[graph.parentKey].title.replace(/"/g, "'");
+        code += `\n    parentReconcile["Reconcile to: ${parentTitle}"]`;
+        code += `\n    ${graph.reconcileFrom} -- "returns to parent flow" --> parentReconcile`;
+      }
+      return code;
+    }
+
+    function fitState() {
+      const svg = canvas.querySelector("svg");
+      if (!svg) {
+        return { scale: 1, x: 24, y: 24 };
+      }
+      const viewportRect = viewport.getBoundingClientRect();
+      const svgRect = svg.getBoundingClientRect();
+      const width = svgRect.width || svg.viewBox.baseVal.width || 1000;
+      const height = svgRect.height || svg.viewBox.baseVal.height || 600;
+      const scale = Math.min(
+        (viewportRect.width - 48) / width,
+        (viewportRect.height - 48) / height,
+        1.1
+      );
+      return {
+        scale: Math.max(scale, 0.1),
+        x: 24,
+        y: 24
+      };
+    }
+
+    function applyTransform() {
+      canvas.style.transform = `translate(${currentState.x}px, ${currentState.y}px) scale(${currentState.scale})`;
+    }
+
+    function zoomAt(multiplier, clientX, clientY) {
+      const rect = viewport.getBoundingClientRect();
+      const beforeX = (clientX - rect.left - currentState.x) / currentState.scale;
+      const beforeY = (clientY - rect.top - currentState.y) / currentState.scale;
+      currentState.scale = Math.min(4, Math.max(0.08, currentState.scale * multiplier));
+      currentState.x = clientX - rect.left - beforeX * currentState.scale;
+      currentState.y = clientY - rect.top - beforeY * currentState.scale;
+      applyTransform();
+    }
+
+    function attachSvgDrillHandlers() {
+      const graph = graphs[currentKey];
+      const nodeToGraph = { ...(graph.drillNodes || {}) };
+      if (graph.parentKey) {
+        nodeToGraph.parentReconcile = graph.parentKey;
+      }
+      if (!Object.keys(nodeToGraph).length) return;
+      const svg = canvas.querySelector("svg");
+      if (!svg) return;
+      const labelToGraph = Object.fromEntries(
+        Object.entries(nodeToGraph)
+          .filter(([, graphKey]) => graphs[graphKey])
+          .map(([mermaidId, graphKey]) => [
+            graphs[graphKey].title
+              .replace(/\s+Function Graph$/i, "")
+              .replace(/\s+Detail$/i, "")
+              .toLowerCase(),
+            graphKey
+          ])
+      );
+      svg.querySelectorAll(".node").forEach((node) => {
+        const nodeId = String(node.id || "").toLowerCase();
+        const text = node.textContent.trim().replace(/\s+/g, " ").toLowerCase();
+        let key = "";
+        for (const [mermaidId, graphKey] of Object.entries(nodeToGraph)) {
+          const normalized = mermaidId.toLowerCase();
+          if (
+            nodeId === normalized ||
+            nodeId.includes(`-${normalized}-`) ||
+            nodeId.endsWith(`-${normalized}`)
+          ) {
+            key = graphKey;
+            break;
+          }
+        }
+        if (!key) {
+          key = labelToGraph[text] || "";
+        }
+        if (!key) return;
+        node.dataset.drillKey = key;
+        node.setAttribute("tabindex", "0");
+        node.setAttribute("role", "button");
+        node.setAttribute("aria-label", `Open ${graphs[key].title}`);
+        node.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          render(key);
+        });
+        node.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            render(key);
+          }
+        });
+      });
+
+      svg.addEventListener("click", (event) => {
+        const node = event.target.closest ? event.target.closest(".node") : null;
+        const key = node && node.dataset ? node.dataset.drillKey : "";
+        if (!key || !graphs[key]) return;
+        event.preventDefault();
+        event.stopPropagation();
+        render(key);
+      });
+    }
+
+    function renderNav() {
+      nav.innerHTML = "";
+      for (const [key, graph] of Object.entries(graphs)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `nav-button${key === currentKey ? " active" : ""}`;
+        button.textContent = graph.title;
+        button.addEventListener("click", () => render(key));
+        nav.appendChild(button);
+      }
+    }
+
+    function renderDetails(graph) {
+      explanation.innerHTML = graph.explanation
+        .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
+        .join("");
+
+      edges.innerHTML = graph.edges
+        .map(([edge, description]) => `
+          <tr>
+            <td><code>${escapeHtml(edge)}</code></td>
+            <td>${escapeHtml(description)}</td>
+          </tr>
+        `)
+        .join("");
+    }
+
+    async function render(key) {
+      const graph = graphs[key] || graphs.overview;
+      const diagramCode = codeForGraph(graph);
+      currentKey = key;
+      title.textContent = graph.title;
+      summary.textContent = graph.summary;
+      hint.textContent = graph.hint;
+      source.textContent = diagramCode;
+      source.classList.remove("visible");
+      renderNav();
+      renderDetails(graph);
+
+      try {
+        const rendered = await mermaid.render(slug(key), diagramCode);
+        canvas.innerHTML = rendered.svg;
+        attachSvgDrillHandlers();
+        currentState = fitState();
+        applyTransform();
+      } catch (error) {
+        canvas.innerHTML = `<div class="error"><strong>Mermaid render failed.</strong><p>${escapeHtml(error.message || error)}</p></div>`;
+      }
+    }
+
+    viewport.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      viewport.setPointerCapture(event.pointerId);
+    });
+
+    viewport.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      currentState.x += event.clientX - lastX;
+      currentState.y += event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      applyTransform();
+    });
+
+    viewport.addEventListener("pointerup", () => {
+      dragging = false;
+    });
+
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      zoomAt(event.deltaY < 0 ? 1.12 : 0.88, event.clientX, event.clientY);
+    }, { passive: false });
+
+    viewport.addEventListener("dblclick", () => {
+      currentState = fitState();
+      applyTransform();
+    });
+
+    document.querySelector("[data-action='overview']").addEventListener("click", () => render("overview"));
+    document.querySelector("[data-action='zoom-in']").addEventListener("click", () => {
+      const rect = viewport.getBoundingClientRect();
+      zoomAt(1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    });
+    document.querySelector("[data-action='zoom-out']").addEventListener("click", () => {
+      const rect = viewport.getBoundingClientRect();
+      zoomAt(0.8, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    });
+    document.querySelector("[data-action='reset']").addEventListener("click", () => {
+      currentState = fitState();
+      applyTransform();
+    });
+    document.querySelector("[data-action='source']").addEventListener("click", () => {
+      source.classList.toggle("visible");
+    });
+
+    render("overview");
+  </script>
+</body>
+</html>

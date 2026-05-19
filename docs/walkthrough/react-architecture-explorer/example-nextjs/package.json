@@ -1,0 +1,25 @@
+{
+  "name": "onboarding-agent-architecture-explorer-example",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "export:graphs": "node ../scripts/export-architecture-graphs-json.mjs",
+    "sync:explorer": "../scripts/sync-package-into-example.sh",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "mermaid": "^10.9.1",
+    "next": "^15.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "^5.8.0"
+  }
+}

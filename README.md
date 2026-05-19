@@ -1,209 +1,123 @@
 # Onboarding Agent
 
-AI-assisted HR onboarding system for:
+AI-assisted HR onboarding system. The agent listens for new-hire events, drives an Excel-based onboarding tracker, sends offer letters via DocuSign, sends onboarding emails via Outlook, and lets HR run the workflow conversationally from Microsoft Teams.
 
-- Microsoft Forms / Power Automate
-- Microsoft Teams
-- Excel via Microsoft Graph
-- Outlook via Microsoft Graph
-- DocuSign
+Surfaces wired in:
 
-It receives onboarding events, maintains an Excel-based onboarding tracker,
-prepares or sends onboarding communications, and lets HR drive the workflow
-from Teams.
+- Microsoft Forms / Power Automate (intake webhook)
+- Microsoft Teams (HR conversation surface + adaptive cards)
+- Microsoft Graph (Excel tracker, staff rosters, Outlook mail)
+- DocuSign (offer letters via JWT Grant + Connect webhooks)
 
-## What It Does
+## What it does
 
 | Trigger | Result |
 |---|---|
-| New-hire Power Automate submission | Adds or checks the employee in the tracker, prepares DocuSign and email steps, posts a Teams card |
-| Teams status query | Returns combined tracker + DocuSign onboarding status |
-| Teams card button or HR command | Sends the welcome email, sends the offer letter, or performs follow-up steps |
-| DocuSign status webhook | Updates tracker state and posts a Teams status update |
-| Background-clearance webhook | Updates tracker state, posts a Teams notification, and sends a confirmation email |
+| New-hire Power Automate submission | Upserts the tracker row, prepares DocuSign and email steps, posts a Teams card |
+| Teams status query | Returns combined tracker + DocuSign status |
+| Teams card button or HR command | Sends the welcome email, sends the offer letter, performs follow-up steps |
+| DocuSign Connect event | Updates tracker state, refreshes the status card, posts a Teams notification |
+| Background-clearance webhook | Updates tracker state, posts a Teams notification, sends the confirmation email |
 
-## Current Architecture
+## Architecture (one paragraph)
 
-The current hosted deployment is one Azure Container App running:
+One `aiohttp` process (deployed as a single Azure Container App) serves the Teams bot endpoint, three webhook endpoints, a background worker that drains an Azure Storage Queue, and a FastMCP subprocess that hosts the agent's tools. State lives in Cosmos DB (workflow + Teams session state) and Excel via Graph (tracker / rosters / separations — the system of record). Detailed walkthrough: [`docs/walkthrough/ARCHITECTURE.md`](docs/walkthrough/ARCHITECTURE.md).
 
-- the aiohttp app
-- the Teams bot endpoint
-- the webhook endpoints
-- the Azure Queue-backed background worker
-- the FastMCP subprocess used by the LangChain agent runner
+## Repo layout
 
-Durable external state is stored in:
+- `src/onboarding_agent/` — application package
+  - `server.py` — aiohttp entrypoint, route wiring, startup
+  - `runtime/` — webhooks, job queue, state store, job handlers
+  - `agent/` — LangChain agent runner + session context
+  - `mcp_server/` — FastMCP tool server (one `tools_*.py` per capability area)
+  - `integrations/` — Graph, Teams, Outlook, DocuSign, adaptive cards, card state
+  - `domain/` — pure rules (workflows, identity, per-workflow policies)
+  - `observability/` — OpenTelemetry setup, PII redaction, evals
+- `infra/terraform/foundation/` — shared platform (RG, ACR, Container Apps env, Cosmos, Storage, Key Vault, managed identity, Azure OpenAI, Bot)
+- `infra/terraform/app/` — Container App + app-specific Cosmos containers + Storage queue
+- `scripts/` — setup wizards, build/push, Teams packaging, roster sync, state reset
+- `templates/` — HTML email templates
+- `config/` — example + local config files (real `staff_rosters.json` is local-only)
+- `teamsappPackage.example/` — commit-safe Teams sideload template
+- `tests/unit/` — unit tests
+- `evals/` — deterministic regression eval suite (runs in CI)
+- `loadtest/` — k6 scaffolds for webhook + Teams load testing
+- `docs/walkthrough/` — deeper architecture + runbook + interactive explorer
 
-- Azure Queue Storage
-- Cosmos DB `state-records`
-- Cosmos DB `conversation-sessions`
-
-At runtime, the main layers are:
-
-- `src/onboarding_agent/server.py`
-  HTTP app entrypoint and startup
-
-- `src/onboarding_agent/runtime/`
-  queueing, webhooks, state store, job handlers
-
-- `src/onboarding_agent/agent/`
-  plain async agent runner and chat history persistence
-
-- `src/onboarding_agent/mcp_server/`
-  FastMCP tool server launched as a subprocess
-
-- `src/onboarding_agent/integrations/`
-  Graph, Teams, Outlook, DocuSign, card state
-
-## Docs
-
-- Repo-wide architecture: [ARCHITECTURE.md](/home/matthewdoyle/projects/onboarding_agent/ARCHITECTURE.md)
-- Deploy, rollback, smoke test, and CI/CD guidance: [RUNBOOK.md](/home/matthewdoyle/projects/onboarding_agent/RUNBOOK.md)
-- Current deployment summary and next steps: [container_app_summary.txt](/home/matthewdoyle/projects/onboarding_agent/container_app_summary.txt)
-
-## Repo Layout
-
-- `src/onboarding_agent/`
-  main application package
-
-- `infra/terraform/container-app/`
-  Azure Container App Terraform
-
-- `scripts/`
-  build, push, deploy, Teams package, roster sync, and cleanup helpers
-
-- `templates/`
-  HTML email templates
-
-- `config/`
-  example and local config files
-
-- `teamsappPackage.example/`
-  commit-safe Teams sideload package template
-
-- `tests/unit/`
-  unit tests for queueing, jobs, and webhooks
-
-## Local Quick Start
+## Local quick start
 
 ```bash
 uv sync
+cp .env.example .env
+# fill in values (see docs/walkthrough/RUNBOOK.md section 2)
+
 uv run python -m onboarding_agent.server
 ```
 
-Before running locally, configure `.env` with:
+Local defaults need no Azure resources:
 
-- Teams / Agents SDK settings
-- Azure tenant / client credentials for Graph
-- Excel workbook IDs
-- Outlook sender mailbox
-- DocuSign JWT settings
-- webhook secret
+- `STATE_STORE_BACKEND=file`
+- `JOB_QUEUE_BACKEND=local`
+- `OBSERVABILITY_ENABLED=false`
 
-For local development, the app can use:
+Lint / test / evals:
 
-- file-backed state
-- local in-process queue
-- stdio MCP subprocess
+```bash
+uv run ruff check src/ tests/
+uv run mypy src/
+uv run pytest tests/unit/ -v
+uv run python -m evals.run
+```
 
-## Hosted Deployment
+## Hosted deployment (high level)
 
-The hosted deployment uses:
+1. Apply `infra/terraform/foundation/` to provision shared platform resources (once per environment).
+2. Build and push the container image: `scripts/build_and_push_container_app.sh <acr-name> <image-tag>`.
+3. Populate `infra/terraform/app/terraform-<env>.tfvars` with the foundation outputs + the new image tag.
+4. `scripts/sync_staff_rosters_to_tfvars.sh infra/terraform/app/terraform-<env>.tfvars` if your roster mapping changed.
+5. `terraform apply` in `infra/terraform/app/`.
+6. Re-package the Teams app if the bot host changed: `scripts/package_teams_app.sh <bot-host> <bot-app-id>`.
+7. Run smoke tests (see runbook section 8).
 
-- Docker image from `Dockerfile`
-- Terraform in `infra/terraform/container-app/`
-- helper scripts in `scripts/`
+Full step-by-step: [`docs/walkthrough/RUNBOOK.md`](docs/walkthrough/RUNBOOK.md).
 
-The main workflow is:
+> ⚠️ `scripts/deploy_container_app.sh` is legacy — it targets a removed `infra/terraform/container-app/` directory. Apply `foundation/` and `app/` with `terraform apply` directly.
 
-1. Fill `infra/terraform/container-app/terraform.tfvars`
-2. Sync staff roster config if needed
-3. Build and push an immutable image tag
-4. Apply Terraform
-5. Update Teams bot endpoint and Teams package if needed
-6. Run smoke tests
+## Teams behavior
 
-See:
+Primary HR surface is Teams (DM the bot, mention it in a channel, or click adaptive-card buttons).
 
-- [RUNBOOK.md](/home/matthewdoyle/projects/onboarding_agent/RUNBOOK.md)
+Cards supported today:
 
-## Key Scripts
+- **New-hire card** — `Send Welcome Email`, `Send Offer Letter`
+- **DocuSign status card** — `Add To Staff Roster` once the envelope reaches `completed`
+- **Offboarding** / **temporary-staff** / **background-clearance** cards — workflow-specific actions
 
-- `scripts/build_and_push_container_app.sh`
-  build and push the Container App image
+Card state is persisted in Cosmos so a button click updates the existing card instead of posting a duplicate.
 
-- `scripts/deploy_container_app.sh`
-  run Terraform plan/apply
+## Adding new agent capabilities
 
-- `scripts/package_teams_app.sh`
-  rebuild the Teams sideload package for the current host
-
-- `scripts/sync_staff_rosters_to_tfvars.sh`
-  sync local sensitive roster config into `terraform.tfvars`
-
-- `scripts/reset_runtime_state.py`
-  clear Cosmos card/conversation state for testing
-
-## Teams Behavior
-
-The primary HR interaction surface is Teams.
-
-Supported patterns:
-
-- DM the bot
-- mention the bot in a channel
-- click Adaptive Card buttons
-
-The main new-hire card supports:
-
-- `Send Welcome Email`
-- `Send Offer Letter`
-
-When DocuSign reaches `completed`, the DocuSign status card supports:
-
-- `Add To Staff Roster`
-
-Card state is persisted so actions can update the original card instead of
-posting duplicate follow-ups.
-
-## Staff Roster Config
-
-Staff rosters are configured as one workbook per location.
-
-Preferred local setup:
-
-- keep `config/staff_rosters.json` local and ignored
-- use `scripts/sync_staff_rosters_to_tfvars.sh` before deploy
-
-Defaults and examples:
-
-- [.env.example](/home/matthewdoyle/projects/onboarding_agent/.env.example)
-- [staff_rosters.example.json](/home/matthewdoyle/projects/onboarding_agent/config/staff_rosters.example.json)
-
-## Adding New Agent Capabilities
-
-The easiest extension point is a new MCP tool in:
-
-- `src/onboarding_agent/mcp_server/tools_*.py`
-
-Example shape:
+The smallest extension point is a new MCP tool:
 
 ```python
+# src/onboarding_agent/mcp_server/tools_<area>.py
 @mcp.tool()
 async def request_it_equipment(employee_email: str, equipment_type: str) -> dict[str, object]:
     ...
 ```
 
-When adding a new capability, prefer:
+The LangChain runner discovers tools from the MCP client at startup — no changes to the runner, runtime, or graph wiring needed. See `ARCHITECTURE.md` section "Extension points" for the four extension surfaces (new tool / new webhook / new external system / new workflow type).
 
-- deterministic orchestration for critical system-of-record writes
-- agent-driven orchestration for judgment-heavy or optional steps
+## Security notes
 
-## Security Notes
+- `.env`, `*.key`, `*.pem`, `terraform.tfvars`, and the real `teamsappPackage/` are local-only and must not be committed.
+- Webhook endpoints accept an `X-Webhook-Secret` header validated against `WEBHOOK_SECRET` (DocuSign Connect is trusted by source and does not use this header).
+- Microsoft Graph uses client credentials with tenant-level admin consent.
+- DocuSign uses JWT Grant with a 2048-bit RSA key pair.
+- Sensitive secrets in production live in Key Vault (`webhook_secret`, `microsoft_app_password`, `azure_client_secret`, `docusign_private_key`) and are surfaced to the Container App as Key Vault-backed secrets.
 
-- `.env`, `*.key`, `*.pem`, `terraform.tfvars`, and the real `teamsappPackage/`
-  are local-only and must not be committed
-- webhook endpoints are protected by `WEBHOOK_SECRET`
-- Microsoft Graph uses client credentials with tenant-level consent
-- DocuSign uses JWT Grant
-- sensitive staff roster mappings should remain outside git
+## Documentation
+
+- Deeper architecture walkthrough: [`docs/walkthrough/ARCHITECTURE.md`](docs/walkthrough/ARCHITECTURE.md)
+- Operational runbook (setup → deploy → observe → rotate → roll back): [`docs/walkthrough/RUNBOOK.md`](docs/walkthrough/RUNBOOK.md)
+- Interactive module explorer: `docs/walkthrough/react-architecture-explorer/`

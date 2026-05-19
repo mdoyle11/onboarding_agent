@@ -1,0 +1,13 @@
+{
+  "name": "onboarding-agent-architecture-explorer",
+  "private": true,
+  "version": "0.1.0",
+  "sideEffects": false,
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "dependencies": {
+    "mermaid": "^10.9.1"
+  }
+}

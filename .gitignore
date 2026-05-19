@@ -25,10 +25,6 @@ venv/
 htmlcov/
 .coverage
 
-# Runtime state (keep directory, ignore contents)
-data/*
-!data/.gitkeep
-
 # Dev logs / scratch
 devTools/
 
@@ -39,15 +35,9 @@ devTools/
 .terraform.lock.hcl
 *.tfvars
 
-# Local-only Teams package and planning docs
+# Local-only artifacts
 teamsappPackage/
-ARCHITECTURE.md
-RUNBOOK.md
-docs/
 loadtest/
-STRESS_TEST_PLAN.md
-STRESS_TEST_RESULTS_2026-04-08.md
-EDGE_CASE_TEST_CONSIDERATIONS.md
 SECURITY_RBAC_PLAN.md
 .claude/
 .codex

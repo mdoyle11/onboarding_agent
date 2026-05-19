@@ -1,0 +1,2928 @@
+{
+  "metadata": {
+    "project": "Onboarding Agent",
+    "source": "data/architectureGraphs.source.json",
+    "formatVersion": 1,
+    "generatedAt": "2026-05-05T13:35:38.332Z"
+  },
+  "graphs": {
+    "overview": {
+      "title": "System Overview",
+      "summary": "The complete application at the service-role level. Click any major application node to drill into the function graph for that area.",
+      "hint": "Click: Startup, Webhooks, Queue, Jobs, Teams Bot, Session Memory, Agent + MCP, MCP Tools, Card Actions, Integrations, State, or Observability.",
+      "drillNodes": {
+        "startup": "startup",
+        "webhooks": "webhooks",
+        "queue": "queue",
+        "jobs": "jobs",
+        "teamsBot": "teams",
+        "memory": "memory",
+        "agentMcp": "agent",
+        "mcpTools": "mcp",
+        "cardActions": "cards",
+        "integrations": "integrations",
+        "state": "state",
+        "observability": "observability"
+      },
+      "explanation": [
+        "The hosted deployment is one Azure Container App process plus a FastMCP subprocess. Webhooks and Teams share the same Python server.",
+        "Webhook work is accepted quickly and handed to a queue. Teams natural language goes through the agent and MCP tools. Card buttons and webhook jobs use deterministic Python flows.",
+        "Durable state lives in Cosmos DB or local JSON, jobs live in Azure Storage Queue, and external business operations go through Microsoft Graph, DocuSign, Teams, Outlook, and optional LLM providers."
+      ],
+      "code": "\nflowchart TD\nstartup[\"Startup\"]\nwebhooks[\"Webhook Ingress\"]\nqueue[\"Job Queue\"]\njobs[\"Deterministic Jobs\"]\nteamsBot[\"Teams Bot\"]\nmemory[\"Session Memory\"]\nagentMcp[\"Agent + MCP\"]\nmcpTools[\"MCP Tools\"]\ncardActions[\"Card Actions\"]\nintegrations[\"Integration Clients\"]\nstate[\"State Stores\"]\nobservability[\"Observability\"]\n\nextForms[\"Power Automate\"]\nextTeams[\"Microsoft Teams\"]\nextDocu[\"DocuSign Connect\"]\nextGraph[\"Microsoft Graph\"]\nextDocusignApi[\"DocuSign API\"]\nextLlm[\"LLM Provider\"]\nextTelemetry[\"Azure Monitor / Phoenix\"]\n\nstartup -- \"initializes\" --> state\nstartup -- \"starts worker\" --> queue\nstartup -- \"loads tools\" --> agentMcp\nstartup -- \"registers handlers\" --> teamsBot\nstartup -- \"configures\" --> observability\n\nextForms -- \"JSON webhooks\" --> webhooks\nextDocu -- \"envelope webhooks\" --> webhooks\nwebhooks -- \"job_type + payload\" --> queue\nqueue -- \"QueueJob\" --> jobs\njobs -- \"deterministic workflow args\" --> integrations\n\nextTeams -- \"activity POST /api/messages\" --> teamsBot\nteamsBot -- \"conversation refs / history / context\" --> memory\nteamsBot -- \"natural-language messages\" --> agentMcp\nteamsBot -- \"Adaptive Card submit payload\" --> cardActions\ncardActions -- \"explicit action args\" --> integrations\n\nagentMcp -- \"tool call args over stdio\" --> mcpTools\nagentMcp -- \"messages + tool schemas\" --> extLlm\nmcpTools -- \"client method args\" --> integrations\n\nintegrations -- \"Excel/mail/Teams Graph requests\" --> extGraph\nintegrations -- \"envelope CRUD/status\" --> extDocusignApi\nintegrations -- \"card/session/conversation state\" --> state\nobservability -- \"spans/logs\" --> extTelemetry\n\n",
+      "edges": [
+        [
+          "Startup -> State Stores",
+          "Creates `store_mod.store` and `store_mod.session_store`."
+        ],
+        [
+          "Startup -> Agent + MCP",
+          "Starts the MCP subprocess and loads tool schemas."
+        ],
+        [
+          "Webhooks -> Queue",
+          "Passes `job_type` plus parsed webhook payload."
+        ],
+        [
+          "Queue -> Deterministic Jobs",
+          "Passes `QueueJob(job_type, payload)` to `process_job()`."
+        ],
+        [
+          "Teams Bot -> Agent + MCP",
+          "Passes chat history, current user message, and structured session context."
+        ],
+        [
+          "Agent + MCP -> MCP Tools",
+          "Passes LLM-generated tool call names and args over stdio."
+        ],
+        [
+          "Card Actions -> Integrations",
+          "Passes explicit button/form action args without an LLM."
+        ],
+        [
+          "Integrations -> External Services",
+          "Calls Graph, DocuSign, Teams proactive APIs, Outlook, state stores, and telemetry exporters."
+        ]
+      ]
+    },
+    "startup": {
+      "title": "Startup Function Graph",
+      "summary": "Cold start wiring from the container entrypoint to state stores, Teams handlers, the MCP subprocess, and the queue worker.",
+      "hint": "This graph runs once per process start.",
+      "parentKey": "overview",
+      "reconcileFrom": "queueStart",
+      "drillNodes": {
+        "main": "serverFile",
+        "obs": "observabilityFile",
+        "app": "serverFile",
+        "setupTeams": "serverFile",
+        "startup": "serverFile",
+        "stores": "stateFile",
+        "runnerInit": "runnerFile",
+        "mcpTools": "runnerFile",
+        "mcpMain": "mcpServerFile",
+        "registerTools": "mcpServerFile",
+        "queueFactory": "jobQueueFile",
+        "queueStart": "jobQueueFile"
+      },
+      "explanation": [
+        "`server.py::main()` configures observability, builds the aiohttp app, and starts the HTTP server.",
+        "`create_app()` registers webhook routes and Teams routes. Startup callbacks initialize stores, the agent, and the queue worker.",
+        "`runner.initialize()` starts the MCP subprocess with inherited environment variables and loads all tool schemas into LangChain."
+      ],
+      "code": "\nflowchart TD\nmain[\"server.py::main()\"]\nobs[\"configure_observability(settings)\"]\napp[\"create_app()\"]\nsetupTeams[\"_setup_teams(app)\"]\nsdkConfig[\"load_agents_sdk_config()\"]\nhandlers[\"register_handlers(agent_app)\"]\nstartup[\"_on_startup(app)\"]\nstores[\"create_state_store(...)\"]\nrunnerInit[\"runner.initialize()\"]\nmcpTools[\"MultiServerMCPClient.get_tools()\"]\nmcpMain[\"mcp_server.server::main()\"]\nregisterTools[\"tools_*.register(mcp)\"]\nqueueFactory[\"create_job_queue(..., handler=process_job)\"]\nqueueStart[\"JobQueue.start()\"]\n\nmain -- \"settings\" --> obs\nmain -- \"build app\" --> app\napp -- \"app\" --> setupTeams\nsetupTeams -- \"settings -> SDK env\" --> sdkConfig\nsetupTeams -- \"AgentApplication\" --> handlers\napp -- \"startup hook\" --> startup\nstartup -- \"state backend config\" --> stores\nstartup -- \"initialize agent runtime\" --> runnerInit\nrunnerInit -- \"stdio command config\" --> mcpTools\nmcpTools -- \"python -m onboarding_agent.mcp_server.server\" --> mcpMain\nmcpMain -- \"FastMCP instance\" --> registerTools\nstartup -- \"queue settings + handler\" --> queueFactory\nstartup -- \"start worker/poller\" --> queueStart\n",
+      "edges": [
+        [
+          "main() -> configure_observability()",
+          "Settings decide Azure Monitor, Phoenix OTLP, LangChain instrumentation, and log correlation."
+        ],
+        [
+          "create_app() -> _setup_teams()",
+          "Creates the Microsoft 365 Agents SDK adapter/application and registers `/api/messages`."
+        ],
+        [
+          "_on_startup() -> create_state_store()",
+          "Creates global state stores for card/conversation/session data."
+        ],
+        [
+          "_on_startup() -> runner.initialize()",
+          "Initializes agent tools before Teams messages can invoke the LLM path."
+        ],
+        [
+          "runner.initialize() -> MCP subprocess",
+          "Spawns `python -m onboarding_agent.mcp_server.server` over stdio."
+        ],
+        [
+          "_on_startup() -> create_job_queue()",
+          "Passes `process_job` as the queue handler."
+        ],
+        [
+          "JobQueue.start()",
+          "Local backend becomes ready; Azure backend creates/reuses queue and starts polling."
+        ]
+      ]
+    },
+    "webhooks": {
+      "title": "Webhook Ingress Function Graph",
+      "summary": "Request-time parsing and durable handoff. Webhook handlers enqueue jobs and return quickly.",
+      "hint": "Webhook handlers do not perform expensive tracker, DocuSign, or email work inline.",
+      "parentKey": "overview",
+      "reconcileFrom": "queueStore",
+      "drillNodes": {
+        "newHandler": "webhooksFile",
+        "bgHandler": "webhooksFile",
+        "dsHandler": "webhooksFile",
+        "newEnqueue": "jobQueueFile",
+        "bgEnqueue": "jobQueueFile",
+        "dsEnqueue": "jobQueueFile"
+      },
+      "explanation": [
+        "Power Automate webhooks validate `X-Webhook-Secret`, parse JSON, and enqueue a queue job.",
+        "DocuSign webhooks parse XML or JSON envelope status data and enqueue a DocuSign job.",
+        "The accepted HTTP response only means the job was accepted by the queue path."
+      ],
+      "code": "\nflowchart TD\npowerNew[\"Power Automate: HR submission\"]\npowerBg[\"Power Automate: background clearance\"]\ndocuConnect[\"DocuSign Connect\"]\n\nsubgraph NewHireLane[\"New-hire / HR-submission route\"]\n  direction TB\n  newRoute[\"POST /webhook/new-hire\"]\n  newHandler[\"handle_new_hire_webhook(request)\"]\n  newSecret[\"is_valid_webhook_secret(...)\"]\n  newParse[\"parse_json_payload(body)\"]\n  newQueue[\"_job_queue(request)\"]\n  newEnqueue[\"JobQueue.enqueue(JOB_NEW_HIRE, payload)\"]\n  newOk[\"_accepted_response()\"]\nend\n\nsubgraph BackgroundLane[\"Background-clearance route\"]\n  direction TB\n  bgRoute[\"POST /webhook/background-clearance\"]\n  bgHandler[\"handle_background_clearance_webhook(request)\"]\n  bgSecret[\"is_valid_webhook_secret(...)\"]\n  bgParse[\"parse_json_payload(body)\"]\n  bgNormalize[\"payload_value(...) normalizes key fields\"]\n  bgEnqueue[\"JobQueue.enqueue(JOB_BACKGROUND_CLEARANCE, payload)\"]\n  bgOk[\"_accepted_response()\"]\nend\n\nsubgraph DocusignLane[\"DocuSign route\"]\n  direction TB\n  dsRoute[\"POST /webhook/docusign\"]\n  dsHandler[\"handle_docusign_webhook(request)\"]\n  dsParse[\"parse_docusign_payload(body, content_type)\"]\n  dsXml[\"_parse_docusign_xml(body)\"]\n  dsJson[\"_parse_docusign_json(payload)\"]\n  dsEnqueue[\"JobQueue.enqueue(JOB_DOCUSIGN, parsed)\"]\n  dsOk[\"_accepted_response()\"]\nend\n\nqueueStore[\"Durable queue message\"]\n\npowerNew -- \"JSON + X-Webhook-Secret\" --> newRoute\nnewRoute --> newHandler\nnewHandler -- \"shared secret\" --> newSecret\nnewSecret -- \"valid\" --> newParse\nnewParse -- \"dict payload\" --> newQueue\nnewQueue -- \"queue instance\" --> newEnqueue\nnewEnqueue -- \"job_type + payload\" --> queueStore\nnewEnqueue --> newOk\n\npowerBg -- \"JSON + X-Webhook-Secret\" --> bgRoute\nbgRoute --> bgHandler\nbgHandler -- \"shared secret\" --> bgSecret\nbgSecret -- \"valid\" --> bgParse\nbgParse -- \"dict payload\" --> bgNormalize\nbgNormalize -- \"canonical email/name/location/title/status\" --> bgEnqueue\nbgEnqueue -- \"job_type + payload\" --> queueStore\nbgEnqueue --> bgOk\n\ndocuConnect -- \"XML or JSON envelope event\" --> dsRoute\ndsRoute --> dsHandler\ndsHandler -- \"raw body + content type\" --> dsParse\ndsParse -- \"XML\" --> dsXml\ndsParse -- \"JSON\" --> dsJson\ndsXml -- \"envelope/status/custom fields\" --> dsEnqueue\ndsJson -- \"envelope/status/custom fields\" --> dsEnqueue\ndsEnqueue -- \"job_type + parsed payload\" --> queueStore\ndsEnqueue --> dsOk\n",
+      "edges": [
+        [
+          "handle_new_hire_webhook() -> JobQueue.enqueue()",
+          "`JOB_NEW_HIRE` and original Power Automate payload."
+        ],
+        [
+          "handle_background_clearance_webhook() -> payload_value()",
+          "Normalizes employee email/name/location/title/status fields."
+        ],
+        [
+          "handle_background_clearance_webhook() -> JobQueue.enqueue()",
+          "`JOB_BACKGROUND_CLEARANCE` and normalized payload."
+        ],
+        [
+          "handle_docusign_webhook() -> parse_docusign_payload()",
+          "Returns envelope ID, status, employee email, location, job title, status change, submission ID."
+        ],
+        [
+          "handle_docusign_webhook() -> JobQueue.enqueue()",
+          "`JOB_DOCUSIGN` and parsed envelope payload."
+        ]
+      ]
+    },
+    "queue": {
+      "title": "Queue Function Graph",
+      "summary": "Local and Azure queue backends convert webhook jobs into calls to `process_job()`.",
+      "hint": "Azure queue messages are deleted only after successful processing.",
+      "parentKey": "overview",
+      "reconcileFrom": "process",
+      "drillNodes": {
+        "factory": "jobQueueFile",
+        "local": "jobQueueFile",
+        "azure": "jobQueueFile",
+        "process": "jobsFile"
+      },
+      "explanation": [
+        "`create_job_queue()` chooses local in-process tasks for development or Azure Storage Queue for production.",
+        "The Azure worker polls one message at a time, deserializes the JSON job, calls `process_job()`, and deletes the message on success.",
+        "Malformed or over-dequeued poison messages are deleted."
+      ],
+      "code": "\nflowchart TD\nfactory[\"create_job_queue(backend, handler, **kwargs)\"]\nlocal[\"LocalJobQueue(handler)\"]\nazure[\"AzureStorageJobQueue(handler, queue settings)\"]\nlocalEnq[\"LocalJobQueue.enqueue(job_type, payload)\"]\nlocalRun[\"LocalJobQueue._run(job)\"]\nazureStart[\"AzureStorageJobQueue.start()\"]\nworker[\"AzureStorageJobQueue._run_worker()\"]\nreceive[\"_receive_message()\"]\nhandle[\"_handle_message(message)\"]\nprocess[\"process_job(job)\"]\nstorage[\"Azure Storage Queue\"]\n\nfactory -- \"backend=local\" --> local\nfactory -- \"backend=azure\" --> azure\nlocalEnq -- \"QueueJob dataclass\" --> localRun\nlocalRun -- \"QueueJob\" --> process\nazureStart -- \"create queue if missing\" --> storage\nazureStart -- \"asyncio worker task\" --> worker\nworker -- \"receive_messages()\" --> receive\nreceive -- \"message or None\" --> handle\nhandle -- \"json.loads(message.content)\" --> process\nhandle -- \"delete on success / poison\" --> storage\n",
+      "edges": [
+        [
+          "create_job_queue() -> LocalJobQueue",
+          "Local dev backend. `enqueue()` creates an `asyncio.Task`."
+        ],
+        [
+          "create_job_queue() -> AzureStorageJobQueue",
+          "Production backend. Uses account URL with managed identity or connection string."
+        ],
+        [
+          "LocalJobQueue._run() -> process_job()",
+          "Passes `QueueJob(job_type, payload)`."
+        ],
+        [
+          "AzureStorageJobQueue.enqueue() -> Azure Storage Queue",
+          "Writes JSON `{ job_type, payload }`."
+        ],
+        [
+          "_handle_message() -> process_job()",
+          "Passes parsed queue job."
+        ],
+        [
+          "_handle_message() -> Azure Storage Queue",
+          "Deletes message after success or poison detection."
+        ]
+      ]
+    },
+    "jobs": {
+      "title": "Deterministic Job Function Graph",
+      "summary": "Webhook jobs dispatch into three deterministic workflow families. Click a branch to drill into the detailed job graph.",
+      "hint": "Click HR Submission Job, DocuSign Status Job, or Background-Clearance Job for the lower-level function flow.",
+      "parentKey": "overview",
+      "reconcileFrom": "state",
+      "drillNodes": {
+        "dispatch": "jobsFile",
+        "hrJob": "hrJob",
+        "docuJob": "docusignJob",
+        "bgJob": "backgroundJob"
+      },
+      "explanation": [
+        "`process_job()` dispatches by job type.",
+        "Each branch is deterministic and does not call the LLM.",
+        "The detailed branch graphs show the tracker, email, DocuSign, Teams, and card-state calls."
+      ],
+      "code": "\nflowchart TD\njob[\"QueueJob(job_type, payload)\"]\ndispatch[\"process_job(job)\"]\nhrJob[\"HR Submission Job\"]\ndocuJob[\"DocuSign Status Job\"]\nbgJob[\"Background-Clearance Job\"]\ntracker[\"Tracker / roster workbooks\"]\nsideEffects[\"Email / DocuSign side effects\"]\ncards[\"Adaptive Card builder\"]\nteams[\"Teams post or card update\"]\nstate[\"Card state + thread context\"]\n\njob -- \"job_type + payload\" --> dispatch\ndispatch -- \"JOB_NEW_HIRE\" --> hrJob\ndispatch -- \"JOB_DOCUSIGN\" --> docuJob\ndispatch -- \"JOB_BACKGROUND_CLEARANCE\" --> bgJob\n\nhrJob -- \"ensure tracker row + policy stages\" --> tracker\ndocuJob -- \"sent/signed stages + roster check\" --> tracker\nbgJob -- \"background stage update\" --> tracker\nhrJob -- \"draft welcome email when needed\" --> sideEffects\ndocuJob -- \"recover envelope identity if needed\" --> sideEffects\nbgJob -- \"confirmation email\" --> sideEffects\nhrJob -- \"workflow notification card\" --> cards\ndocuJob -- \"DocuSign status card\" --> cards\nbgJob -- \"background clearance card\" --> cards\ncards -- \"Adaptive Card dict + session context\" --> teams\nteams -- \"message_id\" --> state\n",
+      "edges": [
+        [
+          "process_job() -> process_new_hire_job()",
+          "HR submission payload."
+        ],
+        [
+          "process_job() -> process_docusign_job()",
+          "Envelope ID/status and identity fields."
+        ],
+        [
+          "process_job() -> process_background_clearance_job()",
+          "Background form payload."
+        ],
+        [
+          "HR Submission Job -> downstream systems",
+          "Ensures tracker row, applies workflow policy, drafts/sends allowed email actions, posts Teams workflow card."
+        ],
+        [
+          "DocuSign Status Job -> downstream systems",
+          "Updates sent/signed tracker stages, checks roster state, posts/updates DocuSign status card."
+        ],
+        [
+          "Background-Clearance Job -> downstream systems",
+          "Updates background stage, sends confirmation email, posts/updates background card."
+        ]
+      ]
+    },
+    "hrJob": {
+      "title": "HR Submission Job Detail",
+      "summary": "Detailed deterministic flow for Power Automate HR submissions.",
+      "hint": "The workflow type controls which handler runs and which Teams card actions are exposed.",
+      "parentKey": "jobs",
+      "reconcileFrom": "save",
+      "drillNodes": {
+        "entry": "jobsFile",
+        "find": "trackerFile",
+        "add": "trackerFile",
+        "updateStage": "trackerFile",
+        "emailDraft": "emailToolsFile",
+        "send": "teamsProactiveFile",
+        "save": "cardStateFile"
+      },
+      "explanation": [
+        "`process_new_hire_job()` is the queue consumer for all HR submission workflows, not just literal new hires.",
+        "It normalizes `statusChange`, routes to the right workflow handler, ensures the tracker row exists, applies policy stage updates, then posts or updates the Teams workflow card.",
+        "The same common field extraction and composite identity checks are used across new-hire, onboarding, offboarding, and temporary-status workflows."
+      ],
+      "code": "\nflowchart TD\nentry[\"process_new_hire_job(payload)\"]\nnormalize[\"normalize_workflow_type(statusChange)\"]\nroute{\"workflow type\"}\n\nnewHire[\"_process_new_hire_submission(payload)\"]\nonboard[\"_process_onboarding_submission(payload, workflow_type)\"]\noffboard[\"_process_offboarding_submission(payload, workflow_type)\"]\ntemporary[\"_process_temporary_submission(payload, workflow_type)\"]\n\nfields[\"_new_hire_fields(payload)\"]\nidentity[\"_require_composite_identity(fields, label)\"]\nensure[\"_ensure_tracker_record(tracker_client, fields)\"]\nfind[\"TrackerClient.find_employee_in_tracker(...)\"]\nadd[\"TrackerClient.add_employee_to_tracker(**fields)\"]\n\npolicy[\"workflow policy functions\"]\nupdateStage[\"TrackerClient.update_stage(...)\"]\nemailDraft[\"draft_onboarding_email_for_employee(...)\"]\ncard[\"new_hire_card(...) or separation_card(...)\"]\nsend[\"TeamsMessenger.send_channel_notification(...) / update_proactive_card(...)\"]\nsave[\"save_new_hire_card(...) or save_separation_card(...)\"]\n\nentry -- \"statusChange\" --> normalize\nnormalize -- \"canonical workflow type\" --> route\nroute -- \"New Hire\" --> newHire\nroute -- \"Rehire / Promotion / Transfer / Second Position\" --> onboard\nroute -- \"Separation / Transfer Out\" --> offboard\nroute -- \"Leave Start / Leave End\" --> temporary\n\nnewHire --> fields\nonboard --> fields\noffboard --> fields\ntemporary --> fields\nfields -- \"canonical employee fields\" --> identity\nidentity -- \"email + location + job title present\" --> ensure\nensure -- \"lookup first\" --> find\nfind -- \"not found\" --> add\nfind -- \"found or added summary\" --> policy\nadd -- \"row_id\" --> policy\npolicy -- \"excluded stages / leave target / action flags\" --> updateStage\nupdateStage -- \"policy result summary\" --> card\nnewHire -- \"welcome email draft\" --> emailDraft\nemailDraft -- \"draft result summary\" --> card\ncard -- \"Adaptive Card dict + session context\" --> send\nsend -- \"message_id\" --> save\n",
+      "edges": [
+        [
+          "process_new_hire_job() -> normalize_workflow_type()",
+          "Raw `statusChange`; returns canonical workflow type."
+        ],
+        [
+          "workflow handler -> _new_hire_fields()",
+          "Extracts canonical employee fields from the Power Automate payload."
+        ],
+        [
+          "workflow handler -> _require_composite_identity()",
+          "Requires email, location, and job title before tracker writes."
+        ],
+        [
+          "_ensure_tracker_record() -> TrackerClient.find_employee_in_tracker()",
+          "Looks up row by email/location/title/status/submission ID."
+        ],
+        [
+          "_ensure_tracker_record() -> TrackerClient.add_employee_to_tracker()",
+          "Adds row when no matching tracker row exists."
+        ],
+        [
+          "policy functions -> TrackerClient.update_stage()",
+          "Marks workflow-specific stages as `N/A` or updates roster workflow stage state."
+        ],
+        [
+          "card builder -> TeamsMessenger",
+          "Posts or updates a workflow card and stores the returned Teams message ID."
+        ]
+      ]
+    },
+    "docusignJob": {
+      "title": "DocuSign Status Job Detail",
+      "summary": "Detailed deterministic flow for DocuSign Connect envelope status callbacks.",
+      "hint": "This job reconciles DocuSign status into the tracker and Teams.",
+      "parentKey": "jobs",
+      "reconcileFrom": "save",
+      "drillNodes": {
+        "entry": "jobsFile",
+        "lookup": "docusignClientFile",
+        "sent": "trackerFile",
+        "completed": "trackerFile",
+        "trackerRecord": "trackerFile",
+        "roster": "staffRosterFile",
+        "send": "teamsProactiveFile",
+        "save": "cardStateFile"
+      },
+      "explanation": [
+        "The webhook parser extracts envelope ID, status, and identity custom fields before this job runs.",
+        "If the callback does not include employee email, the job asks DocuSign for envelope recipients.",
+        "Sent and completed envelope statuses update tracker stages and produce or update a DocuSign status card."
+      ],
+      "code": "\nflowchart TD\nentry[\"process_docusign_job(payload)\"]\nvalidate[\"validate envelope_id and status\"]\nhasEmail{\"employee email present?\"}\nlookup[\"DocuSignClient.get_envelope_status(envelope_id)\"]\nstatus{\"status\"}\nsent[\"TrackerClient.update_stage('Sent Offer Letter')\"]\ncompleted[\"TrackerClient.update_stage('Offer Letter Signed')\"]\ntrackerRecord[\"TrackerClient.find_employee_in_tracker(...)\"]\nroster[\"StaffRosterClient.find_employee_in_staff_roster(...)\"]\ncard[\"docusign_status_card(...)\"]\nexisting[\"get_docusign_status_card(identity, submission_id)\"]\nsend[\"TeamsMessenger / update_proactive_card\"]\nsave[\"save_docusign_status_card(...)\"]\n\nentry -- \"envelope/status/custom fields\" --> validate\nvalidate --> hasEmail\nhasEmail -- \"no\" --> lookup\nlookup -- \"recipient email\" --> status\nhasEmail -- \"yes\" --> status\nstatus -- \"sent\" --> sent\nstatus -- \"completed\" --> completed\ncompleted -- \"employee identity\" --> trackerRecord\ntrackerRecord -- \"name/title/location\" --> roster\nsent -- \"stage result\" --> card\ncompleted -- \"stage + roster result\" --> card\nroster -- \"roster_added + job_category\" --> card\ncard -- \"identity/submission_id\" --> existing\nexisting -- \"message_id or none\" --> send\nsend -- \"message_id\" --> save\n",
+      "edges": [
+        [
+          "process_docusign_job() -> DocuSignClient.get_envelope_status()",
+          "Only when webhook payload lacks employee email."
+        ],
+        [
+          "status=sent -> TrackerClient.update_stage()",
+          "Marks `Sent Offer Letter`."
+        ],
+        [
+          "status=completed -> TrackerClient.update_stage()",
+          "Marks `Offer Letter Signed`."
+        ],
+        [
+          "completed -> TrackerClient.find_employee_in_tracker()",
+          "Finds tracker row for display and roster lookup."
+        ],
+        [
+          "completed -> StaffRosterClient.find_employee_in_staff_roster()",
+          "Determines whether the signed employee is already in the roster."
+        ],
+        [
+          "docusign_status_card() -> Teams",
+          "Posts or updates the DocuSign status card."
+        ],
+        [
+          "Teams message_id -> save_docusign_status_card()",
+          "Persists card state for later updates/actions."
+        ]
+      ]
+    },
+    "backgroundJob": {
+      "title": "Background-Clearance Job Detail",
+      "summary": "Detailed deterministic flow for background-clearance webhook jobs.",
+      "hint": "This job updates one tracker stage, sends a confirmation email, and posts/updates one Teams card.",
+      "parentKey": "jobs",
+      "reconcileFrom": "save",
+      "drillNodes": {
+        "entry": "jobsFile",
+        "find": "trackerFile",
+        "stage": "trackerFile",
+        "email": "emailToolsFile",
+        "send": "teamsProactiveFile",
+        "save": "cardStateFile"
+      },
+      "explanation": [
+        "The webhook normalizes the employee identity fields before enqueueing this job.",
+        "The job finds the tracker row, marks `Background Submission`, sends a confirmation email, and notifies Teams.",
+        "Existing card state is checked so the notification can update an existing card instead of duplicating it."
+      ],
+      "code": "\nflowchart TD\nentry[\"process_background_clearance_job(payload)\"]\nextract[\"payload_value(...) for email/name\"]\nrequire{\"employee email present?\"}\nfind[\"TrackerClient.find_employee_in_tracker(...)\"]\nstage[\"TrackerClient.update_stage('Background Submission')\"]\nemail[\"send_background_clearance_confirmation_email(...)\"]\ncard[\"background_clearance_card(...)\"]\nexisting[\"get_background_clearance_card(identity)\"]\nsend[\"TeamsMessenger / update_proactive_card\"]\nsave[\"save_background_clearance_card(...)\"]\n\nentry -- \"payload\" --> extract\nextract -- \"employee email/name/location/title/status\" --> require\nrequire -- \"yes\" --> find\nfind -- \"tracker record + resolved name\" --> stage\nstage -- \"stage result summary\" --> email\nemail -- \"email result\" --> card\nstage -- \"stage result summary\" --> card\ncard -- \"identity\" --> existing\nexisting -- \"message_id or none\" --> send\nsend -- \"message_id\" --> save\n",
+      "edges": [
+        [
+          "process_background_clearance_job() -> payload_value()",
+          "Extracts employee email and name with alternate field names."
+        ],
+        [
+          "process_background_clearance_job() -> TrackerClient.find_employee_in_tracker()",
+          "Finds existing tracker row and resolved employee name."
+        ],
+        [
+          "process_background_clearance_job() -> TrackerClient.update_stage()",
+          "Marks `Background Submission`."
+        ],
+        [
+          "process_background_clearance_job() -> send_background_clearance_confirmation_email()",
+          "Sends confirmation email through Outlook/Graph."
+        ],
+        [
+          "background_clearance_card() -> Teams",
+          "Posts or updates the Teams notification card."
+        ],
+        [
+          "Teams message_id -> save_background_clearance_card()",
+          "Persists card state for future updates."
+        ]
+      ]
+    },
+    "teams": {
+      "title": "Teams Message Function Graph",
+      "summary": "Teams activities route to conversation reference storage, card actions, slash commands, or the LLM agent.",
+      "hint": "Channel messages are ignored unless the bot is mentioned.",
+      "parentKey": "overview",
+      "reconcileFrom": "send",
+      "drillNodes": {
+        "http": "serverFile",
+        "message": "teamsBotFile",
+        "saveRef": "teamsProactiveFile",
+        "extractAction": "cardActionsFile",
+        "session": "teamsMemoryFile",
+        "merge": "teamsMemoryFile",
+        "history": "teamsMemoryFile",
+        "agent": "runnerFile",
+        "saveHistory": "teamsMemoryFile",
+        "derive": "runnerFile",
+        "send": "teamsBotFile"
+      },
+      "explanation": [
+        "All useful Teams activities store a conversation reference so future proactive card posts can continue the conversation.",
+        "Adaptive Card submit payloads are routed to deterministic handlers.",
+        "Natural-language text loads session memory, runs the agent, saves updated history/context, refreshes cards when needed, and replies."
+      ],
+      "code": "\nflowchart TD\nhttp[\"server.py::handle_messages(request)\"]\nadapter[\"CloudAdapter.process(request, agent_app)\"]\nadded[\"on_members_added(context, state)\"]\ninstall[\"on_installation_update(context, state)\"]\nmessage[\"on_message(context, state)\"]\nsaveRef[\"save_conversation_reference(activity)\"]\nextractAction[\"extract_card_action(activity)\"]\ncardRouter[\"card action handlers\"]\nmention[\"is_mentioned(activity)\"]\nstrip[\"strip_mention(activity)\"]\nslash[\"_expand_slash_command(user_text)\"]\nclearCmd[\"_parse_clear_to_start_command(user_text)\"]\nclearCard[\"_send_clear_to_start_card_from_command(context,args)\"]\nsession[\"get_or_create_session_key(activity)\"]\npatch[\"extract_context_patch_from_text(user_text)\"]\nmerge[\"merge_session_context(session_key, patch)\"]\nhistory[\"load_chat_history(session_key)\"]\nagent[\"run_agent(messages, trigger_source, session_context)\"]\nsaveHistory[\"save_chat_history(session_key, result_messages)\"]\nderive[\"derive_session_context(result_messages, existing)\"]\neffects[\"_apply_card_side_effects_from_tool_results(result_messages)\"]\nrefresh[\"_refresh_cards_from_session_context(updated_context)\"]\nreply[\"extract_reply(result_messages)\"]\nsend[\"TurnContext.send_activity(reply_text)\"]\n\nhttp -- \"HTTP request\" --> adapter\nadapter -- \"conversation update\" --> added\nadapter -- \"installationUpdate\" --> install\nadapter -- \"message activity\" --> message\nadded -- \"activity\" --> saveRef\ninstall -- \"activity\" --> saveRef\nmessage -- \"activity\" --> saveRef\nmessage -- \"activity.value\" --> extractAction\nextractAction -- \"card_action dict\" --> cardRouter\nmessage -- \"channel/group activity\" --> mention\nmention -- \"true\" --> strip\nstrip -- \"user text\" --> clearCmd\nmessage -- \"DM text\" --> clearCmd\nclearCmd -- \"email + optional submission_id\" --> clearCard\nclearCmd -- \"not clear-to-start\" --> slash\nslash -- \"expanded NL text\" --> session\nsession -- \"session_key\" --> patch\npatch -- \"email/intent hints\" --> merge\nsession -- \"session_key\" --> history\nhistory -- \"BaseMessage history\" --> agent\nmerge -- \"session_context\" --> agent\nagent -- \"result_messages\" --> saveHistory\nagent -- \"tool results\" --> derive\nderive -- \"context patch\" --> merge\nagent -- \"tool result names\" --> effects\neffects -- \"employee context\" --> refresh\nagent -- \"AIMessage content\" --> reply\nreply -- \"reply_text\" --> send\n",
+      "edges": [
+        [
+          "handle_messages() -> CloudAdapter.process()",
+          "Teams HTTP request plus registered `AgentApplication`."
+        ],
+        [
+          "on_message() -> save_conversation_reference()",
+          "Stores Teams continuation reference."
+        ],
+        [
+          "on_message() -> extract_card_action()",
+          "Reads `activity.value`; returns card action dict or `None`."
+        ],
+        [
+          "on_message() -> get_or_create_session_key()",
+          "Uses Teams conversation/thread/user IDs."
+        ],
+        [
+          "on_message() -> run_agent()",
+          "Passes history, current `HumanMessage`, trigger source, and session context."
+        ],
+        [
+          "on_message() -> save_chat_history()",
+          "Persists bounded human/AI history after agent run."
+        ],
+        [
+          "on_message() -> derive_session_context()",
+          "Extracts reusable context from tool results."
+        ],
+        [
+          "on_message() -> TurnContext.send_activity()",
+          "Sends final reply text."
+        ]
+      ]
+    },
+    "memory": {
+      "title": "Session Memory Function Graph",
+      "summary": "Conversation history and compact session context connect proactive card threads to later natural-language replies.",
+      "hint": "This is backed by `store_mod.session_store`, which is Cosmos in production or files locally.",
+      "parentKey": "overview",
+      "reconcileFrom": "store",
+      "drillNodes": {
+        "get": "teamsMemoryFile",
+        "seed": "teamsMemoryFile",
+        "merge": "teamsMemoryFile",
+        "loadHist": "teamsMemoryFile",
+        "saveHist": "teamsMemoryFile",
+        "store": "stateFile"
+      },
+      "explanation": [
+        "Session keys differ for DMs, channels, and channel threads.",
+        "Proactive card posts seed thread context so replies in that thread inherit employee and submission identity.",
+        "Chat history is bounded; structured session context carries the high-value fields."
+      ],
+      "code": "\nflowchart TD\nget[\"get_or_create_session_key(activity)\"]\nconvKey[\"_conversation_key(activity)\"]\nensure[\"_ensure_session(key, category, is_channel_thread, increment_turns)\"]\nrotate[\"_should_rotate(session, now)\"]\ndelete[\"_delete_session_artifacts(key, session_id)\"]\nloadSeed[\"_load_thread_seed_context(key)\"]\nseed[\"seed_channel_thread_context(channel_id,message_id,context)\"]\nmerge[\"merge_session_context(session_key, patch)\"]\nloadCtx[\"load_session_context(session_key)\"]\nsaveCtx[\"save_session_context(session_key, context)\"]\nloadHist[\"load_chat_history(session_key)\"]\nsaveHist[\"save_chat_history(session_key, messages)\"]\nstore[\"store_mod.session_store\"]\n\nget -- \"Teams activity\" --> convKey\nget -- \"conversation key\" --> ensure\nensure -- \"stored metadata\" --> rotate\nrotate -- \"true + old session ID\" --> delete\nget -- \"channel thread key\" --> loadSeed\nloadSeed -- \"seed context\" --> merge\nseed -- \"channel/message/context\" --> ensure\nseed -- \"sanitized context + TTL\" --> store\nmerge -- \"session_key\" --> loadCtx\nloadCtx -- \"StateStore.get\" --> store\nmerge -- \"merged context\" --> saveCtx\nsaveCtx -- \"StateStore.put\" --> store\nloadHist -- \"StateStore.get\" --> store\nsaveHist -- \"StateStore.put\" --> store\n",
+      "edges": [
+        [
+          "get_or_create_session_key() -> _conversation_key()",
+          "Returns stable DM/channel/thread key."
+        ],
+        [
+          "_ensure_session() -> _should_rotate()",
+          "Rotates old sessions by turn count, inactivity, or channel-thread expiry."
+        ],
+        [
+          "seed_channel_thread_context() -> session_store.put()",
+          "Stores context from proactive card with TTL."
+        ],
+        [
+          "merge_session_context() -> save_session_context()",
+          "Writes sanitized employee/submission/envelope/intent fields."
+        ],
+        [
+          "save_chat_history() -> session_store.put()",
+          "Stores bounded human/AI messages only."
+        ]
+      ]
+    },
+    "agent": {
+      "title": "Agent + MCP Runtime Graph",
+      "summary": "Natural-language Teams messages pass through the LLM tool loop and MCP stdio boundary.",
+      "hint": "The LLM selects tools; the deterministic MCP functions do the actual work.",
+      "parentKey": "overview",
+      "reconcileFrom": "run",
+      "drillNodes": {
+        "init": "runnerFile",
+        "run": "runnerFile",
+        "build": "runnerFile",
+        "invoke": "runnerFile",
+        "exec": "runnerFile",
+        "mcpServer": "mcpServerFile",
+        "toolFn": "mcpServerFile"
+      },
+      "explanation": [
+        "`run_agent()` builds a tool-bound LLM from the configured provider.",
+        "The system prompt, compact session context, and recent conversation are sent to the LLM.",
+        "Tool calls are executed through LangChain MCP tools over stdio into the FastMCP subprocess."
+      ],
+      "code": "\nflowchart TD\ninit[\"runner.initialize()\"]\ngetTools[\"MultiServerMCPClient.get_tools()\"]\nready[\"runner.is_ready()\"]\nrun[\"run_agent(messages, trigger_source, session_context)\"]\nbuild[\"_build_llm(tools)\"]\ncontext[\"_format_session_context(session_context)\"]\ntrim[\"_trim_messages(messages, trigger_source)\"]\ninvoke[\"llm.ainvoke(messages)\"]\nexec[\"_execute_tool_calls(tool_calls, tool_map)\"]\nrunTool[\"_run_tool(tool_call)\"]\ntool[\"BaseTool.arun(args)\"]\ndecode[\"_decode_tool_content(content)\"]\nderive[\"derive_session_context(messages, existing)\"]\nmcpServer[\"FastMCP subprocess\"]\ntoolFn[\"registered MCP tool function\"]\n\ninit -- \"server command + env\" --> getTools\ngetTools -- \"tool schemas\" --> init\nready -- \"bool(_tools)\" --> run\nrun -- \"MCP tools\" --> build\nrun -- \"context dict\" --> context\nrun -- \"Teams history\" --> trim\ntrim -- \"bounded messages\" --> invoke\nbuild -- \"tool-bound LLM\" --> invoke\ninvoke -- \"AIMessage tool_calls\" --> exec\nexec -- \"tool_call name,args,id\" --> runTool\nrunTool -- \"args\" --> tool\ntool -- \"MCP stdio request\" --> mcpServer\nmcpServer -- \"args\" --> toolFn\ntoolFn -- \"dict result\" --> mcpServer\nmcpServer -- \"MCP response\" --> tool\ntool -- \"result\" --> runTool\nrunTool -- \"ToolMessage\" --> run\nderive -- \"ToolMessage.content\" --> decode\n",
+      "edges": [
+        [
+          "runner.initialize() -> MultiServerMCPClient.get_tools()",
+          "Starts subprocess and returns LangChain tool wrappers."
+        ],
+        [
+          "run_agent() -> _build_llm()",
+          "Creates Azure OpenAI, Gemini, or Anthropic model bound to tools."
+        ],
+        [
+          "run_agent() -> llm.ainvoke()",
+          "Passes prompt, context, history, user request, and tool schemas."
+        ],
+        [
+          "llm.ainvoke() -> _execute_tool_calls()",
+          "Passes `AIMessage.tool_calls`."
+        ],
+        [
+          "_run_tool() -> BaseTool.arun()",
+          "Crosses MCP stdio boundary with tool args."
+        ],
+        [
+          "derive_session_context() -> _decode_tool_content()",
+          "Parses tool result payloads into reusable context."
+        ]
+      ]
+    },
+    "mcp": {
+      "title": "MCP Tool Graph",
+      "summary": "The MCP subprocess registers tool modules and each tool creates integration clients through shared factories.",
+      "hint": "This boundary keeps the LLM-facing tool surface deterministic and inspectable.",
+      "parentKey": "overview",
+      "reconcileFrom": "factories",
+      "drillNodes": {
+        "server": "mcpServerFile",
+        "trackerTools": "mcpToolsFile",
+        "rosterTools": "mcpToolsFile",
+        "docuTools": "mcpToolsFile",
+        "emailTools": "emailToolsFile",
+        "teamsTools": "mcpToolsFile",
+        "sepTools": "mcpToolsFile",
+        "onboardTools": "mcpToolsFile",
+        "factories": "mcpClientsFile"
+      },
+      "explanation": [
+        "`mcp_server/server.py` creates one FastMCP server and registers all tool groups.",
+        "Tool functions call `mcp_server/clients.py` factories to instantiate tracker, roster, DocuSign, email, Teams, and separations clients.",
+        "Tool return values are dict-like payloads that LangChain wraps as `ToolMessage` content."
+      ],
+      "code": "\nflowchart TD\nserver[\"mcp_server/server.py\"]\ntrackerTools[\"tools_tracker.py\"]\nrosterTools[\"tools_staff_roster.py\"]\ndocuTools[\"tools_docusign.py\"]\nemailTools[\"tools_email.py\"]\nteamsTools[\"tools_teams.py\"]\nsepTools[\"tools_separations.py\"]\nonboardTools[\"tools_onboarding.py\"]\nfactories[\"mcp_server/clients.py\"]\ntracker[\"TrackerClient\"]\nroster[\"StaffRosterClient\"]\nsep[\"SeparationsClient\"]\ndocu[\"DocuSignClient\"]\nemail[\"OutlookEmailClient\"]\nmessenger[\"TeamsMessenger\"]\n\nserver -- \"FastMCP instance\" --> trackerTools\nserver -- \"FastMCP instance\" --> rosterTools\nserver -- \"FastMCP instance\" --> docuTools\nserver -- \"FastMCP instance\" --> emailTools\nserver -- \"FastMCP instance\" --> teamsTools\nserver -- \"FastMCP instance\" --> sepTools\nserver -- \"FastMCP instance\" --> onboardTools\ntrackerTools -- \"tracker()\" --> factories\nrosterTools -- \"staff_roster()\" --> factories\nsepTools -- \"separations()\" --> factories\ndocuTools -- \"docusign()\" --> factories\nemailTools -- \"email_client()\" --> factories\nteamsTools -- \"messenger()\" --> factories\nonboardTools -- \"multiple clients\" --> factories\nfactories --> tracker\nfactories --> roster\nfactories --> sep\nfactories --> docu\nfactories --> email\nfactories --> messenger\n",
+      "edges": [
+        [
+          "server.py -> tools_tracker.register()",
+          "Registers tracker lookup, CRUD, field, and stage tools."
+        ],
+        [
+          "server.py -> tools_staff_roster.register()",
+          "Registers roster capacity, vacancy, lookup, add/remove/update tools."
+        ],
+        [
+          "server.py -> tools_docusign.register()",
+          "Registers draft, send, list, delete, and status tools."
+        ],
+        [
+          "server.py -> tools_email.register()",
+          "Registers email draft/send/confirmation tools."
+        ],
+        [
+          "server.py -> tools_onboarding.register()",
+          "Registers composite onboarding status tool."
+        ],
+        [
+          "tool function -> clients.py factory",
+          "Returns new integration client instance for the tool call."
+        ]
+      ]
+    },
+    "cards": {
+      "title": "Adaptive Card Action Graph",
+      "summary": "Card button submits are deterministic action flows. Most bypass the LLM.",
+      "hint": "Card state is used for idempotency and updating the original Teams card.",
+      "parentKey": "overview",
+      "reconcileFrom": "teams",
+      "drillNodes": {
+        "extract": "cardActionsFile",
+        "done": "cardActionsFile",
+        "clear": "cardActionsFile",
+        "roster": "cardActionsFile",
+        "sep": "cardActionsFile",
+        "run": "cardActionsFile",
+        "tracker": "trackerFile",
+        "rosterClient": "staffRosterFile",
+        "sepClient": "staffRosterFile",
+        "docu": "docusignClientFile",
+        "email": "emailToolsFile",
+        "teams": "teamsProactiveFile"
+      },
+      "explanation": [
+        "The bot extracts the submit payload from `activity.value`.",
+        "Idempotency checks prevent duplicate sends/adds/drafts.",
+        "Action handlers call integration clients directly, then update card state and refresh Teams surfaces."
+      ],
+      "code": "\nflowchart TD\nextract[\"extract_card_action(activity)\"]\ndone[\"card_action_already_completed(card_action)\"]\nrefresh[\"refresh_card_from_context(context, card_action)\"]\nclear[\"handle_clear_to_start_card_action(context, card_action)\"]\nroster[\"handle_staff_roster_card_action(context, card_action)\"]\nsep[\"handle_separation_card_action(context, card_action)\"]\nbg[\"_run_deterministic_card_action_in_background(card_action)\"]\nexecute[\"execute_new_hire_card_action_without_context(card_action)\"]\nrun[\"_run_new_hire_card_action(card_action)\"]\nfail[\"notify_card_action_failure(card_action)\"]\ntracker[\"TrackerClient\"]\nrosterClient[\"StaffRosterClient\"]\nsepClient[\"SeparationsClient\"]\ndocu[\"DocuSignClient\"]\nemail[\"Email helpers / OutlookEmailClient\"]\nteams[\"TeamsMessenger / card refresh\"]\n\nextract -- \"action dict\" --> done\ndone -- \"already complete\" --> refresh\nextract -- \"send_clear_to_start\" --> clear\nextract -- \"add_to_staff_roster\" --> roster\nextract -- \"record_separation/update_leave_*\" --> sep\nextract -- \"send_email/create_draft/send_docusign\" --> bg\nbg -- \"action dict\" --> execute\nexecute -- \"action dict\" --> run\nbg -- \"exception or no update\" --> fail\nclear -- \"Clear to Start stage\" --> tracker\nclear -- \"clear-to-start email\" --> email\nroster -- \"tracker record\" --> tracker\nroster -- \"roster lookup/add\" --> rosterClient\nsep -- \"separation record\" --> sepClient\nsep -- \"roster remove/leave update\" --> rosterClient\nrun -- \"welcome email\" --> email\nrun -- \"offer draft/send\" --> docu\nrun -- \"sent stage update\" --> tracker\nclear --> teams\nroster --> teams\nsep --> teams\nrun --> teams\n",
+      "edges": [
+        [
+          "extract_card_action() -> card_action_already_completed()",
+          "Action dict and employee identity; returns idempotency boolean."
+        ],
+        [
+          "handle_clear_to_start_card_action() -> update_tracker_stage_for_employee()",
+          "Employee identity, date, treasurer and hiring manager fields."
+        ],
+        [
+          "handle_staff_roster_card_action() -> StaffRosterClient.add_employee_to_staff_roster()",
+          "Employee identity, location, and job category."
+        ],
+        [
+          "handle_separation_card_action() -> SeparationsClient.add_separation_record()",
+          "Roster-derived employee data."
+        ],
+        [
+          "_run_new_hire_card_action(create_docusign_draft) -> DocuSignClient.create_envelope_draft()",
+          "Tracker fields become DocuSign draft data."
+        ],
+        [
+          "_run_new_hire_card_action(send_docusign) -> DocuSignClient.send_envelope()",
+          "Envelope ID; sends offer letter."
+        ],
+        [
+          "action handler -> Teams/card state",
+          "Refreshes cards and persists completion flags."
+        ]
+      ]
+    },
+    "integrations": {
+      "title": "Integration Client Graph",
+      "summary": "The final in-process layer before data leaves the container.",
+      "hint": "Microsoft Graph is used for Excel, Outlook, and some Teams operations. Teams proactive messaging uses the Agents SDK adapter.",
+      "parentKey": "overview",
+      "reconcileFrom": "stateStore",
+      "drillNodes": {
+        "graphToken": "graphAuthFile",
+        "workbookReq": "workbookClientFile",
+        "tracker": "trackerFile",
+        "roster": "staffRosterFile",
+        "sep": "staffRosterFile",
+        "email": "outlookEmailFile",
+        "messenger": "teamsProactiveFile",
+        "proactive": "teamsProactiveFile",
+        "updateCard": "teamsProactiveFile",
+        "docu": "docusignClientFile",
+        "stateStore": "stateFile"
+      },
+      "explanation": [
+        "Workbook clients use a shared Graph workbook request helper.",
+        "Outlook sends mail through Graph `sendMail`.",
+        "DocuSign uses JWT Grant and the DocuSign SDK.",
+        "Teams proactive card posts use stored conversation references and `CloudAdapter.continue_conversation()`."
+      ],
+      "code": "\nflowchart TD\ngraphToken[\"graph_access_token()\"]\ncredential[\"ClientSecretCredential.get_token()\"]\nworkbookReq[\"WorkbookGraphClient._graph_workbook_request(...)\"]\ntracker[\"TrackerClient\"]\nroster[\"StaffRosterClient\"]\nsep[\"SeparationsClient\"]\nemail[\"OutlookEmailClient.send_email(...)\"]\nmessenger[\"TeamsMessenger\"]\nproactive[\"send_proactive_message(...)\"]\nupdateCard[\"update_proactive_card(...)\"]\ndocu[\"DocuSignClient\"]\nstateStore[\"StateStore\"]\n\ngraphApi[\"Microsoft Graph\"]\nteamsApi[\"Microsoft Teams\"]\ndocuApi[\"DocuSign API\"]\ncosmos[\"Cosmos DB or local JSON\"]\n\ngraphToken -- \"tenant/client/secret + scope\" --> credential\ncredential -- \"access_token\" --> graphToken\nworkbookReq -- \"needs bearer token\" --> graphToken\nworkbookReq -- \"workbook REST request\" --> graphApi\ntracker -- \"tracker reads/writes\" --> workbookReq\nroster -- \"roster/capacity reads/writes\" --> workbookReq\nsep -- \"separations sheet reads/writes\" --> workbookReq\nemail -- \"sendMail payload\" --> graphApi\nmessenger -- \"channel/card/context\" --> proactive\nproactive -- \"continue_conversation + Activity\" --> teamsApi\nupdateCard -- \"update_activity + card\" --> teamsApi\ndocu -- \"JWT grant + SDK calls\" --> docuApi\nstateStore -- \"get/put/delete/list\" --> cosmos\n",
+      "edges": [
+        [
+          "graph_access_token() -> ClientSecretCredential.get_token()",
+          "Returns Microsoft Graph bearer token."
+        ],
+        [
+          "WorkbookGraphClient._graph_workbook_request() -> Graph",
+          "Calls workbook REST endpoints for Excel reads/writes."
+        ],
+        [
+          "TrackerClient -> WorkbookGraphClient",
+          "Tracker table/range reads, row writes, and stage updates."
+        ],
+        [
+          "StaffRosterClient -> WorkbookGraphClient",
+          "Location-specific roster and capacity workbook operations."
+        ],
+        [
+          "OutlookEmailClient.send_email() -> Graph",
+          "`POST /users/{sender}/sendMail`; HTTP 202 means success."
+        ],
+        [
+          "TeamsMessenger -> send_proactive_message()",
+          "Channel/card/context; returns Teams message ID."
+        ],
+        [
+          "DocuSignClient -> DocuSign API",
+          "JWT auth plus envelope draft/status/send/delete/search operations."
+        ],
+        [
+          "StateStore -> Cosmos/file",
+          "Namespaced state reads and writes."
+        ]
+      ]
+    },
+    "state": {
+      "title": "State Namespace Graph",
+      "summary": "State stores hold card metadata, proactive conversation references, chat history, and structured session context.",
+      "hint": "Production uses Cosmos containers; local development uses JSON files.",
+      "parentKey": "overview",
+      "reconcileFrom": "sessionStore",
+      "drillNodes": {
+        "store": "stateFile",
+        "sessionStore": "stateFile",
+        "conv": "teamsProactiveFile",
+        "newCard": "cardStateFile",
+        "docuCard": "cardStateFile",
+        "sepCard": "cardStateFile",
+        "bgCard": "cardStateFile",
+        "sessions": "teamsMemoryFile",
+        "history": "teamsMemoryFile",
+        "context": "teamsMemoryFile",
+        "seed": "teamsMemoryFile"
+      },
+      "explanation": [
+        "`store_mod.store` holds app/card/proactive state.",
+        "`store_mod.session_store` holds Teams session metadata, bounded chat history, compact context, and proactive thread seed context.",
+        "Cosmos documents are partitioned by `namespace`."
+      ],
+      "code": "\nflowchart TD\nstore[\"store_mod.store\"]\nsessionStore[\"store_mod.session_store\"]\nconv[\"conversation_ref\"]\nnewCard[\"new_hire_card state\"]\ndocuCard[\"docusign_status_card state\"]\nsepCard[\"separation_card state\"]\nbgCard[\"background_clearance_card state\"]\nsessions[\"conversation_session\"]\nhistory[\"chat_history\"]\ncontext[\"session_context\"]\nseed[\"thread_seed_context\"]\n\nstore --> conv\nstore --> newCard\nstore --> docuCard\nstore --> sepCard\nstore --> bgCard\nsessionStore --> sessions\nsessionStore --> history\nsessionStore --> context\nsessionStore --> seed\n",
+      "edges": [
+        [
+          "conversation_ref",
+          "Written by `save_conversation_reference()`, read by `get_conversation_reference()` for proactive sends."
+        ],
+        [
+          "new_hire_card state",
+          "Stores employee identity, Teams message ID, and email/DocuSign action flags."
+        ],
+        [
+          "docusign_status_card state",
+          "Stores employee identity, envelope ID, review URL, status, roster flag."
+        ],
+        [
+          "conversation_session",
+          "Stores session ID, category, turn count, and expiry metadata."
+        ],
+        [
+          "chat_history",
+          "Stores bounded human/AI messages."
+        ],
+        [
+          "session_context",
+          "Stores employee/submission/location/title/status/envelope/intent fields."
+        ],
+        [
+          "thread_seed_context",
+          "Seeds context for replies in proactive card threads."
+        ]
+      ]
+    },
+    "observability": {
+      "title": "Observability Graph",
+      "summary": "OpenTelemetry setup and per-operation spans flow to Azure Monitor and Phoenix.",
+      "hint": "Span attributes are sanitized before being written.",
+      "parentKey": "overview",
+      "reconcileFrom": "exporters",
+      "drillNodes": {
+        "configure": "observabilityFile",
+        "span": "tracingFile",
+        "attrs": "tracingFile",
+        "safe": "tracingFile"
+      },
+      "explanation": [
+        "Observability is configured once at process start.",
+        "Manual spans wrap Teams, agent, LLM, tool, and HTTP operations.",
+        "Attributes pass through PII safety logic before export."
+      ],
+      "code": "\nflowchart TD\nconfigure[\"configure_observability(settings)\"]\nmetadata[\"_configure_service_metadata(settings)\"]\nazure[\"_configure_azure_monitor(settings)\"]\nphoenix[\"_configure_phoenix(settings)\"]\nlangchain[\"_configure_langchain_instrumentation()\"]\nlogging[\"_configure_logging_instrumentation()\"]\nspan[\"start_span(name, attrs)\"]\nattrs[\"set_span_attributes(span, attrs)\"]\nsafe[\"safe_attributes(attrs, salt, capture_full_payloads)\"]\nexporters[\"Azure Monitor / Phoenix\"]\n\nconfigure -- \"service env/version/project\" --> metadata\nconfigure -- \"connection string\" --> azure\nconfigure -- \"OTLP endpoint + headers + prefixes\" --> phoenix\nconfigure -- \"LangChain callbacks\" --> langchain\nconfigure -- \"log correlation\" --> logging\nspan -- \"raw attrs\" --> attrs\nattrs -- \"PII controls\" --> safe\nsafe -- \"sanitized attrs\" --> span\nazure --> exporters\nphoenix --> exporters\n",
+      "edges": [
+        [
+          "configure_observability() -> _configure_azure_monitor()",
+          "Installs Azure Monitor exporter when enabled."
+        ],
+        [
+          "configure_observability() -> _configure_phoenix()",
+          "Installs OTLP exporter and optional prefix filter."
+        ],
+        [
+          "configure_observability() -> _configure_langchain_instrumentation()",
+          "Adds OpenInference LangChain instrumentation when available."
+        ],
+        [
+          "runtime code -> start_span()",
+          "Creates spans around Teams, agent, tool, and webhook operations."
+        ],
+        [
+          "set_span_attributes() -> safe_attributes()",
+          "Redacts/hashes sensitive values unless full payload capture is enabled."
+        ]
+      ]
+    },
+    "serverFile": {
+      "title": "File Graph: server.py",
+      "summary": "HTTP app entrypoint, Teams route registration, startup, and cleanup.",
+      "hint": "This file reconciles back to Startup and Teams message handling.",
+      "parentKey": "startup",
+      "reconcileFrom": "runApp",
+      "drillNodes": {
+        "main": "serverMainFn",
+        "create": "serverCreateAppFn",
+        "setup": "serverSetupTeamsFn",
+        "startup": "serverStartupFn",
+        "cleanup": "serverCleanupFn"
+      },
+      "explanation": [
+        "`server.py` is the process entrypoint and aiohttp app factory.",
+        "It registers webhook routes, builds the Teams Agents SDK runtime, initializes state stores, starts the agent, and starts the queue worker."
+      ],
+      "code": "\nflowchart TD\nmain[\"main()\"]\nconfigure[\"configure_observability(settings)\"]\ncreate[\"create_app()\"]\nsetup[\"_setup_teams(app)\"]\nroutes[\"app.router.add_post(...)\"]\nstartup[\"_on_startup(app)\"]\nstores[\"create_state_store(...)\"]\nagent[\"runner.initialize()\"]\nqueue[\"create_job_queue(...process_job...)\"]\ncleanup[\"_on_cleanup(app)\"]\nrunApp[\"web.run_app(app, host, port)\"]\n\nmain --> configure\nmain --> create\ncreate --> routes\ncreate --> setup\ncreate --> startup\nstartup --> stores\nstartup --> agent\nstartup --> queue\ncreate --> cleanup\nmain --> runApp\n",
+      "edges": [
+        [
+          "main() -> create_app()",
+          "Builds and returns the aiohttp application."
+        ],
+        [
+          "create_app() -> routes",
+          "Registers webhook and Teams HTTP endpoints."
+        ],
+        [
+          "_on_startup() -> stores/agent/queue",
+          "Initializes runtime dependencies."
+        ],
+        [
+          "_on_cleanup() -> JobQueue.close()",
+          "Stops background queue worker."
+        ]
+      ]
+    },
+    "webhooksFile": {
+      "title": "File Graph: runtime/webhooks.py",
+      "summary": "Webhook parsing, validation, and queue handoff functions.",
+      "hint": "This file reconciles back to Webhook Ingress.",
+      "parentKey": "webhooks",
+      "reconcileFrom": "enqueue",
+      "drillNodes": {
+        "newHire": "webhookNewHireFn",
+        "background": "webhookBackgroundFn",
+        "docusign": "webhookDocusignFn"
+      },
+      "explanation": [
+        "`runtime/webhooks.py` keeps ingress work small: validate, parse, enqueue, return.",
+        "All expensive workflow processing is deferred to queue jobs."
+      ],
+      "code": "\nflowchart TD\nnewHire[\"handle_new_hire_webhook()\"]\nbackground[\"handle_background_clearance_webhook()\"]\ndocusign[\"handle_docusign_webhook()\"]\nsecret[\"is_valid_webhook_secret()\"]\nparseJson[\"parse_json_payload()\"]\nparseDocu[\"parse_docusign_payload()\"]\nqueue[\"_job_queue(request)\"]\nenqueue[\"JobQueue.enqueue(...)\"]\naccepted[\"_accepted_response()\"]\n\nnewHire --> secret\nnewHire --> parseJson\nnewHire --> queue\nbackground --> secret\nbackground --> parseJson\ndocusign --> parseDocu\nqueue --> enqueue\nparseJson --> enqueue\nparseDocu --> enqueue\nenqueue --> accepted\n",
+      "edges": [
+        [
+          "handle_*_webhook() -> parse_*()",
+          "Returns normalized payload dictionaries."
+        ],
+        [
+          "handle_*_webhook() -> JobQueue.enqueue()",
+          "Writes durable job handoff."
+        ],
+        [
+          "enqueue -> _accepted_response()",
+          "Returns HTTP 200 accepted JSON."
+        ]
+      ]
+    },
+    "jobQueueFile": {
+      "title": "File Graph: runtime/job_queue.py",
+      "summary": "Queue abstraction, local backend, Azure Storage Queue backend, and worker loop.",
+      "hint": "This file reconciles back to Queue.",
+      "parentKey": "queue",
+      "reconcileFrom": "process",
+      "drillNodes": {
+        "factory": "jobQueueFactoryFn",
+        "enqueue": "jobQueueEnqueueFn",
+        "worker": "jobQueueWorkerFn",
+        "handle": "jobQueueHandleFn"
+      },
+      "explanation": [
+        "`runtime/job_queue.py` abstracts local development execution and production Azure Storage Queue polling behind the same protocol."
+      ],
+      "code": "\nflowchart TD\nfactory[\"create_job_queue()\"]\nlocal[\"LocalJobQueue\"]\nazure[\"AzureStorageJobQueue\"]\nenqueue[\"enqueue(job_type,payload)\"]\nworker[\"_run_worker()\"]\nreceive[\"_receive_message()\"]\nhandle[\"_handle_message(message)\"]\nprocess[\"process_job(QueueJob)\"]\n\nfactory -- \"backend=local\" --> local\nfactory -- \"backend=azure\" --> azure\nlocal --> enqueue\nazure --> enqueue\nazure --> worker\nworker --> receive\nreceive --> handle\nhandle --> process\n",
+      "edges": [
+        [
+          "create_job_queue() -> backend",
+          "Selects local or Azure implementation."
+        ],
+        [
+          "enqueue() -> queue storage/task",
+          "Serializes job or starts local task."
+        ],
+        [
+          "_handle_message() -> process_job()",
+          "Passes parsed `QueueJob`."
+        ]
+      ]
+    },
+    "jobsFile": {
+      "title": "File Graph: runtime/jobs.py",
+      "summary": "Deterministic job dispatcher and webhook-driven workflow handlers.",
+      "hint": "This file reconciles back to Deterministic Jobs.",
+      "parentKey": "jobs",
+      "reconcileFrom": "notify",
+      "drillNodes": {
+        "process": "jobsProcessFn",
+        "newHire": "jobsNewHireFn",
+        "docu": "jobsDocuFn",
+        "background": "jobsBackgroundFn"
+      },
+      "explanation": [
+        "`runtime/jobs.py` owns deterministic workflow orchestration after webhooks have been accepted."
+      ],
+      "code": "\nflowchart TD\nprocess[\"process_job(job)\"]\nnewHire[\"process_new_hire_job(payload)\"]\ndocu[\"process_docusign_job(payload)\"]\nbackground[\"process_background_clearance_job(payload)\"]\nensure[\"_ensure_tracker_record(...)\"]\nnotify[\"_send_submission_notification(...) / _send_workflow_action_notification(...)\"]\nsend[\"_send_or_update_card(...)\"]\nsave[\"_save_card_state_safely(...)\"]\n\nprocess --> newHire\nprocess --> docu\nprocess --> background\nnewHire --> ensure\nnewHire --> notify\ndocu --> notify\nbackground --> notify\nnotify --> send\nsend --> save\n",
+      "edges": [
+        [
+          "process_job() -> handler",
+          "Dispatches by job type."
+        ],
+        [
+          "handler -> integration clients",
+          "Tracker/email/DocuSign/Teams side effects."
+        ],
+        [
+          "notification helper -> card state",
+          "Stores message IDs and completion state."
+        ]
+      ]
+    },
+    "runnerFile": {
+      "title": "File Graph: agent/runner.py",
+      "summary": "MCP tool loading, LLM construction, tool loop, and session-context derivation.",
+      "hint": "This file reconciles back to Agent + MCP.",
+      "parentKey": "agent",
+      "reconcileFrom": "returnMessages",
+      "drillNodes": {
+        "initialize": "runnerInitializeFn",
+        "run": "runnerRunFn",
+        "exec": "runnerExecuteToolCallsFn",
+        "derive": "runnerDeriveSessionContextFn"
+      },
+      "explanation": [
+        "`agent/runner.py` binds MCP tools to the configured LLM and loops until the model stops calling tools."
+      ],
+      "code": "\nflowchart TD\ninitialize[\"initialize()\"]\ntools[\"MultiServerMCPClient.get_tools()\"]\nrun[\"run_agent(messages, trigger_source, session_context)\"]\nbuild[\"_build_llm(tools)\"]\ninvoke[\"llm.ainvoke(messages)\"]\nexec[\"_execute_tool_calls(tool_calls, tool_map)\"]\nderive[\"derive_session_context(messages, existing)\"]\nreturnMessages[\"return result_messages\"]\n\ninitialize --> tools\nrun --> build\nbuild --> invoke\ninvoke --> exec\nexec --> invoke\ninvoke --> returnMessages\nreturnMessages --> derive\n",
+      "edges": [
+        [
+          "initialize() -> MCP client",
+          "Starts subprocess and loads tool schemas."
+        ],
+        [
+          "run_agent() -> LLM",
+          "Passes messages and tool schemas."
+        ],
+        [
+          "tool calls -> MCP tools",
+          "Returns `ToolMessage`s for the next LLM turn."
+        ]
+      ]
+    },
+    "mcpServerFile": {
+      "title": "File Graph: mcp_server/server.py",
+      "summary": "FastMCP subprocess entrypoint and tool registration.",
+      "hint": "This file reconciles back to MCP Tools.",
+      "parentKey": "mcp",
+      "reconcileFrom": "run",
+      "drillNodes": {
+        "init": "mcpServerInitFn",
+        "register": "mcpServerRegisterFn",
+        "run": "mcpServerRunFn"
+      },
+      "explanation": [
+        "`mcp_server/server.py` is launched by the agent process over stdio and registers all tool modules."
+      ],
+      "code": "\nflowchart TD\ninit[\"_initialize_runtime()\"]\nmcp[\"FastMCP(name='onboarding-tools')\"]\nregister[\"register_* tools\"]\nrun[\"mcp.run(transport='stdio')\"]\n\ninit --> mcp\nmcp --> register\nregister --> run\n",
+      "edges": [
+        [
+          "_initialize_runtime() -> state store",
+          "Initializes store for MCP tools when needed."
+        ],
+        [
+          "register_* -> FastMCP",
+          "Adds tool schemas/functions."
+        ],
+        [
+          "mcp.run() -> stdio",
+          "Serves MCP protocol to LangChain adapter."
+        ]
+      ]
+    },
+    "mcpToolsFile": {
+      "title": "File Graph: mcp_server/tools_*.py",
+      "summary": "Tool definitions exposed to the LLM through FastMCP.",
+      "hint": "This file group reconciles back to MCP Tools.",
+      "parentKey": "mcp",
+      "reconcileFrom": "result",
+      "drillNodes": {
+        "validate": "mcpToolValidationFn",
+        "clients": "mcpToolClientFactoryFn",
+        "integration": "mcpToolIntegrationCallFn"
+      },
+      "explanation": [
+        "Tool modules wrap deterministic integration-client calls in LLM-callable functions."
+      ],
+      "code": "\nflowchart TD\nargs[\"MCP tool args\"]\nvalidate[\"tool-level validation / relaxed resolution\"]\nclients[\"mcp_server/clients.py factories\"]\nintegration[\"integration client method\"]\nresult[\"dict result\"]\n\nargs --> validate\nvalidate --> clients\nclients --> integration\nintegration --> result\n",
+      "edges": [
+        [
+          "tool args -> client factory",
+          "Creates tracker, roster, DocuSign, email, Teams, or separations client."
+        ],
+        [
+          "client result -> tool result",
+          "Returns dict-like payload to the agent loop."
+        ]
+      ]
+    },
+    "mcpClientsFile": {
+      "title": "File Graph: mcp_server/clients.py",
+      "summary": "Factory functions for MCP tool integration clients.",
+      "hint": "This file reconciles back to MCP Tools.",
+      "parentKey": "mcp",
+      "reconcileFrom": "factories",
+      "drillNodes": {
+        "factories": "mcpClientsFactoryFns",
+        "tracker": "mcpClientsTrackerFactoryFn",
+        "messenger": "mcpClientsTeamsFactoryFn",
+        "email": "mcpClientsEmailFactoryFn"
+      },
+      "explanation": [
+        "`mcp_server/clients.py` keeps tool modules from duplicating client construction."
+      ],
+      "code": "\nflowchart TD\nfactories[\"clients.py factory functions\"]\ntracker[\"TrackerClient()\"]\nroster[\"StaffRosterClient()\"]\nsep[\"SeparationsClient()\"]\ndocu[\"DocuSignClient()\"]\nmessenger[\"TeamsMessenger()\"]\nemail[\"OutlookEmailClient()\"]\n\nfactories --> tracker\nfactories --> roster\nfactories --> sep\nfactories --> docu\nfactories --> messenger\nfactories --> email\n",
+      "edges": [
+        [
+          "factory -> integration client",
+          "Returns a fresh client instance for the tool call."
+        ]
+      ]
+    },
+    "teamsBotFile": {
+      "title": "File Graph: integrations/teams/bot.py",
+      "summary": "Teams activity routing, slash commands, agent invocation, and final replies.",
+      "hint": "This file reconciles back to Teams Bot.",
+      "parentKey": "teams",
+      "reconcileFrom": "reply",
+      "drillNodes": {
+        "register": "teamsRegisterHandlersFn",
+        "message": "teamsOnMessageFn",
+        "slash": "teamsExpandSlashFn",
+        "agent": "teamsRunAgentFn"
+      },
+      "explanation": [
+        "`integrations/teams/bot.py` is the central router for Teams messages and card submit events."
+      ],
+      "code": "\nflowchart TD\nregister[\"register_handlers(agent_app)\"]\nmessage[\"on_message(context,state)\"]\nsaveRef[\"save_conversation_reference(activity)\"]\ncard[\"extract_card_action(activity)\"]\nslash[\"_expand_slash_command(user_text)\"]\nagent[\"runner.run_agent(...)\"]\nhistory[\"save_chat_history(...)\"]\nreply[\"TurnContext.send_activity(reply_text)\"]\n\nregister --> message\nmessage --> saveRef\nmessage --> card\nmessage --> slash\nmessage --> agent\nagent --> history\nagent --> reply\n",
+      "edges": [
+        [
+          "on_message() -> card path",
+          "Deterministic submit handling."
+        ],
+        [
+          "on_message() -> agent path",
+          "Natural-language tool loop."
+        ],
+        [
+          "agent result -> reply",
+          "Sends final Teams message."
+        ]
+      ]
+    },
+    "teamsMemoryFile": {
+      "title": "File Graph: integrations/teams/memory.py",
+      "summary": "Session keys, chat history, session context, and thread seed context.",
+      "hint": "This file reconciles back to Session Memory.",
+      "parentKey": "memory",
+      "reconcileFrom": "store",
+      "drillNodes": {
+        "session": "memorySessionKeyFn",
+        "merge": "memoryMergeContextFn",
+        "history": "memoryHistoryFns",
+        "seed": "memorySeedThreadFn"
+      },
+      "explanation": [
+        "`integrations/teams/memory.py` preserves conversational continuity across Teams turns and proactive card threads."
+      ],
+      "code": "\nflowchart TD\nsession[\"get_or_create_session_key(activity)\"]\nensure[\"_ensure_session(...)\"]\nmerge[\"merge_session_context(session_key, patch)\"]\nhistory[\"load_chat_history() / save_chat_history()\"]\nseed[\"seed_channel_thread_context(...)\"]\nstore[\"store_mod.session_store\"]\n\nsession --> ensure\nseed --> ensure\nensure --> store\nmerge --> store\nhistory --> store\n",
+      "edges": [
+        [
+          "activity -> session key",
+          "Uses DM/channel/thread identifiers."
+        ],
+        [
+          "context/history -> session_store",
+          "Persists compact context and bounded history."
+        ]
+      ]
+    },
+    "cardActionsFile": {
+      "title": "File Graph: integrations/teams/card_actions.py",
+      "summary": "Adaptive Card submit parsing and deterministic action handlers.",
+      "hint": "This file reconciles back to Card Actions.",
+      "parentKey": "cards",
+      "reconcileFrom": "refresh",
+      "drillNodes": {
+        "extract": "cardExtractActionFn",
+        "route": "cardRouteHandlerFn",
+        "refresh": "cardRefreshFn"
+      },
+      "explanation": [
+        "`integrations/teams/card_actions.py` executes explicit user actions without asking the LLM to infer intent."
+      ],
+      "code": "\nflowchart TD\nextract[\"extract_card_action(activity)\"]\ncomplete[\"card_action_already_completed(card_action)\"]\nroute[\"specific handler\"]\nclients[\"Tracker/Roster/DocuSign/Email clients\"]\nrefresh[\"refresh_card_from_context(...)\"]\n\nextract --> complete\ncomplete --> route\nroute --> clients\nclients --> refresh\n",
+      "edges": [
+        [
+          "card action -> handler",
+          "Uses action name and employee identity."
+        ],
+        [
+          "handler -> clients",
+          "Performs explicit side effects."
+        ],
+        [
+          "handler -> refresh",
+          "Updates Teams card state/surface."
+        ]
+      ]
+    },
+    "teamsProactiveFile": {
+      "title": "File Graph: integrations/teams/proactive.py",
+      "summary": "Conversation references, proactive sends, and card updates.",
+      "hint": "This file reconciles back to Teams Bot and Integrations.",
+      "parentKey": "integrations",
+      "reconcileFrom": "send",
+      "drillNodes": {
+        "saveRef": "teamsProactiveSaveReferenceFn",
+        "send": "teamsProactiveSendFn",
+        "update": "teamsProactiveUpdateFn"
+      },
+      "explanation": [
+        "`integrations/teams/proactive.py` uses stored conversation references to post or update Teams messages outside the current turn."
+      ],
+      "code": "\nflowchart TD\nsaveRef[\"save_conversation_reference(activity)\"]\ngetRef[\"get_conversation_reference(channel_id)\"]\nadapter[\"_ensure_adapter()\"]\nsend[\"send_proactive_message(...)\"]\nupdate[\"update_proactive_card(...)\"]\nteams[\"CloudAdapter.continue_conversation(...)\"]\n\nsaveRef --> getRef\nsend --> adapter\nsend --> getRef\nupdate --> adapter\nupdate --> getRef\nadapter --> teams\ngetRef --> teams\n",
+      "edges": [
+        [
+          "save_conversation_reference() -> state",
+          "Stores continuation reference."
+        ],
+        [
+          "send/update -> continue_conversation",
+          "Posts or updates Teams activity."
+        ]
+      ]
+    },
+    "cardStateFile": {
+      "title": "File Graph: integrations/card_state.py",
+      "summary": "Card metadata, message IDs, and action completion state.",
+      "hint": "This file reconciles back to State.",
+      "parentKey": "state",
+      "reconcileFrom": "store",
+      "drillNodes": {
+        "save": "cardStateSaveFn",
+        "get": "cardStateGetFn",
+        "mark": "cardStateMarkCompleteFn",
+        "refresh": "cardStateRefreshFn"
+      },
+      "explanation": [
+        "`integrations/card_state.py` persists enough metadata to update original Teams cards and enforce idempotency."
+      ],
+      "code": "\nflowchart TD\nsave[\"save_*_card(...)\"]\nget[\"get_*_card(...)\"]\nmark[\"mark_*_complete(...)\"]\nrefresh[\"refresh_*_card(...)\"]\nstore[\"store_mod.store\"]\n\nsave --> store\nget --> store\nmark --> store\nrefresh --> get\n",
+      "edges": [
+        [
+          "save/get/mark -> store",
+          "Writes and reads namespaced card state records."
+        ],
+        [
+          "refresh_* -> Teams",
+          "Rebuilds and updates visible cards."
+        ]
+      ]
+    },
+    "graphAuthFile": {
+      "title": "File Graph: integrations/graph/auth.py",
+      "summary": "Microsoft Graph client-credentials token acquisition.",
+      "hint": "This file reconciles back to Integration Clients.",
+      "parentKey": "integrations",
+      "reconcileFrom": "token",
+      "drillNodes": {
+        "credential": "graphAuthCredentialFn",
+        "getToken": "graphAuthGetTokenFn"
+      },
+      "explanation": [
+        "`integrations/graph/auth.py` centralizes Graph access token acquisition for workbook, email, and Graph Teams calls."
+      ],
+      "code": "\nflowchart TD\nsettings[\"settings.azure_tenant_id/client_id/client_secret\"]\ncredential[\"ClientSecretCredential(...)\"]\ngetToken[\"credential.get_token(Graph .default scope)\"]\ntoken[\"access token\"]\n\nsettings --> credential\ncredential --> getToken\ngetToken --> token\n",
+      "edges": [
+        [
+          "settings -> ClientSecretCredential",
+          "Uses app registration client credentials."
+        ],
+        [
+          "get_token() -> token",
+          "Returns bearer token for Graph API."
+        ]
+      ]
+    },
+    "workbookClientFile": {
+      "title": "File Graph: integrations/workbook/client.py",
+      "summary": "Shared Microsoft Graph workbook request helper.",
+      "hint": "This file reconciles back to Integration Clients.",
+      "parentKey": "integrations",
+      "reconcileFrom": "request",
+      "drillNodes": {
+        "token": "workbookClientTokenFn",
+        "request": "workbookClientRequestFn",
+        "rows": "workbookClientRowsFn"
+      },
+      "explanation": [
+        "`integrations/workbook/client.py` builds Graph workbook URLs and executes requests for tracker, roster, and separations clients."
+      ],
+      "code": "\nflowchart TD\ntoken[\"graph_access_token()\"]\nrequest[\"_graph_workbook_request(method,path,json_body,drive_id,item_id)\"]\ngraph[\"Microsoft Graph workbook endpoint\"]\nrows[\"_tracker_rows_with_start_row() / _used_range_rows(...)\"]\n\nrows --> request\nrequest --> token\ntoken --> graph\nrequest --> graph\n",
+      "edges": [
+        [
+          "_graph_workbook_request() -> Graph",
+          "Sends workbook REST request and returns JSON."
+        ],
+        [
+          "_used_range_rows() -> _graph_workbook_request()",
+          "Reads sheet data for higher-level clients."
+        ]
+      ]
+    },
+    "trackerFile": {
+      "title": "File Graph: integrations/workbook/tracker_client.py",
+      "summary": "Tracker workbook lookup, add, update, remove, and stage operations.",
+      "hint": "This file reconciles back to Integration Clients.",
+      "parentKey": "integrations",
+      "reconcileFrom": "workbook",
+      "drillNodes": {
+        "resolve": "trackerResolveFn",
+        "add": "trackerAddFn",
+        "update": "trackerUpdateFn",
+        "list": "trackerListFn"
+      },
+      "explanation": [
+        "`TrackerClient` treats the Excel tracker as the workflow system of record."
+      ],
+      "code": "\nflowchart TD\nidentity[\"email + location + job title + status + submission_id\"]\nresolve[\"resolve_employee_relaxed(...) / find_employee_in_tracker(...)\"]\nadd[\"add_employee_to_tracker(...)\"]\nupdate[\"update_employee_in_tracker(...) / update_stage(...)\"]\nlist[\"list_all_employees() / get_employee_stages(...)\"]\nworkbook[\"WorkbookGraphClient._graph_workbook_request(...)\"]\n\nidentity --> resolve\nresolve --> add\nresolve --> update\nresolve --> list\nadd --> workbook\nupdate --> workbook\nlist --> workbook\n",
+      "edges": [
+        [
+          "identity -> resolve",
+          "Composite identity disambiguates duplicate rows."
+        ],
+        [
+          "add/update/list -> workbook",
+          "Reads or writes Excel through Microsoft Graph."
+        ]
+      ]
+    },
+    "staffRosterFile": {
+      "title": "File Graph: integrations/workbook/staff_roster_client.py + separations_client.py",
+      "summary": "Location workbook roster, capacity, leave, and separation-sheet operations.",
+      "hint": "This file group reconciles back to Integration Clients.",
+      "parentKey": "integrations",
+      "reconcileFrom": "workbook",
+      "drillNodes": {
+        "config": "staffRosterConfigFn",
+        "roster": "staffRosterMethodsFn",
+        "sep": "separationsMethodsFn"
+      },
+      "explanation": [
+        "Roster and separation clients resolve a location to a configured workbook and then read/write the appropriate sheets through Graph."
+      ],
+      "code": "\nflowchart TD\nlocation[\"work_location\"]\nconfig[\"settings.staff_roster_workbook(location)\"]\nroster[\"StaffRosterClient roster/capacity methods\"]\nsep[\"SeparationsClient separation methods\"]\nworkbook[\"WorkbookGraphClient._graph_workbook_request(...)\"]\n\nlocation --> config\nconfig --> roster\nconfig --> sep\nroster --> workbook\nsep --> workbook\n",
+      "edges": [
+        [
+          "location -> workbook config",
+          "Returns drive/item/sheet names."
+        ],
+        [
+          "roster/separations -> workbook",
+          "Performs Graph Excel reads/writes."
+        ]
+      ]
+    },
+    "outlookEmailFile": {
+      "title": "File Graph: integrations/outlook_email_client.py",
+      "summary": "Graph `sendMail` wrapper for Outlook email sends.",
+      "hint": "This file reconciles back to Integration Clients.",
+      "parentKey": "integrations",
+      "reconcileFrom": "result",
+      "drillNodes": {
+        "token": "outlookEmailTokenFn",
+        "send": "outlookEmailSendFn"
+      },
+      "explanation": [
+        "`OutlookEmailClient` sends HTML email through Microsoft Graph as the configured sender mailbox."
+      ],
+      "code": "\nflowchart TD\nargs[\"to/subject/html/cc/attachments\"]\ntoken[\"graph_access_token()\"]\nsend[\"POST /users/{sender}/sendMail\"]\nresult[\"success or error dict\"]\n\nargs --> token\ntoken --> send\nsend --> result\n",
+      "edges": [
+        [
+          "send_email() -> graph_access_token()",
+          "Gets bearer token."
+        ],
+        [
+          "send_email() -> Graph sendMail",
+          "HTTP 202 returns success."
+        ]
+      ]
+    },
+    "docusignClientFile": {
+      "title": "File Graph: integrations/docusign_client.py",
+      "summary": "DocuSign JWT auth and envelope operations.",
+      "hint": "This file reconciles back to Integration Clients.",
+      "parentKey": "integrations",
+      "reconcileFrom": "result",
+      "drillNodes": {
+        "jwt": "docusignAccessTokenFn",
+        "api": "docusignApiClientFn",
+        "draft": "docusignDraftFns",
+        "send": "docusignSendEnvelopeFn",
+        "status": "docusignStatusFn"
+      },
+      "explanation": [
+        "`DocuSignClient` wraps DocuSign SDK operations in async-friendly executor calls and caches JWT access tokens."
+      ],
+      "code": "\nflowchart TD\njwt[\"_get_access_token() JWT grant\"]\napi[\"_get_api_client()\"]\ndraft[\"create/check/list/delete draft\"]\nsend[\"send_envelope(envelope_id)\"]\nstatus[\"get_envelope_status(envelope_id)\"]\nresult[\"dict result\"]\n\njwt --> api\napi --> draft\napi --> send\napi --> status\ndraft --> result\nsend --> result\nstatus --> result\n",
+      "edges": [
+        [
+          "_get_access_token() -> DocuSign OAuth",
+          "Signs JWT and caches access token."
+        ],
+        [
+          "public methods -> DocuSign SDK",
+          "Creates, sends, searches, deletes, and reads envelopes."
+        ]
+      ]
+    },
+    "emailToolsFile": {
+      "title": "File Graph: mcp_server/tools_email.py",
+      "summary": "Email template rendering, draft state, and Graph email sends.",
+      "hint": "This file reconciles back to MCP Tools or job/card flows.",
+      "parentKey": "mcp",
+      "reconcileFrom": "send",
+      "drillNodes": {
+        "render": "emailToolsRenderFn",
+        "draft": "emailToolsDraftFn",
+        "sendWelcome": "emailToolsSendWelcomeFn",
+        "sendBg": "emailToolsSendBackgroundFn",
+        "sendClear": "emailToolsSendClearFn"
+      },
+      "explanation": [
+        "`tools_email.py` is used both as MCP tools and as deterministic helpers from jobs/card actions."
+      ],
+      "code": "\nflowchart TD\nrender[\"_render_template(...)\"]\ndraft[\"draft_onboarding_email_for_employee(...)\"]\nsendWelcome[\"send_onboarding_email_to_employee(...)\"]\nsendBg[\"send_background_clearance_confirmation_email(...)\"]\nsendClear[\"send_clear_to_start_email(...)\"]\nclient[\"OutlookEmailClient.send_email(...)\"]\nstore[\"state store draft payload\"]\nsend[\"email sent result\"]\n\nrender --> draft\ndraft --> store\nrender --> sendWelcome\nrender --> sendBg\nrender --> sendClear\nsendWelcome --> client\nsendBg --> client\nsendClear --> client\nclient --> send\n",
+      "edges": [
+        [
+          "draft helper -> state",
+          "Stores rendered welcome email for review."
+        ],
+        [
+          "send helper -> OutlookEmailClient",
+          "Sends email through Graph."
+        ]
+      ]
+    },
+    "stateFile": {
+      "title": "File Graph: runtime/state_store.py + state_store_cosmos.py",
+      "summary": "StateStore interface and file/Cosmos implementations.",
+      "hint": "This file reconciles back to State.",
+      "parentKey": "state",
+      "reconcileFrom": "store",
+      "drillNodes": {
+        "factory": "stateStoreFactoryFn",
+        "file": "stateStoreFileBackendFn",
+        "cosmos": "stateStoreCosmosBackendFn",
+        "methods": "stateStoreMethodsFn"
+      },
+      "explanation": [
+        "The app uses the same async state-store interface for local JSON files and Cosmos DB."
+      ],
+      "code": "\nflowchart TD\nfactory[\"create_state_store(backend, **kwargs)\"]\nfile[\"FileStateStore\"]\ncosmos[\"CosmosStateStore\"]\nmethods[\"get / put / delete / list_keys / get_all\"]\nstore[\"durable namespace/key payloads\"]\n\nfactory -- \"backend=file\" --> file\nfactory -- \"backend=cosmos\" --> cosmos\nfile --> methods\ncosmos --> methods\nmethods --> store\n",
+      "edges": [
+        [
+          "create_state_store() -> implementation",
+          "Selects file or Cosmos backend."
+        ],
+        [
+          "StateStore methods -> durable records",
+          "Stores namespaced payloads."
+        ]
+      ]
+    },
+    "observabilityFile": {
+      "title": "File Graph: observability/setup.py",
+      "summary": "Exporter and instrumentation setup.",
+      "hint": "This file reconciles back to Observability.",
+      "parentKey": "observability",
+      "reconcileFrom": "exporters",
+      "drillNodes": {
+        "configure": "observabilityConfigureFn",
+        "azure": "observabilityAzureFn",
+        "phoenix": "observabilityPhoenixFn",
+        "langchain": "observabilityLangchainFn"
+      },
+      "explanation": [
+        "`observability/setup.py` configures Azure Monitor, Phoenix OTLP, LangChain instrumentation, and logging correlation."
+      ],
+      "code": "\nflowchart TD\nconfigure[\"configure_observability(settings)\"]\nmetadata[\"_configure_service_metadata(settings)\"]\nazure[\"_configure_azure_monitor(settings)\"]\nphoenix[\"_configure_phoenix(settings)\"]\nlangchain[\"_configure_langchain_instrumentation()\"]\nexporters[\"Azure Monitor / Phoenix exporters\"]\n\nconfigure --> metadata\nconfigure --> azure\nconfigure --> phoenix\nconfigure --> langchain\nazure --> exporters\nphoenix --> exporters\n",
+      "edges": [
+        [
+          "configure_observability() -> exporters",
+          "Installs enabled OpenTelemetry exporters."
+        ],
+        [
+          "configure_observability() -> instrumentation",
+          "Adds LangChain/log instrumentation."
+        ]
+      ]
+    },
+    "tracingFile": {
+      "title": "File Graph: observability/tracing.py + pii.py",
+      "summary": "Span helpers and safe attribute handling.",
+      "hint": "This file reconciles back to Observability.",
+      "parentKey": "observability",
+      "reconcileFrom": "span",
+      "drillNodes": {
+        "start": "tracingStartSpanFn",
+        "setAttrs": "tracingSetAttributesFn",
+        "safe": "tracingSafeAttributesFn"
+      },
+      "explanation": [
+        "`tracing.py` wraps OpenTelemetry span creation and passes attributes through PII safety rules before export."
+      ],
+      "code": "\nflowchart TD\nstart[\"start_span(name, attrs)\"]\nsetAttrs[\"set_span_attributes(span, attrs)\"]\nsafe[\"safe_attributes(...)\"]\nspan[\"OpenTelemetry span\"]\n\nstart --> setAttrs\nsetAttrs --> safe\nsafe --> span\n",
+      "edges": [
+        [
+          "start_span() -> set_span_attributes()",
+          "Adds sanitized attributes and records exceptions."
+        ],
+        [
+          "safe_attributes() -> span",
+          "Redacts/hashes sensitive values based on settings."
+        ]
+      ]
+    },
+    "serverMainFn": {
+      "title": "Function Graph: server.py::main()",
+      "summary": "Process entrypoint wiring before aiohttp takes over.",
+      "hint": "This function reconciles back to File Graph: server.py.",
+      "parentKey": "serverFile",
+      "reconcileFrom": "runApp",
+      "explanation": [
+        "`main()` loads settings, configures observability, creates the app, and starts the HTTP server."
+      ],
+      "code": "\nflowchart TD\nsettings[\"load settings/env\"]\nconfigure[\"configure_observability(settings)\"]\ncreate[\"create_app()\"]\nrunApp[\"web.run_app(app, host, port)\"]\n\nsettings --> configure\nconfigure --> create\ncreate --> runApp\n",
+      "edges": [
+        [
+          "settings -> configure_observability()",
+          "Passes deployment and telemetry settings."
+        ],
+        [
+          "create_app() -> web.run_app()",
+          "Hands the fully wired aiohttp app to the server loop."
+        ]
+      ]
+    },
+    "serverCreateAppFn": {
+      "title": "Function Graph: server.py::create_app()",
+      "summary": "Builds the aiohttp app and registers HTTP routes plus lifecycle hooks.",
+      "hint": "This function reconciles back to File Graph: server.py.",
+      "parentKey": "serverFile",
+      "reconcileFrom": "startup",
+      "explanation": [
+        "`create_app()` wires webhook routes, Teams routes, and startup/cleanup callbacks onto one app instance."
+      ],
+      "code": "\nflowchart TD\napp[\"aiohttp.web.Application()\"]\nroutes[\"app.router.add_post(...)\"]\nteams[\"_setup_teams(app)\"]\nstartup[\"app.on_startup.append(_on_startup)\"]\ncleanup[\"app.on_cleanup.append(_on_cleanup)\"]\n\napp --> routes\napp --> teams\napp --> startup\napp --> cleanup\n",
+      "edges": [
+        [
+          "Application() -> add_post(...)",
+          "Registers webhook and Teams ingress endpoints."
+        ],
+        [
+          "Application() -> lifecycle hooks",
+          "Adds startup and cleanup callbacks."
+        ]
+      ]
+    },
+    "serverSetupTeamsFn": {
+      "title": "Function Graph: server.py::_setup_teams(app)",
+      "summary": "Builds the Teams SDK runtime and binds it into the aiohttp app.",
+      "hint": "This function reconciles back to File Graph: server.py.",
+      "parentKey": "serverFile",
+      "reconcileFrom": "handlers",
+      "explanation": [
+        "`_setup_teams(app)` creates the Teams agent runtime and registers message handlers."
+      ],
+      "code": "\nflowchart TD\nconfig[\"load_agents_sdk_config()\"]\nagentApp[\"Teams agent app\"]\nhandlers[\"register_handlers(agent_app)\"]\nroute[\"POST /api/messages\"]\n\nconfig --> agentApp\nagentApp --> handlers\nagentApp --> route\n",
+      "edges": [
+        [
+          "SDK config -> Teams agent app",
+          "Builds the Bot Framework / Agents runtime."
+        ],
+        [
+          "register_handlers() -> /api/messages",
+          "Connects Teams activities to the app handler chain."
+        ]
+      ]
+    },
+    "serverStartupFn": {
+      "title": "Function Graph: server.py::_on_startup(app)",
+      "summary": "Initializes runtime dependencies stored on the app container.",
+      "hint": "This function reconciles back to File Graph: server.py.",
+      "parentKey": "serverFile",
+      "reconcileFrom": "queue",
+      "explanation": [
+        "`_on_startup(app)` creates stores, initializes the agent runtime, and starts the background queue worker."
+      ],
+      "code": "\nflowchart TD\nstores[\"create_state_store(...)\"]\nsession[\"create_state_store(...) for sessions\"]\nagent[\"runner.initialize()\"]\nqueue[\"create_job_queue(...process_job...)\"]\nstart[\"JobQueue.start()\"]\n\nstores --> session\nsession --> agent\nagent --> queue\nqueue --> start\n",
+      "edges": [
+        [
+          "state-store factories -> runner.initialize()",
+          "Makes durable state available before tool loading."
+        ],
+        [
+          "create_job_queue() -> JobQueue.start()",
+          "Starts the background worker loop."
+        ]
+      ]
+    },
+    "serverCleanupFn": {
+      "title": "Function Graph: server.py::_on_cleanup(app)",
+      "summary": "Stops background resources during shutdown.",
+      "hint": "This function reconciles back to File Graph: server.py.",
+      "parentKey": "serverFile",
+      "reconcileFrom": "close",
+      "explanation": [
+        "`_on_cleanup(app)` closes the queue worker and any long-lived runtime resources attached to the app."
+      ],
+      "code": "\nflowchart TD\nlookup[\"app runtime resources\"]\nclose[\"JobQueue.close() / runtime cleanup\"]\n\nlookup --> close\n",
+      "edges": [
+        [
+          "app resources -> close()",
+          "Stops worker polling and releases process-local resources."
+        ]
+      ]
+    },
+    "webhookNewHireFn": {
+      "title": "Function Graph: runtime/webhooks.py::handle_new_hire_webhook()",
+      "summary": "Validates a new-hire payload and enqueues a durable job.",
+      "hint": "This function reconciles back to File Graph: runtime/webhooks.py.",
+      "parentKey": "webhooksFile",
+      "reconcileFrom": "accepted",
+      "explanation": [
+        "This path validates the shared secret, parses JSON, and writes a new-hire job for deferred processing."
+      ],
+      "code": "\nflowchart TD\nrequest[\"aiohttp request\"]\nsecret[\"is_valid_webhook_secret()\"]\npayload[\"parse_json_payload()\"]\nqueue[\"_job_queue(request)\"]\nenqueue[\"enqueue(job_type='new_hire', payload)\"]\naccepted[\"_accepted_response()\"]\n\nrequest --> secret\nsecret --> payload\npayload --> queue\nqueue --> enqueue\nenqueue --> accepted\n",
+      "edges": [
+        [
+          "request -> parse_json_payload()",
+          "Builds normalized dict payload from webhook JSON."
+        ],
+        [
+          "payload -> enqueue()",
+          "Persists `job_type='new_hire'` and payload for the worker."
+        ]
+      ]
+    },
+    "webhookBackgroundFn": {
+      "title": "Function Graph: runtime/webhooks.py::handle_background_clearance_webhook()",
+      "summary": "Accepts background-clearance events and hands them to the queue.",
+      "hint": "This function reconciles back to File Graph: runtime/webhooks.py.",
+      "parentKey": "webhooksFile",
+      "reconcileFrom": "accepted",
+      "explanation": [
+        "This path mirrors the new-hire handler but emits a background-clearance job type."
+      ],
+      "code": "\nflowchart TD\nrequest[\"aiohttp request\"]\nsecret[\"is_valid_webhook_secret()\"]\npayload[\"parse_json_payload()\"]\nqueue[\"_job_queue(request)\"]\nenqueue[\"enqueue(job_type='background_clearance', payload)\"]\naccepted[\"_accepted_response()\"]\n\nrequest --> secret\nsecret --> payload\npayload --> queue\nqueue --> enqueue\nenqueue --> accepted\n",
+      "edges": [
+        [
+          "payload -> enqueue()",
+          "Writes the background-clearance workflow handoff to the queue."
+        ]
+      ]
+    },
+    "webhookDocusignFn": {
+      "title": "Function Graph: runtime/webhooks.py::handle_docusign_webhook()",
+      "summary": "Parses DocuSign Connect payloads and enqueues envelope-status work.",
+      "hint": "This function reconciles back to File Graph: runtime/webhooks.py.",
+      "parentKey": "webhooksFile",
+      "reconcileFrom": "accepted",
+      "explanation": [
+        "DocuSign webhook payload shape differs from the JSON HR forms, so it uses a separate parser before enqueue."
+      ],
+      "code": "\nflowchart TD\nrequest[\"aiohttp request\"]\npayload[\"parse_docusign_payload()\"]\nqueue[\"_job_queue(request)\"]\nenqueue[\"enqueue(job_type='docusign_status', payload)\"]\naccepted[\"_accepted_response()\"]\n\nrequest --> payload\npayload --> queue\nqueue --> enqueue\nenqueue --> accepted\n",
+      "edges": [
+        [
+          "parse_docusign_payload() -> enqueue()",
+          "Normalizes envelope event data into the queue payload."
+        ]
+      ]
+    },
+    "jobQueueFactoryFn": {
+      "title": "Function Graph: runtime/job_queue.py::create_job_queue()",
+      "summary": "Chooses the local or Azure queue backend.",
+      "hint": "This function reconciles back to File Graph: runtime/job_queue.py.",
+      "parentKey": "jobQueueFile",
+      "reconcileFrom": "azure",
+      "explanation": [
+        "The same interface backs local development and Azure Storage Queue production execution."
+      ],
+      "code": "\nflowchart TD\nconfig[\"queue backend settings\"]\nlocal[\"LocalJobQueue(...)\"]\nazure[\"AzureStorageJobQueue(...)\"]\n\nconfig -- \"backend=local\" --> local\nconfig -- \"backend=azure\" --> azure\n",
+      "edges": [
+        [
+          "settings -> backend instance",
+          "Returns the queue implementation matching the configured backend."
+        ]
+      ]
+    },
+    "jobQueueEnqueueFn": {
+      "title": "Function Graph: runtime/job_queue.py::enqueue(job_type, payload)",
+      "summary": "Serializes the work item and persists or dispatches it.",
+      "hint": "This function reconciles back to File Graph: runtime/job_queue.py.",
+      "parentKey": "jobQueueFile",
+      "reconcileFrom": "stored",
+      "explanation": [
+        "Local mode typically runs in-process; Azure mode serializes a durable queue message."
+      ],
+      "code": "\nflowchart TD\ninput[\"job_type + payload\"]\nserialize[\"QueueJob -> JSON\"]\nstored[\"local task or Azure queue message\"]\n\ninput --> serialize\nserialize --> stored\n",
+      "edges": [
+        [
+          "QueueJob -> JSON/task",
+          "Creates the durable or in-process handoff."
+        ]
+      ]
+    },
+    "jobQueueWorkerFn": {
+      "title": "Function Graph: runtime/job_queue.py::_run_worker()",
+      "summary": "Long-running poll loop for the Azure-backed worker.",
+      "hint": "This function reconciles back to File Graph: runtime/job_queue.py.",
+      "parentKey": "jobQueueFile",
+      "reconcileFrom": "receive",
+      "explanation": [
+        "The worker loop repeatedly receives messages and passes them into the handler path."
+      ],
+      "code": "\nflowchart TD\nstart[\"worker loop start\"]\nreceive[\"_receive_message()\"]\nbackoff[\"sleep/backoff\"]\n\nstart --> receive\nreceive --> backoff\nbackoff --> receive\n",
+      "edges": [
+        [
+          "_run_worker() -> _receive_message()",
+          "Polls Azure Storage Queue for the next job."
+        ]
+      ]
+    },
+    "jobQueueHandleFn": {
+      "title": "Function Graph: runtime/job_queue.py::_handle_message(message)",
+      "summary": "Decodes a queue message and hands it to the deterministic dispatcher.",
+      "hint": "This function reconciles back to File Graph: runtime/job_queue.py.",
+      "parentKey": "jobQueueFile",
+      "reconcileFrom": "process",
+      "explanation": [
+        "This is the boundary where queue storage becomes a typed `QueueJob`."
+      ],
+      "code": "\nflowchart TD\nmessage[\"queue message\"]\ndecode[\"parse QueueJob\"]\nprocess[\"process_job(job)\"]\nack[\"ack/delete or error handling\"]\n\nmessage --> decode\ndecode --> process\nprocess --> ack\n",
+      "edges": [
+        [
+          "message -> process_job()",
+          "Passes parsed `QueueJob(job_type, payload)` to the workflow dispatcher."
+        ]
+      ]
+    },
+    "jobsProcessFn": {
+      "title": "Function Graph: runtime/jobs.py::process_job(job)",
+      "summary": "Dispatches queued jobs by type into workflow handlers.",
+      "hint": "This function reconciles back to File Graph: runtime/jobs.py.",
+      "parentKey": "jobsFile",
+      "reconcileFrom": "background",
+      "explanation": [
+        "`process_job(job)` is the deterministic dispatcher boundary after queue receipt."
+      ],
+      "code": "\nflowchart TD\njob[\"QueueJob(job_type, payload)\"]\nnewHire[\"process_new_hire_job(payload)\"]\ndocu[\"process_docusign_job(payload)\"]\nbackground[\"process_background_clearance_job(payload)\"]\n\njob --> newHire\njob --> docu\njob --> background\n",
+      "edges": [
+        [
+          "QueueJob -> handler",
+          "Routes by `job_type`."
+        ]
+      ]
+    },
+    "jobsNewHireFn": {
+      "title": "Function Graph: runtime/jobs.py::process_new_hire_job(payload)",
+      "summary": "Creates or updates tracker state and notifies HR for a new hire.",
+      "hint": "This function reconciles back to File Graph: runtime/jobs.py.",
+      "parentKey": "jobsFile",
+      "reconcileFrom": "save",
+      "explanation": [
+        "This handler ensures the tracker record exists, drives workflow-specific side effects, and persists card state."
+      ],
+      "code": "\nflowchart TD\npayload[\"new-hire payload\"]\nensure[\"_ensure_tracker_record(...)\"]\nnotify[\"_send_submission_notification(...)\"]\ncard[\"_send_or_update_card(...)\"]\nsave[\"_save_card_state_safely(...)\"]\n\npayload --> ensure\nensure --> notify\nnotify --> card\ncard --> save\n",
+      "edges": [
+        [
+          "payload -> _ensure_tracker_record()",
+          "Resolves or creates the employee workflow row."
+        ],
+        [
+          "notification -> card state",
+          "Posts Teams output and stores card metadata."
+        ]
+      ]
+    },
+    "jobsDocuFn": {
+      "title": "Function Graph: runtime/jobs.py::process_docusign_job(payload)",
+      "summary": "Reconciles envelope-status changes into workflow state and notifications.",
+      "hint": "This function reconciles back to File Graph: runtime/jobs.py.",
+      "parentKey": "jobsFile",
+      "reconcileFrom": "save",
+      "explanation": [
+        "This handler translates DocuSign events into tracker changes, email/Teams output, and card refreshes."
+      ],
+      "code": "\nflowchart TD\npayload[\"DocuSign payload\"]\nstatus[\"resolve envelope status\"]\nnotify[\"_send_workflow_action_notification(...)\"]\ncard[\"_send_or_update_card(...)\"]\nsave[\"_save_card_state_safely(...)\"]\n\npayload --> status\nstatus --> notify\nnotify --> card\ncard --> save\n",
+      "edges": [
+        [
+          "payload -> workflow notification",
+          "Turns envelope state into deterministic workflow actions."
+        ]
+      ]
+    },
+    "jobsBackgroundFn": {
+      "title": "Function Graph: runtime/jobs.py::process_background_clearance_job(payload)",
+      "summary": "Reconciles clearance events into tracker state and next-step notifications.",
+      "hint": "This function reconciles back to File Graph: runtime/jobs.py.",
+      "parentKey": "jobsFile",
+      "reconcileFrom": "save",
+      "explanation": [
+        "This handler reacts to clearance completion and updates workflow stages plus Teams/email side effects."
+      ],
+      "code": "\nflowchart TD\npayload[\"background-clearance payload\"]\nupdate[\"update tracker/roster workflow stage\"]\nnotify[\"_send_workflow_action_notification(...)\"]\ncard[\"_send_or_update_card(...)\"]\nsave[\"_save_card_state_safely(...)\"]\n\npayload --> update\nupdate --> notify\nnotify --> card\ncard --> save\n",
+      "edges": [
+        [
+          "payload -> tracker update",
+          "Marks the workflow stage transition triggered by clearance."
+        ]
+      ]
+    },
+    "runnerInitializeFn": {
+      "title": "Function Graph: agent/runner.py::initialize()",
+      "summary": "Starts the MCP subprocess and loads tool schemas into the agent runtime.",
+      "hint": "This function reconciles back to File Graph: agent/runner.py.",
+      "parentKey": "runnerFile",
+      "reconcileFrom": "tools",
+      "explanation": [
+        "`initialize()` is the cold-start boundary for the agent tool layer."
+      ],
+      "code": "\nflowchart TD\nenv[\"runtime settings/env\"]\nsubprocess[\"start MCP subprocess\"]\ntools[\"MultiServerMCPClient.get_tools()\"]\ncache[\"store tool schemas/tool map\"]\n\nenv --> subprocess\nsubprocess --> tools\ntools --> cache\n",
+      "edges": [
+        [
+          "MCP subprocess -> get_tools()",
+          "Loads MCP tool schemas over stdio."
+        ]
+      ]
+    },
+    "runnerRunFn": {
+      "title": "Function Graph: agent/runner.py::run_agent(...)",
+      "summary": "Runs the chat/tool loop until the model produces a final non-tool response.",
+      "hint": "This function reconciles back to File Graph: agent/runner.py.",
+      "parentKey": "runnerFile",
+      "reconcileFrom": "derive",
+      "explanation": [
+        "`run_agent(...)` binds tool schemas into the LLM call, loops through tool execution, then derives updated session context."
+      ],
+      "code": "\nflowchart TD\ninput[\"messages + trigger_source + session_context\"]\nbuild[\"_build_llm(tools)\"]\ninvoke[\"llm.ainvoke(messages)\"]\nexec[\"_execute_tool_calls(tool_calls, tool_map)\"]\nderive[\"derive_session_context(messages, existing)\"]\n\ninput --> build\nbuild --> invoke\ninvoke --> exec\nexec --> invoke\ninvoke --> derive\n",
+      "edges": [
+        [
+          "messages -> llm.ainvoke()",
+          "Passes current transcript plus tool schemas."
+        ],
+        [
+          "tool calls -> _execute_tool_calls()",
+          "Converts LLM tool requests into deterministic MCP executions."
+        ]
+      ]
+    },
+    "runnerExecuteToolCallsFn": {
+      "title": "Function Graph: agent/runner.py::_execute_tool_calls(...)",
+      "summary": "Executes each LLM-selected MCP tool and converts results into ToolMessages.",
+      "hint": "This function reconciles back to File Graph: agent/runner.py.",
+      "parentKey": "runnerFile",
+      "reconcileFrom": "messages",
+      "explanation": [
+        "This function is the bridge between LangChain tool calls and deterministic MCP tool results."
+      ],
+      "code": "\nflowchart TD\ncalls[\"tool_calls[]\"]\nlookup[\"tool_map[name]\"]\ninvoke[\"tool.ainvoke(args)\"]\nmessages[\"ToolMessage[]\"]\n\ncalls --> lookup\nlookup --> invoke\ninvoke --> messages\n",
+      "edges": [
+        [
+          "tool call -> tool.ainvoke()",
+          "Executes the named MCP-backed tool with LLM-provided args."
+        ],
+        [
+          "tool result -> ToolMessage",
+          "Feeds deterministic output back into the next LLM turn."
+        ]
+      ]
+    },
+    "runnerDeriveSessionContextFn": {
+      "title": "Function Graph: agent/runner.py::derive_session_context(...)",
+      "summary": "Extracts compact structured context from the evolving message history.",
+      "hint": "This function reconciles back to File Graph: agent/runner.py.",
+      "parentKey": "runnerFile",
+      "reconcileFrom": "context",
+      "explanation": [
+        "This function pulls durable conversational context forward for later Teams turns."
+      ],
+      "code": "\nflowchart TD\nmessages[\"result messages\"]\nexisting[\"existing session context\"]\ncontext[\"derived session context patch\"]\n\nmessages --> context\nexisting --> context\n",
+      "edges": [
+        [
+          "messages + existing -> context patch",
+          "Returns compact structured state for session persistence."
+        ]
+      ]
+    },
+    "teamsRegisterHandlersFn": {
+      "title": "Function Graph: integrations/teams/bot.py::register_handlers(...)",
+      "summary": "Connects Teams runtime callbacks to the app-level message router.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/bot.py.",
+      "parentKey": "teamsBotFile",
+      "reconcileFrom": "message",
+      "explanation": [
+        "Handler registration is the entrypoint from the Teams SDK into the bot routing code."
+      ],
+      "code": "\nflowchart TD\nagent[\"Teams agent app\"]\nmessage[\"on_message(context, state)\"]\nagent --> message\n",
+      "edges": [
+        [
+          "Teams app -> on_message()",
+          "Registers the main activity callback."
+        ]
+      ]
+    },
+    "teamsOnMessageFn": {
+      "title": "Function Graph: integrations/teams/bot.py::on_message(...)",
+      "summary": "Routes a Teams activity into card actions or the agent flow.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/bot.py.",
+      "parentKey": "teamsBotFile",
+      "reconcileFrom": "reply",
+      "explanation": [
+        "`on_message(...)` is the runtime fork between deterministic card handling and natural-language tool use."
+      ],
+      "code": "\nflowchart TD\nactivity[\"Teams activity\"]\nsaveRef[\"save_conversation_reference(activity)\"]\ncard[\"extract_card_action(activity)\"]\nslash[\"_expand_slash_command(user_text)\"]\nagent[\"runner.run_agent(...)\"]\nreply[\"send reply / card result\"]\n\nactivity --> saveRef\nsaveRef --> card\ncard --> slash\nslash --> agent\nagent --> reply\n",
+      "edges": [
+        [
+          "activity -> extract_card_action()",
+          "Checks for Adaptive Card submit payloads."
+        ],
+        [
+          "natural-language path -> runner.run_agent()",
+          "Invokes the LLM + MCP loop when no explicit card action is present."
+        ]
+      ]
+    },
+    "teamsExpandSlashFn": {
+      "title": "Function Graph: integrations/teams/bot.py::_expand_slash_command(...)",
+      "summary": "Turns shortcut commands into fuller prompts before the agent run.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/bot.py.",
+      "parentKey": "teamsBotFile",
+      "reconcileFrom": "expanded",
+      "explanation": [
+        "Slash/shortcut text is normalized before entering the same agent loop as freeform queries."
+      ],
+      "code": "\nflowchart TD\ninput[\"raw user text\"]\nexpanded[\"expanded/normalized prompt\"]\n\ninput --> expanded\n",
+      "edges": [
+        [
+          "raw text -> normalized prompt",
+          "Converts command shorthand into a fuller agent prompt."
+        ]
+      ]
+    },
+    "teamsRunAgentFn": {
+      "title": "Function Graph: integrations/teams/bot.py::runner.run_agent(...) path",
+      "summary": "Builds agent inputs from Teams state and persists the response history.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/bot.py.",
+      "parentKey": "teamsBotFile",
+      "reconcileFrom": "history",
+      "explanation": [
+        "The Teams layer loads session state, calls the agent, stores updated context/history, and emits the final reply."
+      ],
+      "code": "\nflowchart TD\nhistory[\"load_chat_history()\"]\ncontext[\"load session context\"]\nagent[\"runner.run_agent(...)\"]\nsave[\"save_chat_history(...) / merge_session_context(...)\"]\n\nhistory --> agent\ncontext --> agent\nagent --> save\n",
+      "edges": [
+        [
+          "history/context -> run_agent()",
+          "Supplies prior transcript and durable structured context."
+        ],
+        [
+          "run_agent() -> save_*()",
+          "Persists the updated conversation state."
+        ]
+      ]
+    },
+    "memorySessionKeyFn": {
+      "title": "Function Graph: integrations/teams/memory.py::get_or_create_session_key(...)",
+      "summary": "Derives the durable session namespace from Teams activity identifiers.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/memory.py.",
+      "parentKey": "teamsMemoryFile",
+      "reconcileFrom": "key",
+      "explanation": [
+        "This is the identity boundary for a conversation session."
+      ],
+      "code": "\nflowchart TD\nactivity[\"activity.channel/conversation/thread ids\"]\nkey[\"session key\"]\n\nactivity --> key\n",
+      "edges": [
+        [
+          "activity ids -> session key",
+          "Builds the durable key used for history and context storage."
+        ]
+      ]
+    },
+    "memoryMergeContextFn": {
+      "title": "Function Graph: integrations/teams/memory.py::merge_session_context(...)",
+      "summary": "Reads, merges, and writes compact structured session context.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/memory.py.",
+      "parentKey": "teamsMemoryFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "This path updates structured state such as the active employee or workflow context."
+      ],
+      "code": "\nflowchart TD\nkey[\"session key\"]\npatch[\"context patch\"]\nmerge[\"existing + patch\"]\nstore[\"session_store.put(...)\"]\n\nkey --> merge\npatch --> merge\nmerge --> store\n",
+      "edges": [
+        [
+          "session key + patch -> session_store.put()",
+          "Persists the merged structured context."
+        ]
+      ]
+    },
+    "memoryHistoryFns": {
+      "title": "Function Graph: integrations/teams/memory.py::load_chat_history() / save_chat_history()",
+      "summary": "Loads and stores bounded Teams transcript history.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/memory.py.",
+      "parentKey": "teamsMemoryFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "These helpers preserve a bounded transcript for later agent turns."
+      ],
+      "code": "\nflowchart TD\nkey[\"session key\"]\nload[\"load_chat_history()\"]\nsave[\"save_chat_history(messages)\"]\nstore[\"session_store\"]\n\nkey --> load\nkey --> save\nload --> store\nsave --> store\n",
+      "edges": [
+        [
+          "load/save -> session_store",
+          "Reads and writes bounded transcript payloads."
+        ]
+      ]
+    },
+    "memorySeedThreadFn": {
+      "title": "Function Graph: integrations/teams/memory.py::seed_channel_thread_context(...)",
+      "summary": "Seeds a thread with workflow context before later replies or card updates.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/memory.py.",
+      "parentKey": "teamsMemoryFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "Proactive card threads need initial context before later deterministic or agent-driven interactions."
+      ],
+      "code": "\nflowchart TD\nthread[\"channel/thread identifiers\"]\ncontext[\"seed context\"]\nstore[\"session_store.put(...)\"]\n\nthread --> context\ncontext --> store\n",
+      "edges": [
+        [
+          "thread + context -> session_store",
+          "Preloads workflow context for proactive conversations."
+        ]
+      ]
+    },
+    "cardExtractActionFn": {
+      "title": "Function Graph: integrations/teams/card_actions.py::extract_card_action(...)",
+      "summary": "Parses the submit payload into a typed action envelope.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/card_actions.py.",
+      "parentKey": "cardActionsFile",
+      "reconcileFrom": "action",
+      "explanation": [
+        "The card submit payload becomes a deterministic action identifier plus arguments."
+      ],
+      "code": "\nflowchart TD\nactivity[\"Teams submit activity\"]\naction[\"parsed card action + args\"]\n\nactivity --> action\n",
+      "edges": [
+        [
+          "submit payload -> action envelope",
+          "Returns the explicit card action and arguments."
+        ]
+      ]
+    },
+    "cardRouteHandlerFn": {
+      "title": "Function Graph: integrations/teams/card_actions.py::specific handler path",
+      "summary": "Routes a parsed action into the right deterministic handler and clients.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/card_actions.py.",
+      "parentKey": "cardActionsFile",
+      "reconcileFrom": "clients",
+      "explanation": [
+        "Once parsed, the action is routed to tracker, roster, DocuSign, or email side effects without LLM inference."
+      ],
+      "code": "\nflowchart TD\naction[\"parsed card action\"]\nroute[\"specific handler\"]\nclients[\"Tracker/Roster/DocuSign/Email clients\"]\n\naction --> route\nroute --> clients\n",
+      "edges": [
+        [
+          "action -> handler",
+          "Dispatches by explicit action name."
+        ],
+        [
+          "handler -> clients",
+          "Executes deterministic business side effects."
+        ]
+      ]
+    },
+    "cardRefreshFn": {
+      "title": "Function Graph: integrations/teams/card_actions.py::refresh_card_from_context(...)",
+      "summary": "Rebuilds the visible card surface from updated workflow state.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/card_actions.py.",
+      "parentKey": "cardActionsFile",
+      "reconcileFrom": "update",
+      "explanation": [
+        "After the action finishes, the card is re-rendered from the latest durable context."
+      ],
+      "code": "\nflowchart TD\ncontext[\"latest workflow/card state\"]\nbuild[\"rebuild adaptive card\"]\nupdate[\"update proactive Teams card\"]\n\ncontext --> build\nbuild --> update\n",
+      "edges": [
+        [
+          "workflow state -> update card",
+          "Refreshes the visible Teams card after the action completes."
+        ]
+      ]
+    },
+    "mcpServerInitFn": {
+      "title": "Function Graph: mcp_server/server.py::_initialize_runtime()",
+      "summary": "Prepares runtime state needed before tool registration.",
+      "hint": "This function reconciles back to File Graph: mcp_server/server.py.",
+      "parentKey": "mcpServerFile",
+      "reconcileFrom": "ready",
+      "explanation": [
+        "This initialization step makes shared state and settings available before the FastMCP server starts."
+      ],
+      "code": "\nflowchart TD\nsettings[\"runtime settings\"]\nstore[\"create/load shared state store\"]\nready[\"runtime ready\"]\n\nsettings --> store\nstore --> ready\n",
+      "edges": [
+        [
+          "settings -> state store",
+          "Initializes state dependencies used by some MCP tools."
+        ]
+      ]
+    },
+    "mcpServerRegisterFn": {
+      "title": "Function Graph: mcp_server/server.py::register_* tools",
+      "summary": "Registers tool modules with the FastMCP server instance.",
+      "hint": "This function reconciles back to File Graph: mcp_server/server.py.",
+      "parentKey": "mcpServerFile",
+      "reconcileFrom": "registered",
+      "explanation": [
+        "Tool registration converts internal Python functions into MCP-exposed schemas and handlers."
+      ],
+      "code": "\nflowchart TD\nmcp[\"FastMCP instance\"]\ntoolModules[\"tools_tracker/tools_email/tools_*\"]\nregistered[\"tool schemas + handlers\"]\n\nmcp --> toolModules\ntoolModules --> registered\n",
+      "edges": [
+        [
+          "FastMCP -> tool modules",
+          "Registers MCP-callable tools and their schemas."
+        ]
+      ]
+    },
+    "mcpServerRunFn": {
+      "title": "Function Graph: mcp_server/server.py::mcp.run(transport='stdio')",
+      "summary": "Starts the MCP protocol server over stdio.",
+      "hint": "This function reconciles back to File Graph: mcp_server/server.py.",
+      "parentKey": "mcpServerFile",
+      "reconcileFrom": "stdio",
+      "explanation": [
+        "Once running, the agent process can call tools over stdio using the MCP protocol."
+      ],
+      "code": "\nflowchart TD\nserver[\"FastMCP server\"]\nstdio[\"stdio transport\"]\nagent[\"LangChain MCP client\"]\n\nserver --> stdio\nstdio --> agent\n",
+      "edges": [
+        [
+          "mcp.run() -> stdio",
+          "Opens the tool-serving protocol channel used by the agent runtime."
+        ]
+      ]
+    },
+    "mcpToolValidationFn": {
+      "title": "Function Graph: mcp_server/tools_*.py::tool validation path",
+      "summary": "Normalizes and validates user-supplied tool arguments before client calls.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_*.py.",
+      "parentKey": "mcpToolsFile",
+      "reconcileFrom": "validated",
+      "explanation": [
+        "Tool functions sanitize and relax identifiers so the LLM does not need to be perfectly precise."
+      ],
+      "code": "\nflowchart TD\nargs[\"raw MCP tool args\"]\nnormalize[\"normalize identifiers/fields\"]\nvalidated[\"validated args\"]\n\nargs --> normalize\nnormalize --> validated\n",
+      "edges": [
+        [
+          "raw args -> validated args",
+          "Resolves relaxed names, defaults, and required fields."
+        ]
+      ]
+    },
+    "mcpToolClientFactoryFn": {
+      "title": "Function Graph: mcp_server/tools_*.py::client factory path",
+      "summary": "Creates the right integration client for the selected tool.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_*.py.",
+      "parentKey": "mcpToolsFile",
+      "reconcileFrom": "clients",
+      "explanation": [
+        "Each tool uses shared factories so client construction stays consistent across the MCP surface."
+      ],
+      "code": "\nflowchart TD\nvalidated[\"validated args\"]\nfactory[\"mcp_server/clients.py factory\"]\nclient[\"integration client instance\"]\n\nvalidated --> factory\nfactory --> client\n",
+      "edges": [
+        [
+          "validated args -> factory",
+          "Chooses the needed integration client for this tool call."
+        ]
+      ]
+    },
+    "mcpToolIntegrationCallFn": {
+      "title": "Function Graph: mcp_server/tools_*.py::integration call path",
+      "summary": "Executes the deterministic integration call and returns a tool payload.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_*.py.",
+      "parentKey": "mcpToolsFile",
+      "reconcileFrom": "result",
+      "explanation": [
+        "The final step is a normal client call plus packaging the result for the agent loop."
+      ],
+      "code": "\nflowchart TD\nclient[\"integration client\"]\ncall[\"client method(...)\"]\nresult[\"tool result dict\"]\n\nclient --> call\ncall --> result\n",
+      "edges": [
+        [
+          "client method -> tool result",
+          "Returns serializable output to the LLM tool loop."
+        ]
+      ]
+    },
+    "mcpClientsFactoryFns": {
+      "title": "Function Graph: mcp_server/clients.py::factory functions",
+      "summary": "Shared factory layer for MCP tool integration clients.",
+      "hint": "This function reconciles back to File Graph: mcp_server/clients.py.",
+      "parentKey": "mcpClientsFile",
+      "reconcileFrom": "instances",
+      "explanation": [
+        "Factories centralize settings, credential wiring, and object construction for tool calls."
+      ],
+      "code": "\nflowchart TD\nsettings[\"settings + shared helpers\"]\nfactories[\"get_tracker/get_roster/get_docu/get_email/...\"]\ninstances[\"client instances\"]\n\nsettings --> factories\nfactories --> instances\n",
+      "edges": [
+        [
+          "settings -> factory functions",
+          "Supplies credentials, workbook config, and shared helpers."
+        ]
+      ]
+    },
+    "mcpClientsTrackerFactoryFn": {
+      "title": "Function Graph: mcp_server/clients.py::TrackerClient factory",
+      "summary": "Builds the tracker client used by tracker-oriented MCP tools.",
+      "hint": "This function reconciles back to File Graph: mcp_server/clients.py.",
+      "parentKey": "mcpClientsFile",
+      "reconcileFrom": "tracker",
+      "explanation": [
+        "Tracker client creation encapsulates workbook and Graph dependencies."
+      ],
+      "code": "\nflowchart TD\nconfig[\"tracker workbook config\"]\ngraph[\"Graph auth/workbook helper\"]\ntracker[\"TrackerClient(...)\"]\n\nconfig --> tracker\ngraph --> tracker\n",
+      "edges": [
+        [
+          "workbook config + Graph helper -> TrackerClient",
+          "Returns a ready tracker client instance."
+        ]
+      ]
+    },
+    "mcpClientsTeamsFactoryFn": {
+      "title": "Function Graph: mcp_server/clients.py::Teams messenger factory",
+      "summary": "Builds the proactive Teams client used by card and notification tools.",
+      "hint": "This function reconciles back to File Graph: mcp_server/clients.py.",
+      "parentKey": "mcpClientsFile",
+      "reconcileFrom": "messenger",
+      "explanation": [
+        "Teams notification tools rely on stored conversation references and the proactive adapter path."
+      ],
+      "code": "\nflowchart TD\nadapter[\"Teams adapter/config\"]\nstate[\"conversation reference store\"]\nmessenger[\"TeamsMessenger(...)\"]\n\nadapter --> messenger\nstate --> messenger\n",
+      "edges": [
+        [
+          "adapter + state store -> TeamsMessenger",
+          "Returns a client capable of proactive send/update flows."
+        ]
+      ]
+    },
+    "mcpClientsEmailFactoryFn": {
+      "title": "Function Graph: mcp_server/clients.py::OutlookEmailClient factory",
+      "summary": "Builds the Graph email client used by email tools and workflow helpers.",
+      "hint": "This function reconciles back to File Graph: mcp_server/clients.py.",
+      "parentKey": "mcpClientsFile",
+      "reconcileFrom": "email",
+      "explanation": [
+        "Email helpers consistently use the same Graph-backed email client configuration."
+      ],
+      "code": "\nflowchart TD\nsettings[\"sender mailbox + Graph auth settings\"]\nemail[\"OutlookEmailClient(...)\"]\n\nsettings --> email\n",
+      "edges": [
+        [
+          "mailbox/settings -> OutlookEmailClient",
+          "Returns the configured email client."
+        ]
+      ]
+    },
+    "teamsProactiveSaveReferenceFn": {
+      "title": "Function Graph: integrations/teams/proactive.py::save_conversation_reference(...)",
+      "summary": "Extracts and stores the continuation reference for later proactive sends.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/proactive.py.",
+      "parentKey": "teamsProactiveFile",
+      "reconcileFrom": "stored",
+      "explanation": [
+        "This is the state-capture step that allows the app to post into a thread later."
+      ],
+      "code": "\nflowchart TD\nactivity[\"Teams activity\"]\nreference[\"conversation reference\"]\nstored[\"state store write\"]\n\nactivity --> reference\nreference --> stored\n",
+      "edges": [
+        [
+          "activity -> state write",
+          "Persists the continuation reference for proactive use."
+        ]
+      ]
+    },
+    "teamsProactiveSendFn": {
+      "title": "Function Graph: integrations/teams/proactive.py::send_proactive_message(...)",
+      "summary": "Sends a new proactive Teams message using a stored reference.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/proactive.py.",
+      "parentKey": "teamsProactiveFile",
+      "reconcileFrom": "teams",
+      "explanation": [
+        "Send flows ensure the adapter exists, load the reference, and continue the conversation."
+      ],
+      "code": "\nflowchart TD\nmessage[\"text/card payload\"]\nadapter[\"_ensure_adapter()\"]\nreference[\"get_conversation_reference(...)\"]\nteams[\"continue_conversation(...)\"]\n\nmessage --> adapter\nadapter --> teams\nreference --> teams\n",
+      "edges": [
+        [
+          "message + reference -> continue_conversation()",
+          "Posts a proactive Teams activity."
+        ]
+      ]
+    },
+    "teamsProactiveUpdateFn": {
+      "title": "Function Graph: integrations/teams/proactive.py::update_proactive_card(...)",
+      "summary": "Updates an existing proactive Teams card in-place.",
+      "hint": "This function reconciles back to File Graph: integrations/teams/proactive.py.",
+      "parentKey": "teamsProactiveFile",
+      "reconcileFrom": "teams",
+      "explanation": [
+        "Card update flows mirror proactive sends but target an existing activity ID."
+      ],
+      "code": "\nflowchart TD\ncard[\"updated Adaptive Card payload\"]\nadapter[\"_ensure_adapter()\"]\nreference[\"get_conversation_reference(...)\"]\nteams[\"continue_conversation(...) -> update activity\"]\n\ncard --> adapter\nadapter --> teams\nreference --> teams\n",
+      "edges": [
+        [
+          "card + reference -> Teams update",
+          "Refreshes an existing proactive card surface."
+        ]
+      ]
+    },
+    "cardStateSaveFn": {
+      "title": "Function Graph: integrations/card_state.py::save_*_card(...)",
+      "summary": "Persists card metadata after a card is posted.",
+      "hint": "This function reconciles back to File Graph: integrations/card_state.py.",
+      "parentKey": "cardStateFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "Saved card records include message identity and enough workflow context for later refresh."
+      ],
+      "code": "\nflowchart TD\nmetadata[\"card metadata + workflow context\"]\nstore[\"store_mod.store.put(...)\"]\n\nmetadata --> store\n",
+      "edges": [
+        [
+          "card metadata -> store",
+          "Persists the record used for later update and idempotency checks."
+        ]
+      ]
+    },
+    "cardStateGetFn": {
+      "title": "Function Graph: integrations/card_state.py::get_*_card(...)",
+      "summary": "Reads a persisted card record by workflow key.",
+      "hint": "This function reconciles back to File Graph: integrations/card_state.py.",
+      "parentKey": "cardStateFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "Read helpers recover the original message and context needed for updates."
+      ],
+      "code": "\nflowchart TD\nkey[\"workflow/card key\"]\nstore[\"store_mod.store.get(...)\"]\nrecord[\"card record\"]\n\nkey --> store\nstore --> record\n",
+      "edges": [
+        [
+          "workflow key -> store.get()",
+          "Returns the saved card metadata record."
+        ]
+      ]
+    },
+    "cardStateMarkCompleteFn": {
+      "title": "Function Graph: integrations/card_state.py::mark_*_complete(...)",
+      "summary": "Marks an action as completed to enforce idempotency.",
+      "hint": "This function reconciles back to File Graph: integrations/card_state.py.",
+      "parentKey": "cardStateFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "Completion markers prevent repeated card actions from rerunning side effects."
+      ],
+      "code": "\nflowchart TD\naction[\"card action key\"]\nrecord[\"update completion flags\"]\nstore[\"store_mod.store.put(...)\"]\n\naction --> record\nrecord --> store\n",
+      "edges": [
+        [
+          "action completion -> store",
+          "Persists idempotency state for later submit checks."
+        ]
+      ]
+    },
+    "cardStateRefreshFn": {
+      "title": "Function Graph: integrations/card_state.py::refresh_*_card(...)",
+      "summary": "Loads saved card state and rebuilds the visible Teams card.",
+      "hint": "This function reconciles back to File Graph: integrations/card_state.py.",
+      "parentKey": "cardStateFile",
+      "reconcileFrom": "teams",
+      "explanation": [
+        "Refresh helpers bridge durable card state back into a proactive Teams update."
+      ],
+      "code": "\nflowchart TD\nrecord[\"get saved card record\"]\nbuild[\"rebuild card payload\"]\nteams[\"update proactive card\"]\n\nrecord --> build\nbuild --> teams\n",
+      "edges": [
+        [
+          "saved record -> Teams update",
+          "Rebuilds and refreshes the visible card."
+        ]
+      ]
+    },
+    "graphAuthCredentialFn": {
+      "title": "Function Graph: integrations/graph/auth.py::ClientSecretCredential(...)",
+      "summary": "Constructs the Microsoft Entra client-credentials object.",
+      "hint": "This function reconciles back to File Graph: integrations/graph/auth.py.",
+      "parentKey": "graphAuthFile",
+      "reconcileFrom": "credential",
+      "explanation": [
+        "Credential creation binds tenant, client ID, and client secret into the Azure identity helper."
+      ],
+      "code": "\nflowchart TD\nsettings[\"tenant_id + client_id + client_secret\"]\ncredential[\"ClientSecretCredential(...)\"]\n\nsettings --> credential\n",
+      "edges": [
+        [
+          "Graph auth settings -> ClientSecretCredential",
+          "Builds the bearer-token credential source."
+        ]
+      ]
+    },
+    "graphAuthGetTokenFn": {
+      "title": "Function Graph: integrations/graph/auth.py::credential.get_token(...)",
+      "summary": "Fetches a Graph bearer token for downstream workbook and email calls.",
+      "hint": "This function reconciles back to File Graph: integrations/graph/auth.py.",
+      "parentKey": "graphAuthFile",
+      "reconcileFrom": "token",
+      "explanation": [
+        "All Graph-backed clients depend on this token acquisition path."
+      ],
+      "code": "\nflowchart TD\ncredential[\"ClientSecretCredential\"]\nscope[\"Graph .default scope\"]\ntoken[\"access token\"]\n\ncredential --> scope\nscope --> token\n",
+      "edges": [
+        [
+          "credential.get_token() -> token",
+          "Returns the Graph bearer token used by downstream requests."
+        ]
+      ]
+    },
+    "workbookClientTokenFn": {
+      "title": "Function Graph: integrations/workbook/client.py::graph_access_token()",
+      "summary": "Obtains a Graph token for workbook requests.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/client.py.",
+      "parentKey": "workbookClientFile",
+      "reconcileFrom": "token",
+      "explanation": [
+        "Workbook helpers delegate token acquisition to the shared Graph auth path."
+      ],
+      "code": "\nflowchart TD\nauth[\"graph auth helper\"]\ntoken[\"access token\"]\n\nauth --> token\n",
+      "edges": [
+        [
+          "graph auth helper -> token",
+          "Supplies the bearer token for workbook requests."
+        ]
+      ]
+    },
+    "workbookClientRequestFn": {
+      "title": "Function Graph: integrations/workbook/client.py::_graph_workbook_request(...)",
+      "summary": "Builds and executes a workbook REST request through Microsoft Graph.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/client.py.",
+      "parentKey": "workbookClientFile",
+      "reconcileFrom": "graph",
+      "explanation": [
+        "This helper centralizes workbook URL formation, headers, and request execution."
+      ],
+      "code": "\nflowchart TD\nargs[\"method + path + drive_id + item_id + json_body\"]\ntoken[\"access token\"]\ngraph[\"Graph workbook endpoint\"]\njson[\"JSON response\"]\n\nargs --> token\ntoken --> graph\ngraph --> json\n",
+      "edges": [
+        [
+          "request args + token -> Graph",
+          "Executes the workbook REST call and returns JSON."
+        ]
+      ]
+    },
+    "workbookClientRowsFn": {
+      "title": "Function Graph: integrations/workbook/client.py::_used_range_rows(...) / _tracker_rows_with_start_row()",
+      "summary": "Reads workbook ranges and shapes them into row collections.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/client.py.",
+      "parentKey": "workbookClientFile",
+      "reconcileFrom": "rows",
+      "explanation": [
+        "Higher-level workbook clients call these helpers to get row-oriented sheet data."
+      ],
+      "code": "\nflowchart TD\nrange[\"sheet/range selection\"]\nrequest[\"_graph_workbook_request(...)\"]\nrows[\"parsed rows\"]\n\nrange --> request\nrequest --> rows\n",
+      "edges": [
+        [
+          "range -> workbook request",
+          "Reads sheet data and returns parsed rows."
+        ]
+      ]
+    },
+    "trackerResolveFn": {
+      "title": "Function Graph: integrations/workbook/tracker_client.py::resolve_employee_relaxed(...) / find_employee_in_tracker(...)",
+      "summary": "Resolves an employee row from relaxed identity inputs.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/tracker_client.py.",
+      "parentKey": "trackerFile",
+      "reconcileFrom": "row",
+      "explanation": [
+        "Tracker workflows depend on resolving the right row before any updates or notifications."
+      ],
+      "code": "\nflowchart TD\nidentity[\"email/location/job title/submission id\"]\nrows[\"tracker rows\"]\nrow[\"matched employee row\"]\n\nidentity --> rows\nrows --> row\n",
+      "edges": [
+        [
+          "identity + tracker rows -> matched row",
+          "Performs relaxed lookup and disambiguation."
+        ]
+      ]
+    },
+    "trackerAddFn": {
+      "title": "Function Graph: integrations/workbook/tracker_client.py::add_employee_to_tracker(...)",
+      "summary": "Appends a new employee workflow row to the tracker workbook.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/tracker_client.py.",
+      "parentKey": "trackerFile",
+      "reconcileFrom": "workbook",
+      "explanation": [
+        "Add flows serialize the workflow row and write it through the shared workbook client."
+      ],
+      "code": "\nflowchart TD\nemployee[\"employee payload\"]\nrow[\"tracker row values\"]\nworkbook[\"WorkbookGraphClient request\"]\n\nemployee --> row\nrow --> workbook\n",
+      "edges": [
+        [
+          "employee payload -> workbook write",
+          "Appends the new workflow row to Excel."
+        ]
+      ]
+    },
+    "trackerUpdateFn": {
+      "title": "Function Graph: integrations/workbook/tracker_client.py::update_employee_in_tracker(...) / update_stage(...)",
+      "summary": "Updates a resolved tracker row or workflow stage.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/tracker_client.py.",
+      "parentKey": "trackerFile",
+      "reconcileFrom": "workbook",
+      "explanation": [
+        "Most workflow state transitions eventually land in this update path."
+      ],
+      "code": "\nflowchart TD\nrow[\"resolved tracker row\"]\nchanges[\"field/stage updates\"]\nworkbook[\"WorkbookGraphClient request\"]\n\nrow --> changes\nchanges --> workbook\n",
+      "edges": [
+        [
+          "row + changes -> workbook write",
+          "Updates workflow fields or stage columns in Excel."
+        ]
+      ]
+    },
+    "trackerListFn": {
+      "title": "Function Graph: integrations/workbook/tracker_client.py::list_all_employees() / get_employee_stages(...)",
+      "summary": "Reads tracker rows and shapes them for display or tool output.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/tracker_client.py.",
+      "parentKey": "trackerFile",
+      "reconcileFrom": "rows",
+      "explanation": [
+        "List and stage queries are read-only tracker operations used by MCP tools and admin flows."
+      ],
+      "code": "\nflowchart TD\nrequest[\"WorkbookGraphClient row read\"]\nrows[\"tracker rows\"]\nresult[\"employee/stage list\"]\n\nrequest --> rows\nrows --> result\n",
+      "edges": [
+        [
+          "workbook row read -> result",
+          "Returns employee rows or stage summaries."
+        ]
+      ]
+    },
+    "staffRosterConfigFn": {
+      "title": "Function Graph: staff roster / separations::workbook config resolution",
+      "summary": "Maps a work location to the correct workbook and sheet config.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/staff_roster_client.py + separations_client.py.",
+      "parentKey": "staffRosterFile",
+      "reconcileFrom": "config",
+      "explanation": [
+        "Roster and separation flows start by resolving which location workbook to use."
+      ],
+      "code": "\nflowchart TD\nlocation[\"work_location\"]\nconfig[\"drive_id + item_id + sheet names\"]\n\nlocation --> config\n",
+      "edges": [
+        [
+          "work_location -> workbook config",
+          "Returns the workbook identifiers for that location."
+        ]
+      ]
+    },
+    "staffRosterMethodsFn": {
+      "title": "Function Graph: StaffRosterClient methods",
+      "summary": "Executes location-specific roster and capacity operations.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/staff_roster_client.py + separations_client.py.",
+      "parentKey": "staffRosterFile",
+      "reconcileFrom": "workbook",
+      "explanation": [
+        "Roster methods translate staffing queries and updates into workbook reads and writes."
+      ],
+      "code": "\nflowchart TD\nconfig[\"location workbook config\"]\nmethods[\"roster/capacity/leave methods\"]\nworkbook[\"WorkbookGraphClient request\"]\n\nconfig --> methods\nmethods --> workbook\n",
+      "edges": [
+        [
+          "config -> roster methods -> workbook",
+          "Executes roster operations through Graph Excel."
+        ]
+      ]
+    },
+    "separationsMethodsFn": {
+      "title": "Function Graph: SeparationsClient methods",
+      "summary": "Executes separation-sheet operations for a location workbook.",
+      "hint": "This function reconciles back to File Graph: integrations/workbook/staff_roster_client.py + separations_client.py.",
+      "parentKey": "staffRosterFile",
+      "reconcileFrom": "workbook",
+      "explanation": [
+        "Separation flows use the same workbook path but target separation-specific sheets and row shapes."
+      ],
+      "code": "\nflowchart TD\nconfig[\"location workbook config\"]\nmethods[\"separation add/update/list methods\"]\nworkbook[\"WorkbookGraphClient request\"]\n\nconfig --> methods\nmethods --> workbook\n",
+      "edges": [
+        [
+          "config -> separation methods -> workbook",
+          "Executes separation operations through Graph Excel."
+        ]
+      ]
+    },
+    "outlookEmailTokenFn": {
+      "title": "Function Graph: integrations/outlook_email_client.py::graph_access_token()",
+      "summary": "Fetches the Graph token used by Outlook sendMail calls.",
+      "hint": "This function reconciles back to File Graph: integrations/outlook_email_client.py.",
+      "parentKey": "outlookEmailFile",
+      "reconcileFrom": "token",
+      "explanation": [
+        "Email sends reuse the shared Graph auth path before constructing the HTTP request."
+      ],
+      "code": "\nflowchart TD\nauth[\"graph auth helper\"]\ntoken[\"access token\"]\n\nauth --> token\n",
+      "edges": [
+        [
+          "graph auth helper -> token",
+          "Supplies the bearer token for sendMail."
+        ]
+      ]
+    },
+    "outlookEmailSendFn": {
+      "title": "Function Graph: integrations/outlook_email_client.py::send_email(...)",
+      "summary": "Posts the Graph sendMail request and returns a success/error result.",
+      "hint": "This function reconciles back to File Graph: integrations/outlook_email_client.py.",
+      "parentKey": "outlookEmailFile",
+      "reconcileFrom": "result",
+      "explanation": [
+        "Rendered email content becomes a Graph sendMail request against the configured sender mailbox."
+      ],
+      "code": "\nflowchart TD\nargs[\"to/subject/html/attachments\"]\ntoken[\"access token\"]\nsend[\"POST /users/{sender}/sendMail\"]\nresult[\"success/error result\"]\n\nargs --> token\ntoken --> send\nsend --> result\n",
+      "edges": [
+        [
+          "email args + token -> sendMail",
+          "Dispatches the email through Microsoft Graph."
+        ]
+      ]
+    },
+    "docusignAccessTokenFn": {
+      "title": "Function Graph: integrations/docusign_client.py::_get_access_token()",
+      "summary": "Uses a JWT grant to fetch and cache a DocuSign access token.",
+      "hint": "This function reconciles back to File Graph: integrations/docusign_client.py.",
+      "parentKey": "docusignClientFile",
+      "reconcileFrom": "token",
+      "explanation": [
+        "DocuSign calls start with a cached JWT token path rather than interactive OAuth."
+      ],
+      "code": "\nflowchart TD\njwt[\"signed JWT assertion\"]\noauth[\"DocuSign OAuth token endpoint\"]\ntoken[\"cached access token\"]\n\njwt --> oauth\noauth --> token\n",
+      "edges": [
+        [
+          "JWT assertion -> token endpoint",
+          "Returns and caches the DocuSign bearer token."
+        ]
+      ]
+    },
+    "docusignApiClientFn": {
+      "title": "Function Graph: integrations/docusign_client.py::_get_api_client()",
+      "summary": "Builds the DocuSign SDK client using the access token and base path.",
+      "hint": "This function reconciles back to File Graph: integrations/docusign_client.py.",
+      "parentKey": "docusignClientFile",
+      "reconcileFrom": "api",
+      "explanation": [
+        "Public envelope operations all depend on this authenticated SDK client."
+      ],
+      "code": "\nflowchart TD\ntoken[\"access token\"]\nbase[\"DocuSign base URI/account\"]\napi[\"ApiClient\"]\n\ntoken --> api\nbase --> api\n",
+      "edges": [
+        [
+          "token + base URI -> ApiClient",
+          "Returns the authenticated DocuSign SDK client."
+        ]
+      ]
+    },
+    "docusignDraftFns": {
+      "title": "Function Graph: integrations/docusign_client.py::draft/list/delete draft methods",
+      "summary": "Creates, finds, or deletes draft envelopes.",
+      "hint": "This function reconciles back to File Graph: integrations/docusign_client.py.",
+      "parentKey": "docusignClientFile",
+      "reconcileFrom": "result",
+      "explanation": [
+        "Draft operations are used before final send and during workflow cleanup."
+      ],
+      "code": "\nflowchart TD\napi[\"ApiClient\"]\ndraft[\"draft envelope operations\"]\nresult[\"result dict\"]\n\napi --> draft\ndraft --> result\n",
+      "edges": [
+        [
+          "ApiClient -> draft operations",
+          "Creates, lists, checks, or deletes draft envelopes."
+        ]
+      ]
+    },
+    "docusignSendEnvelopeFn": {
+      "title": "Function Graph: integrations/docusign_client.py::send_envelope(envelope_id)",
+      "summary": "Sends a prepared envelope through the DocuSign API.",
+      "hint": "This function reconciles back to File Graph: integrations/docusign_client.py.",
+      "parentKey": "docusignClientFile",
+      "reconcileFrom": "result",
+      "explanation": [
+        "This step transitions a prepared draft into an active signature workflow."
+      ],
+      "code": "\nflowchart TD\nenvelope[\"envelope_id\"]\napi[\"ApiClient\"]\nsend[\"DocuSign send call\"]\nresult[\"result dict\"]\n\nenvelope --> api\napi --> send\nsend --> result\n",
+      "edges": [
+        [
+          "envelope_id -> DocuSign send call",
+          "Transitions the envelope into a sent state."
+        ]
+      ]
+    },
+    "docusignStatusFn": {
+      "title": "Function Graph: integrations/docusign_client.py::get_envelope_status(envelope_id)",
+      "summary": "Reads the current envelope status for workflow reconciliation.",
+      "hint": "This function reconciles back to File Graph: integrations/docusign_client.py.",
+      "parentKey": "docusignClientFile",
+      "reconcileFrom": "result",
+      "explanation": [
+        "Webhook flows and MCP tools use this to confirm DocuSign workflow state."
+      ],
+      "code": "\nflowchart TD\nenvelope[\"envelope_id\"]\napi[\"ApiClient\"]\nstatus[\"DocuSign status response\"]\n\nenvelope --> api\napi --> status\n",
+      "edges": [
+        [
+          "envelope_id -> status response",
+          "Returns the current envelope state and metadata."
+        ]
+      ]
+    },
+    "emailToolsRenderFn": {
+      "title": "Function Graph: mcp_server/tools_email.py::_render_template(...)",
+      "summary": "Renders the email body used by draft and send helpers.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_email.py.",
+      "parentKey": "emailToolsFile",
+      "reconcileFrom": "html",
+      "explanation": [
+        "Template rendering is the shared content path for onboarding, clearance, and clear-to-start emails."
+      ],
+      "code": "\nflowchart TD\ntemplate[\"template + workflow data\"]\nhtml[\"rendered HTML\"]\n\ntemplate --> html\n",
+      "edges": [
+        [
+          "template data -> rendered HTML",
+          "Creates the HTML email body used downstream."
+        ]
+      ]
+    },
+    "emailToolsDraftFn": {
+      "title": "Function Graph: mcp_server/tools_email.py::draft_onboarding_email_for_employee(...)",
+      "summary": "Builds and stores a draft onboarding email payload.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_email.py.",
+      "parentKey": "emailToolsFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "Draft flows let HR review email content before a send action occurs."
+      ],
+      "code": "\nflowchart TD\ndata[\"employee/workflow data\"]\nrender[\"_render_template(...)\"]\nstore[\"state store draft payload\"]\n\ndata --> render\nrender --> store\n",
+      "edges": [
+        [
+          "workflow data -> state store",
+          "Persists the rendered draft for later review or send."
+        ]
+      ]
+    },
+    "emailToolsSendWelcomeFn": {
+      "title": "Function Graph: mcp_server/tools_email.py::send_onboarding_email_to_employee(...)",
+      "summary": "Sends the onboarding welcome email through Outlook.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_email.py.",
+      "parentKey": "emailToolsFile",
+      "reconcileFrom": "send",
+      "explanation": [
+        "This helper renders the final content and dispatches it through the Graph email client."
+      ],
+      "code": "\nflowchart TD\nrender[\"_render_template(...)\"]\nclient[\"OutlookEmailClient.send_email(...)\"]\nsend[\"send result\"]\n\nrender --> client\nclient --> send\n",
+      "edges": [
+        [
+          "rendered welcome email -> OutlookEmailClient",
+          "Dispatches the onboarding email."
+        ]
+      ]
+    },
+    "emailToolsSendBackgroundFn": {
+      "title": "Function Graph: mcp_server/tools_email.py::send_background_clearance_confirmation_email(...)",
+      "summary": "Sends the background-clearance confirmation email.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_email.py.",
+      "parentKey": "emailToolsFile",
+      "reconcileFrom": "send",
+      "explanation": [
+        "This workflow-specific helper shares the same render-and-send pattern as other email tools."
+      ],
+      "code": "\nflowchart TD\nrender[\"_render_template(...)\"]\nclient[\"OutlookEmailClient.send_email(...)\"]\nsend[\"send result\"]\n\nrender --> client\nclient --> send\n",
+      "edges": [
+        [
+          "rendered confirmation email -> OutlookEmailClient",
+          "Dispatches the background-clearance confirmation."
+        ]
+      ]
+    },
+    "emailToolsSendClearFn": {
+      "title": "Function Graph: mcp_server/tools_email.py::send_clear_to_start_email(...)",
+      "summary": "Sends the clear-to-start workflow email.",
+      "hint": "This function reconciles back to File Graph: mcp_server/tools_email.py.",
+      "parentKey": "emailToolsFile",
+      "reconcileFrom": "send",
+      "explanation": [
+        "This helper closes the workflow loop with a final readiness email."
+      ],
+      "code": "\nflowchart TD\nrender[\"_render_template(...)\"]\nclient[\"OutlookEmailClient.send_email(...)\"]\nsend[\"send result\"]\n\nrender --> client\nclient --> send\n",
+      "edges": [
+        [
+          "rendered clear-to-start email -> OutlookEmailClient",
+          "Dispatches the final workflow email."
+        ]
+      ]
+    },
+    "stateStoreFactoryFn": {
+      "title": "Function Graph: runtime/state_store.py::create_state_store(...)",
+      "summary": "Chooses the configured durable state backend.",
+      "hint": "This function reconciles back to File Graph: runtime/state_store.py + state_store_cosmos.py.",
+      "parentKey": "stateFile",
+      "reconcileFrom": "backend",
+      "explanation": [
+        "The app uses one async interface and swaps in file or Cosmos implementations underneath."
+      ],
+      "code": "\nflowchart TD\nconfig[\"backend config\"]\nfile[\"FileStateStore\"]\ncosmos[\"CosmosStateStore\"]\n\nconfig -- \"file\" --> file\nconfig -- \"cosmos\" --> cosmos\n",
+      "edges": [
+        [
+          "backend config -> implementation",
+          "Returns the selected durable state backend."
+        ]
+      ]
+    },
+    "stateStoreFileBackendFn": {
+      "title": "Function Graph: runtime/state_store.py::FileStateStore",
+      "summary": "Stores namespaced state records as local JSON files.",
+      "hint": "This function reconciles back to File Graph: runtime/state_store.py + state_store_cosmos.py.",
+      "parentKey": "stateFile",
+      "reconcileFrom": "files",
+      "explanation": [
+        "The file backend is used for local development and testing."
+      ],
+      "code": "\nflowchart TD\nmethods[\"get/put/delete/list\"]\nfiles[\"local JSON files\"]\n\nmethods --> files\n",
+      "edges": [
+        [
+          "state methods -> JSON files",
+          "Reads and writes durable local state records."
+        ]
+      ]
+    },
+    "stateStoreCosmosBackendFn": {
+      "title": "Function Graph: runtime/state_store_cosmos.py::CosmosStateStore",
+      "summary": "Stores namespaced state records in Cosmos DB.",
+      "hint": "This function reconciles back to File Graph: runtime/state_store.py + state_store_cosmos.py.",
+      "parentKey": "stateFile",
+      "reconcileFrom": "cosmos",
+      "explanation": [
+        "Production state persistence uses Cosmos containers and namespace/key partitioning."
+      ],
+      "code": "\nflowchart TD\nmethods[\"get/put/delete/list\"]\ncosmos[\"Cosmos DB container\"]\n\nmethods --> cosmos\n",
+      "edges": [
+        [
+          "state methods -> Cosmos DB",
+          "Reads and writes durable production state records."
+        ]
+      ]
+    },
+    "stateStoreMethodsFn": {
+      "title": "Function Graph: StateStore methods",
+      "summary": "Shared async state operations used across the app.",
+      "hint": "This function reconciles back to File Graph: runtime/state_store.py + state_store_cosmos.py.",
+      "parentKey": "stateFile",
+      "reconcileFrom": "store",
+      "explanation": [
+        "Most app components only know about the generic state-store methods, not the specific backend."
+      ],
+      "code": "\nflowchart TD\nkey[\"namespace + key\"]\nmethods[\"get / put / delete / list_keys / get_all\"]\nrecord[\"durable state record\"]\n\nkey --> methods\nmethods --> record\n",
+      "edges": [
+        [
+          "namespace/key -> state methods",
+          "Reads or writes durable state payloads."
+        ]
+      ]
+    },
+    "observabilityConfigureFn": {
+      "title": "Function Graph: observability/setup.py::configure_observability(settings)",
+      "summary": "Top-level wiring for exporters, metadata, and instrumentation.",
+      "hint": "This function reconciles back to File Graph: observability/setup.py.",
+      "parentKey": "observabilityFile",
+      "reconcileFrom": "configured",
+      "explanation": [
+        "This is the main observability entrypoint called during process startup."
+      ],
+      "code": "\nflowchart TD\nsettings[\"observability settings\"]\nmetadata[\"service metadata\"]\nexporters[\"Azure/Phoenix exporters\"]\ninstrumentation[\"LangChain/log instrumentation\"]\n\nsettings --> metadata\nsettings --> exporters\nsettings --> instrumentation\n",
+      "edges": [
+        [
+          "settings -> exporters/instrumentation",
+          "Configures telemetry behavior for the process."
+        ]
+      ]
+    },
+    "observabilityAzureFn": {
+      "title": "Function Graph: observability/setup.py::_configure_azure_monitor(settings)",
+      "summary": "Installs the Azure Monitor OpenTelemetry exporter path.",
+      "hint": "This function reconciles back to File Graph: observability/setup.py.",
+      "parentKey": "observabilityFile",
+      "reconcileFrom": "exporter",
+      "explanation": [
+        "Azure Monitor wiring is enabled when the relevant connection-string settings are present."
+      ],
+      "code": "\nflowchart TD\nsettings[\"Azure Monitor settings\"]\nexporter[\"Azure Monitor exporter\"]\n\nsettings --> exporter\n",
+      "edges": [
+        [
+          "Azure settings -> exporter",
+          "Installs the Azure Monitor telemetry exporter."
+        ]
+      ]
+    },
+    "observabilityPhoenixFn": {
+      "title": "Function Graph: observability/setup.py::_configure_phoenix(settings)",
+      "summary": "Installs the Phoenix OTLP exporter path.",
+      "hint": "This function reconciles back to File Graph: observability/setup.py.",
+      "parentKey": "observabilityFile",
+      "reconcileFrom": "exporter",
+      "explanation": [
+        "Phoenix configuration supplies OTLP endpoint, headers, and optional filtering."
+      ],
+      "code": "\nflowchart TD\nsettings[\"Phoenix OTLP settings\"]\nexporter[\"OTLP exporter\"]\n\nsettings --> exporter\n",
+      "edges": [
+        [
+          "Phoenix settings -> OTLP exporter",
+          "Installs the Phoenix trace export path."
+        ]
+      ]
+    },
+    "observabilityLangchainFn": {
+      "title": "Function Graph: observability/setup.py::_configure_langchain_instrumentation()",
+      "summary": "Hooks LangChain/OpenInference callbacks into the runtime.",
+      "hint": "This function reconciles back to File Graph: observability/setup.py.",
+      "parentKey": "observabilityFile",
+      "reconcileFrom": "callbacks",
+      "explanation": [
+        "Agent and tool traces become richer once LangChain instrumentation is installed."
+      ],
+      "code": "\nflowchart TD\ncallbacks[\"LangChain/OpenInference callbacks\"]\nruntime[\"agent/tool runtime\"]\n\ncallbacks --> runtime\n",
+      "edges": [
+        [
+          "callbacks -> runtime",
+          "Attaches agent/tool tracing callbacks to the execution path."
+        ]
+      ]
+    },
+    "tracingStartSpanFn": {
+      "title": "Function Graph: observability/tracing.py::start_span(name, attrs)",
+      "summary": "Creates a span wrapper around a runtime operation.",
+      "hint": "This function reconciles back to File Graph: observability/tracing.py + pii.py.",
+      "parentKey": "tracingFile",
+      "reconcileFrom": "span",
+      "explanation": [
+        "Runtime code calls this helper around Teams, webhook, agent, and tool operations."
+      ],
+      "code": "\nflowchart TD\noperation[\"operation name + attrs\"]\nspan[\"OpenTelemetry span\"]\n\noperation --> span\n",
+      "edges": [
+        [
+          "operation metadata -> span",
+          "Starts the runtime tracing scope."
+        ]
+      ]
+    },
+    "tracingSetAttributesFn": {
+      "title": "Function Graph: observability/tracing.py::set_span_attributes(...)",
+      "summary": "Attaches structured attributes and exception details to a span.",
+      "hint": "This function reconciles back to File Graph: observability/tracing.py + pii.py.",
+      "parentKey": "tracingFile",
+      "reconcileFrom": "span",
+      "explanation": [
+        "Attribute helpers centralize trace metadata shape before export."
+      ],
+      "code": "\nflowchart TD\nattrs[\"raw attrs/exception fields\"]\nsafe[\"safe_attributes(...)\"]\nspan[\"span.set_attribute(...)\"]\n\nattrs --> safe\nsafe --> span\n",
+      "edges": [
+        [
+          "raw attrs -> safe_attributes()",
+          "Normalizes and sanitizes trace attributes before writing them."
+        ]
+      ]
+    },
+    "tracingSafeAttributesFn": {
+      "title": "Function Graph: observability/pii.py::safe_attributes(...)",
+      "summary": "Redacts or hashes sensitive values before telemetry export.",
+      "hint": "This function reconciles back to File Graph: observability/tracing.py + pii.py.",
+      "parentKey": "tracingFile",
+      "reconcileFrom": "safe",
+      "explanation": [
+        "This is the last gate before payload-like values become telemetry attributes."
+      ],
+      "code": "\nflowchart TD\nraw[\"raw attrs\"]\nrules[\"PII hashing/redaction rules\"]\nsafe[\"sanitized attrs\"]\n\nraw --> rules\nrules --> safe\n",
+      "edges": [
+        [
+          "raw attrs -> sanitized attrs",
+          "Applies hashing, dropping, or passthrough rules based on settings."
+        ]
+      ]
+    }
+  }
+}
