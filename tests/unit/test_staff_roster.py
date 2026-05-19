@@ -895,7 +895,7 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
     tracker.resolve_employee_relaxed.return_value = {
         "found": True,
         "name": "Matt",
-        "email": "mdoyle@bridgeprepacademy.com",
+        "email": "mdoyle@example.com",
         "location": "Collier",
         "job_title": "Teacher",
         "position": "Teacher",
@@ -924,7 +924,7 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
                 roster_rows,
                 [
                     roster_rows[0],
-                    ["Matt", "", "mdoyle@bridgeprepacademy.com", "Teacher", "Teacher", "Collier"],
+                    ["Matt", "", "mdoyle@example.com", "Teacher", "Teacher", "Collier"],
                     ["Totals", "1", "", "Teacher", "", "Collier"],
                 ],
             ]),
@@ -933,7 +933,7 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
         patch.object(client, "_graph_workbook_request", new=AsyncMock(return_value={})),
     ):
         result = await client.add_employee_to_staff_roster(
-            "mdoyle@bridgeprepacademy.com",
+            "mdoyle@example.com",
             "Teacher",
             location="Collier",
             job_title="Instructional Coach",
@@ -942,7 +942,7 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
 
     assert result["success"] is True
     tracker.resolve_employee_relaxed.assert_awaited_once_with(
-        "mdoyle@bridgeprepacademy.com",
+        "mdoyle@example.com",
         location="Collier",
         job_title="Instructional Coach",
         status_change="New Hire",

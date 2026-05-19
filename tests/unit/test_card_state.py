@@ -27,7 +27,7 @@ async def test_new_hire_card_state_is_composite_keyed(tmp_path) -> None:
     store_mod.store = FileStateStore(str(tmp_path))
     try:
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Bronx",
             job_title="Teacher",
             channel_id="channel-1",
@@ -37,7 +37,7 @@ async def test_new_hire_card_state_is_composite_keyed(tmp_path) -> None:
             title="New Hire Requested",
         )
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Queens",
             job_title="Teacher",
             channel_id="channel-1",
@@ -46,9 +46,9 @@ async def test_new_hire_card_state_is_composite_keyed(tmp_path) -> None:
             title="Pay Increase Requested",
         )
 
-        ambiguous = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com"))
-        bronx = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher"))
-        queens = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Queens", "Teacher"))
+        ambiguous = await get_new_hire_card(EmployeeIdentity("mdoyle@example.com"))
+        bronx = await get_new_hire_card(EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher"))
+        queens = await get_new_hire_card(EmployeeIdentity("mdoyle@example.com", "Queens", "Teacher"))
 
         assert ambiguous is None
         assert bronx is not None
@@ -66,7 +66,7 @@ async def test_mark_new_hire_action_complete_only_updates_matching_composite_car
     store_mod.store = FileStateStore(str(tmp_path))
     try:
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Bronx",
             job_title="Teacher",
             channel_id="channel-1",
@@ -75,7 +75,7 @@ async def test_mark_new_hire_action_complete_only_updates_matching_composite_car
             title="New Hire Requested",
         )
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Queens",
             job_title="Teacher",
             channel_id="channel-1",
@@ -85,12 +85,12 @@ async def test_mark_new_hire_action_complete_only_updates_matching_composite_car
         )
 
         result = await mark_new_hire_action_complete(
-            EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Queens", "Teacher"),
+            EmployeeIdentity("mdoyle@example.com", "Queens", "Teacher"),
             "create_docusign_draft",
         )
 
-        bronx = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher"))
-        queens = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Queens", "Teacher"))
+        bronx = await get_new_hire_card(EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher"))
+        queens = await get_new_hire_card(EmployeeIdentity("mdoyle@example.com", "Queens", "Teacher"))
 
         assert result is not None
         assert bronx is not None
@@ -107,7 +107,7 @@ async def test_get_new_hire_card_does_not_fallback_when_submission_id_does_not_m
     store_mod.store = FileStateStore(str(tmp_path))
     try:
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Bronx",
             job_title="Teacher",
             status_change="New Hire",
@@ -118,7 +118,7 @@ async def test_get_new_hire_card_does_not_fallback_when_submission_id_does_not_m
             title="New Hire Requested",
         )
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Orange",
             job_title="Teacher",
             status_change="Pay Increase",
@@ -130,7 +130,7 @@ async def test_get_new_hire_card_does_not_fallback_when_submission_id_does_not_m
         )
 
         result = await get_new_hire_card(
-            EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher", "New Hire"),
+            EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher", "New Hire"),
             submission_id="sub-2",
         )
 
@@ -138,7 +138,7 @@ async def test_get_new_hire_card_does_not_fallback_when_submission_id_does_not_m
         assert result["message_id"] == "msg-2"
 
         missing = await get_new_hire_card(
-            EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher", "New Hire"),
+            EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher", "New Hire"),
             submission_id="sub-missing",
         )
 
@@ -153,7 +153,7 @@ async def test_get_docusign_card_does_not_fallback_when_submission_id_does_not_m
     store_mod.store = FileStateStore(str(tmp_path))
     try:
         await save_docusign_status_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             employee_name="Matthew Doyle",
             channel_id="channel-1",
             message_id="doc-msg-1",
@@ -166,7 +166,7 @@ async def test_get_docusign_card_does_not_fallback_when_submission_id_does_not_m
             status_change="New Hire",
         )
         await save_docusign_status_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             employee_name="Matthew Doyle",
             channel_id="channel-1",
             message_id="doc-msg-2",
@@ -180,7 +180,7 @@ async def test_get_docusign_card_does_not_fallback_when_submission_id_does_not_m
         )
 
         result = await get_docusign_status_card(
-            EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher", "New Hire"),
+            EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher", "New Hire"),
             submission_id="sub-2",
         )
 
@@ -188,7 +188,7 @@ async def test_get_docusign_card_does_not_fallback_when_submission_id_does_not_m
         assert result["message_id"] == "doc-msg-2"
 
         missing = await get_docusign_status_card(
-            EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher", "New Hire"),
+            EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher", "New Hire"),
             submission_id="sub-missing",
         )
 
@@ -204,7 +204,7 @@ async def test_new_hire_card_state_ttl_metadata_is_not_persisted_in_payload(tmp_
     store_mod.store = store
     try:
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Bronx",
             job_title="Teacher",
             status_change="New Hire",
@@ -214,7 +214,7 @@ async def test_new_hire_card_state_ttl_metadata_is_not_persisted_in_payload(tmp_
             title="New Hire Requested",
         )
 
-        stored = await store.get("new_hire_card", "mdoyle@bridgeprepacademy.com|bronx|teacher|new hire")
+        stored = await store.get("new_hire_card", "mdoyle@example.com|bronx|teacher|new hire")
 
         assert stored is not None
         assert TTL_SECONDS_FIELD not in stored
@@ -228,7 +228,7 @@ async def test_refresh_new_hire_card_rehydrates_from_tracker_and_migrates_key(tm
     store_mod.store = FileStateStore(str(tmp_path))
     try:
         await save_new_hire_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             work_location="Bronx",
             job_title="Teacher",
             status_change="New Hire",
@@ -244,7 +244,7 @@ async def test_refresh_new_hire_card_rehydrates_from_tracker_and_migrates_key(tm
         tracker.find_employee_in_tracker.return_value = {
             "found": True,
             "name": "Matthew Doyle",
-            "email": "mdoyle@bridgeprepacademy.com",
+            "email": "mdoyle@example.com",
             "submission_id": "sub-1",
             "location": "Collier",
             "job_title": "Instructional Coach",
@@ -262,10 +262,10 @@ async def test_refresh_new_hire_card_rehydrates_from_tracker_and_migrates_key(tm
                 new=AsyncMock(return_value={"success": True}),
             ) as update_card,
         ):
-            result = await refresh_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher", "New Hire"))
+            result = await refresh_new_hire_card(EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher", "New Hire"))
 
         assert result["success"] is True
-        updated = await get_new_hire_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Collier", "Instructional Coach", "Transfer In"))
+        updated = await get_new_hire_card(EmployeeIdentity("mdoyle@example.com", "Collier", "Instructional Coach", "Transfer In"))
         assert updated is not None
         assert updated["employee_name"] == "Matthew Doyle"
         assert updated["requested_start_date"] == "2026-05-01"
@@ -280,7 +280,7 @@ async def test_refresh_new_hire_card_rehydrates_from_tracker_and_migrates_key(tm
 def test_new_hire_card_formats_requested_start_date_for_display() -> None:
     card = new_hire_card(
         employee_name="Matthew Doyle",
-        employee_email="mdoyle@bridgeprepacademy.com",
+        employee_email="mdoyle@example.com",
         summary="Summary",
         requested_start_date="2026-04-16",
     )
@@ -296,7 +296,7 @@ async def test_refresh_docusign_status_card_rehydrates_from_tracker_and_migrates
     store_mod.store = FileStateStore(str(tmp_path))
     try:
         await save_docusign_status_card(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             channel_id="channel-1",
             message_id="msg-2",
             envelope_id="env-1",
@@ -313,7 +313,7 @@ async def test_refresh_docusign_status_card_rehydrates_from_tracker_and_migrates
         tracker = AsyncMock()
         tracker.find_employee_in_tracker.return_value = {
             "found": True,
-            "email": "mdoyle@bridgeprepacademy.com",
+            "email": "mdoyle@example.com",
             "submission_id": "sub-1",
             "location": "Collier",
             "job_title": "Instructional Coach",
@@ -330,15 +330,15 @@ async def test_refresh_docusign_status_card_rehydrates_from_tracker_and_migrates
                 new=AsyncMock(return_value={"success": True}),
             ) as update_card,
         ):
-            result = await refresh_docusign_status_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Bronx", "Teacher", "New Hire"))
+            result = await refresh_docusign_status_card(EmployeeIdentity("mdoyle@example.com", "Bronx", "Teacher", "New Hire"))
 
         assert result["success"] is True
-        updated = await get_docusign_status_card(EmployeeIdentity("mdoyle@bridgeprepacademy.com", "Collier", "Instructional Coach", "Transfer In"))
+        updated = await get_docusign_status_card(EmployeeIdentity("mdoyle@example.com", "Collier", "Instructional Coach", "Transfer In"))
         assert updated is not None
         assert updated["submission_id"] == "sub-1"
         card = update_card.await_args.kwargs["card"]
         facts = card["body"][2]["facts"]
-        assert {"title": "Employee", "value": "mdoyle@bridgeprepacademy.com"} in facts
+        assert {"title": "Employee", "value": "mdoyle@example.com"} in facts
         assert {"title": "Location", "value": "Collier"} in facts
         assert {"title": "Job Title", "value": "Instructional Coach"} in facts
         send_action = next(action for action in card["actions"] if action.get("title") == "Send Offer Letter")

@@ -636,14 +636,14 @@ class TestGetOnboardingStatus:
             "matches": [
                 {
                     "row_id": "12",
-                    "email": "mdoyle@bridgeprepacademy.com",
+                    "email": "mdoyle@example.com",
                     "location": "Bronx",
                     "job_title": "Teacher",
                     "added_to_tracker": "2026-04-01",
                 },
                 {
                     "row_id": "15",
-                    "email": "mdoyle@bridgeprepacademy.com",
+                    "email": "mdoyle@example.com",
                     "location": "Queens",
                     "job_title": "Assistant Principal",
                     "added_to_tracker": "2026-04-02",
@@ -656,7 +656,7 @@ class TestGetOnboardingStatus:
         register(mcp)
 
         tool_fn = await _get_tool_fn(mcp, "get_onboarding_status")
-        result = await tool_fn(employee_email="mdoyle@bridgeprepacademy.com")
+        result = await tool_fn(employee_email="mdoyle@example.com")
 
         assert result["found"] is False
         assert result["multiple_matches"] is True
@@ -837,7 +837,7 @@ class TestDocuSignTools:
         register(mcp)
 
         tool_fn = await _get_tool_fn(mcp, "check_docusign_draft_exists")
-        result = await tool_fn(employee_email="mdoyle@bridgeprepacademy.com")
+        result = await tool_fn(employee_email="mdoyle@example.com")
 
         assert result["exists"] is False
         assert result["multiple_matches"] is True
@@ -874,14 +874,14 @@ class TestDocuSignTools:
         register(mcp)
 
         tool_fn = await _get_tool_fn(mcp, "check_docusign_draft_exists")
-        result = await tool_fn(employee_email="mdoyle@bridgeprepacademy.com")
+        result = await tool_fn(employee_email="mdoyle@example.com")
 
         assert result["exists"] is True
         assert result["work_location"] == "Collier"
         assert result["job_title"] == "Instructional Coach"
         assert result["status_change"] == "New Hire"
         self.docusign.check_draft_exists.assert_awaited_once_with(
-            "mdoyle@bridgeprepacademy.com",
+            "mdoyle@example.com",
             "Collier",
             "Instructional Coach",
             "New Hire",
@@ -891,7 +891,7 @@ class TestDocuSignTools:
     async def test_check_docusign_draft_exists_uses_submission_id_to_refresh_tracker_fields(self):
         self.tracker.resolve_employee_relaxed.return_value = {
             "found": True,
-            "email": "mdoyle@bridgeprepacademy.com",
+            "email": "mdoyle@example.com",
             "submission_id": "sub-123",
             "location": "Collier",
             "job_title": "Content, Teacher I (Bachelor's Degree)",
@@ -906,20 +906,20 @@ class TestDocuSignTools:
 
         tool_fn = await _get_tool_fn(mcp, "check_docusign_draft_exists")
         result = await tool_fn(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             job_title="Teacher",
             submission_id="sub-123",
         )
 
         self.tracker.resolve_employee_relaxed.assert_awaited_once_with(
-            "mdoyle@bridgeprepacademy.com",
+            "mdoyle@example.com",
             location="",
             job_title="Teacher",
             status_change="",
             submission_id="sub-123",
         )
         self.docusign.check_draft_exists.assert_awaited_once_with(
-            "mdoyle@bridgeprepacademy.com",
+            "mdoyle@example.com",
             "Collier",
             "Content, Teacher I (Bachelor's Degree)",
             "New Hire",
@@ -932,7 +932,7 @@ class TestDocuSignTools:
         self.tracker.resolve_employee_relaxed.return_value = {
             "found": True,
             "name": "Matt",
-            "email": "mdoyle@bridgeprepacademy.com",
+            "email": "mdoyle@example.com",
             "location": "Orange",
             "job_title": "Teacher",
             "status_change": "Transfer In",
@@ -957,7 +957,7 @@ class TestDocuSignTools:
 
         tool_fn = await _get_tool_fn(mcp, "create_offer_letter_draft_from_tracker")
         result = await tool_fn(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             submission_id="sub-123",
         )
 
@@ -966,7 +966,7 @@ class TestDocuSignTools:
         assert result["start_date"] == "2026-04-10"
         assert result["review_url"] == "https://review.example.com/env-789"
         self.tracker.resolve_employee_relaxed.assert_awaited_once_with(
-            "mdoyle@bridgeprepacademy.com",
+            "mdoyle@example.com",
             location="",
             job_title="",
             status_change="",
@@ -974,7 +974,7 @@ class TestDocuSignTools:
         )
         self.docusign.create_envelope_draft.assert_awaited_once_with(
             employee_name="Matt",
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             start_date="2026-04-10",
             position="Teacher",
             work_location="Orange",
@@ -987,7 +987,7 @@ class TestDocuSignTools:
         self.tracker.resolve_employee_relaxed.return_value = {
             "found": True,
             "name": "Matt",
-            "email": "mdoyle@bridgeprepacademy.com",
+            "email": "mdoyle@example.com",
             "location": "Orange",
             "job_title": "Teacher",
             "status_change": "Transfer In",
@@ -1011,19 +1011,19 @@ class TestDocuSignTools:
 
         tool_fn = await _get_tool_fn(mcp, "delete_offer_letter_draft_from_tracker")
         result = await tool_fn(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             submission_id="sub-123",
         )
 
         self.tracker.resolve_employee_relaxed.assert_awaited_once_with(
-            "mdoyle@bridgeprepacademy.com",
+            "mdoyle@example.com",
             location="",
             job_title="",
             status_change="",
             submission_id="sub-123",
         )
         self.docusign.check_draft_exists.assert_awaited_once_with(
-            "mdoyle@bridgeprepacademy.com",
+            "mdoyle@example.com",
             "Orange",
             "Teacher",
             "Transfer In",
@@ -1484,7 +1484,7 @@ class TestTrackerTools:
         register(mcp)
         tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
         result = await tool_fn(
-            employee_email="ncruz@bridgeprepacademy.com",
+            employee_email="ncruz@example.com",
             stage_name="Background Submission",
         )
 
@@ -1623,7 +1623,7 @@ class TestTrackerTools:
             "found": True,
             "row_id": "12",
             "name": "Matt",
-            "email": "mdoyle@bridgeprepacademy.com",
+            "email": "mdoyle@example.com",
             "stages": {
                 "Drug Screening": "N/A",
             },
@@ -1635,7 +1635,7 @@ class TestTrackerTools:
         register(mcp)
         tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
         result = await tool_fn(
-            employee_email="mdoyle@bridgeprepacademy.com",
+            employee_email="mdoyle@example.com",
             stage_name="Drug Screening",
         )
 

@@ -378,7 +378,7 @@ async def test_update_stage_relaxes_stale_identity_filters_for_unique_email_matc
     row = _build_row(
         {
             "Staff Name": "Nancy Cruz",
-            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Staff Email": "ncruz@example.com",
             "Work Location": "Collier",
             "Job Title": "Teacher",
             "Status Change": "New Hire",
@@ -402,7 +402,7 @@ async def test_update_stage_relaxes_stale_identity_filters_for_unique_email_matc
         ) as mock_request,
     ):
         result = await client.update_stage(
-            "ncruz@bridgeprepacademy.com",
+            "ncruz@example.com",
             "Background Submission",
             location="Collier",
             job_title="Wrong Title",
@@ -419,7 +419,7 @@ async def test_update_stage_emits_tracker_latency_spans(span_exporter):
     row = _build_row(
         {
             "Staff Name": "Nancy Cruz",
-            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Staff Email": "ncruz@example.com",
             "Work Location": "Collier",
             "Job Title": "Teacher",
             "Status Change": "New Hire",
@@ -443,7 +443,7 @@ async def test_update_stage_emits_tracker_latency_spans(span_exporter):
         ),
     ):
         result = await client.update_stage(
-            "ncruz@bridgeprepacademy.com",
+            "ncruz@example.com",
             "Background Submission",
             location="Collier",
             job_title="Wrong Title",
@@ -473,7 +473,7 @@ async def test_update_stage_surfaces_ambiguity_for_duplicate_email_matches():
     row1 = _build_row(
         {
             "Staff Name": "Nancy Cruz",
-            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Staff Email": "ncruz@example.com",
             "Work Location": "Collier",
             "Job Title": "Teacher",
             "Status Change": "New Hire",
@@ -483,7 +483,7 @@ async def test_update_stage_surfaces_ambiguity_for_duplicate_email_matches():
     row2 = _build_row(
         {
             "Staff Name": "Nancy Cruz",
-            "Staff Email": "ncruz@bridgeprepacademy.com",
+            "Staff Email": "ncruz@example.com",
             "Work Location": "Collier",
             "Job Title": "Coach",
             "Status Change": "Transfer In",
@@ -500,7 +500,7 @@ async def test_update_stage_surfaces_ambiguity_for_duplicate_email_matches():
         ) as mock_request,
     ):
         result = await client.update_stage(
-            "ncruz@bridgeprepacademy.com",
+            "ncruz@example.com",
             "Background Submission",
             location="Wrong Location",
             job_title="Wrong Title",
