@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "id": "REPLACE_ME_TEAMS_APP_ID",
   "developer": {
-    "name": "BridgePrep Academy",
+    "name": "Acme Academy",
     "websiteUrl": "https://example.com",
     "privacyUrl": "https://example.com/privacy",
     "termsOfUseUrl": "https://example.com/terms"
@@ -15,11 +15,11 @@
   },
   "name": {
     "short": "Onboarding Agent",
-    "full": "BridgePrep Onboarding Agent"
+    "full": "Acme Onboarding Agent"
   },
   "description": {
     "short": "Teams bot for onboarding workflows and status queries.",
-    "full": "BridgePrep Onboarding Agent handles onboarding workflow updates, status lookups, and channel notifications in Microsoft Teams."
+    "full": "Acme Onboarding Agent handles onboarding workflow updates, status lookups, and channel notifications in Microsoft Teams."
   },
   "accentColor": "#0F6CBD",
   "bots": [

@@ -1484,7 +1484,7 @@ class TestTrackerTools:
         register(mcp)
         tool_fn = await _get_tool_fn(mcp, "update_tracker_stage")
         result = await tool_fn(
-            employee_email="ncruz@example.com",
+            employee_email="alice@example.com",
             stage_name="Background Submission",
         )
 

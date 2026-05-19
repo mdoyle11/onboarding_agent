@@ -3,12 +3,12 @@
 
 Examples:
     uv run python scripts/find_excel_ids.py list-drives
-    uv run python scripts/find_excel_ids.py list-sites --search bridgeprep
+    uv run python scripts/find_excel_ids.py list-sites --search yourorg
     uv run python scripts/find_excel_ids.py list-site-drives --site-id contoso.sharepoint.com,site-id,web-id
     uv run python scripts/find_excel_ids.py list-items --drive-id b!abc123
     uv run python scripts/find_excel_ids.py search --drive-id b!abc123 --name roster
     uv run python scripts/find_excel_ids.py explore
-    uv run python scripts/find_excel_ids.py explore-sites --search bridgeprep
+    uv run python scripts/find_excel_ids.py explore-sites --search yourorg
 """
 
 from __future__ import annotations
