@@ -101,6 +101,28 @@ class StaffRosterClient(WorkbookGraphClient):
         return None
 
     @staticmethod
+    def _find_group_vacancy_row(
+        roster_rows: list[list[Any]],
+        roster_header: dict[str, int],
+        *,
+        job_category: str,
+    ) -> int | None:
+        employee_id_idx = roster_header.get("employee_id")
+        if employee_id_idx is None:
+            return None
+
+        normalized_group = job_category.strip().lower()
+        for row_number, row in enumerate(roster_rows[1:], start=2):
+            if _cell(row, roster_header.get("group")).lower() != normalized_group:
+                continue
+            if _cell(row, employee_id_idx).strip().lower() != "vacancy":
+                continue
+            if StaffRosterClient._is_totals_row(row, roster_header):
+                continue
+            return row_number
+        return None
+
+    @staticmethod
     def _updated_roster_row(
         existing_row: list[Any],
         roster_header: dict[str, int],
@@ -117,10 +139,18 @@ class StaffRosterClient(WorkbookGraphClient):
         talent: str = "",
         background_eligibility: str = "",
         date_approved: str = "",
+        fingerprint_expiration_date: str = "",
         license_value: str = "",
         nine_cell: str = "",
         notes: str = "",
         roster_status: str = "",
+        salary: str = "",
+        start_date: str = "",
+        term: str = "",
+        rate_type: str = "",
+        part_time_full_time: str = "",
+        shared: str = "",
+        funding_source: str = "",
         nti_culture: str = "",
         nti_content: str = "",
         mupd_culture: str = "",
@@ -164,6 +194,8 @@ class StaffRosterClient(WorkbookGraphClient):
             set_if_present("background_eligibility", background_eligibility)
         if date_approved:
             set_if_present("date_approved", date_approved)
+        if fingerprint_expiration_date:
+            set_if_present("fingerprint_expiration_date", fingerprint_expiration_date)
         if license_value:
             set_if_present("license", license_value)
         if nine_cell:
@@ -172,6 +204,20 @@ class StaffRosterClient(WorkbookGraphClient):
             set_if_present("notes", notes)
         if roster_status:
             set_if_present("status", roster_status)
+        if salary:
+            set_if_present("salary", salary)
+        if start_date:
+            set_if_present("start_date", start_date)
+        if term:
+            set_if_present("term", term)
+        if rate_type:
+            set_if_present("rate_type", rate_type)
+        if part_time_full_time:
+            set_if_present("part_time_full_time", part_time_full_time)
+        if shared:
+            set_if_present("shared", shared)
+        if funding_source:
+            set_if_present("funding_source", funding_source)
         if nti_culture:
             set_if_present("nti_culture", nti_culture)
         if nti_content:
@@ -270,37 +316,27 @@ class StaffRosterClient(WorkbookGraphClient):
                 item_id=workbook["item_id"],
                 sheet_name=workbook["capacity_sheet_name"],
             )
-            roster_rows = await self._used_range_rows(
-                drive_id=workbook["drive_id"],
-                item_id=workbook["item_id"],
-                sheet_name=workbook["roster_sheet_name"],
-            )
 
             if not capacity_rows:
                 return {"success": False, "error": "Capacity sheet is empty"}
-            if not roster_rows:
-                return {"success": False, "error": "Roster sheet is empty"}
 
             capacity_header = _header_map(capacity_rows[0], CAPACITY_ALIASES)
-            if "group" not in capacity_header or "capacity" not in capacity_header:
-                return {"success": False, "error": "Capacity sheet must contain Group and Capacity columns"}
-
-            roster_aliases = {**ROSTER_REQUIRED_ALIASES, **ROSTER_OPTIONAL_ALIASES}
-            roster_header = _header_map(roster_rows[0], roster_aliases)
-            missing = [key for key in ROSTER_REQUIRED_ALIASES if key not in roster_header]
-            if missing:
-                missing_list = ", ".join(missing)
-                return {"success": False, "error": f"Roster sheet is missing required columns: {missing_list}"}
+            required_capacity_columns = {"group", "capacity", "vacancies"}
+            if not required_capacity_columns.issubset(capacity_header):
+                return {"success": False, "error": "Capacity sheet must contain Group, Capacity, and Vacancies columns"}
 
             resolved_category = self._resolve_group_value(capacity_rows, capacity_header, job_category)
             normalized_category = resolved_category.strip().lower()
             max_capacity: int | None = None
+            remaining_capacity = 0
             for row in capacity_rows[1:]:
                 if _cell(row, capacity_header.get("group")).lower() != normalized_category:
                     continue
                 capacity_text = _cell(row, capacity_header.get("capacity"))
                 if capacity_text:
                     max_capacity = int(float(capacity_text))
+                vacancies_text = _cell(row, capacity_header.get("vacancies"))
+                remaining_capacity = int(float(vacancies_text)) if vacancies_text else 0
                 break
 
             if max_capacity is None:
@@ -311,13 +347,7 @@ class StaffRosterClient(WorkbookGraphClient):
                     "error": f"No capacity row found for category '{job_category}'",
                 }
 
-            current_count = 0
-            for row in roster_rows[1:]:
-                if self._is_totals_row(row, roster_header):
-                    continue
-                group = _cell(row, roster_header.get("group"))
-                if group.lower() == normalized_category:
-                    current_count += 1
+            current_count = max_capacity - remaining_capacity
 
             return {
                 "success": True,
@@ -325,7 +355,7 @@ class StaffRosterClient(WorkbookGraphClient):
                 "job_category": resolved_category or job_category,
                 "current_count": current_count,
                 "max_capacity": max_capacity,
-                "remaining_capacity": max_capacity - current_count,
+                "remaining_capacity": remaining_capacity,
                 "has_capacity": current_count < max_capacity,
             }
         except Exception as exc:
@@ -345,37 +375,18 @@ class StaffRosterClient(WorkbookGraphClient):
                 item_id=workbook["item_id"],
                 sheet_name=workbook["capacity_sheet_name"],
             )
-            roster_rows = await self._used_range_rows(
-                drive_id=workbook["drive_id"],
-                item_id=workbook["item_id"],
-                sheet_name=workbook["roster_sheet_name"],
-            )
 
             if not capacity_rows:
                 return {"success": False, "location": location, "error": "Capacity sheet is empty"}
-            if not roster_rows:
-                return {"success": False, "location": location, "error": "Roster sheet is empty"}
 
             capacity_header = _header_map(capacity_rows[0], CAPACITY_ALIASES)
-            if "group" not in capacity_header or "capacity" not in capacity_header:
-                return {"success": False, "location": location, "error": "Capacity sheet must contain Group and Capacity columns"}
-
-            roster_aliases = {**ROSTER_REQUIRED_ALIASES, **ROSTER_OPTIONAL_ALIASES}
-            roster_header = _header_map(roster_rows[0], roster_aliases)
-            missing = [key for key in ROSTER_REQUIRED_ALIASES if key not in roster_header]
-            if missing:
-                missing_list = ", ".join(missing)
-                return {"success": False, "location": location, "error": f"Roster sheet is missing required columns: {missing_list}"}
-
-            current_counts: dict[str, int] = {}
-            for row in roster_rows[1:]:
-                if self._is_totals_row(row, roster_header):
-                    continue
-                group = _cell(row, roster_header.get("group"))
-                if not group:
-                    continue
-                normalized_group = group.lower()
-                current_counts[normalized_group] = current_counts.get(normalized_group, 0) + 1
+            required_capacity_columns = {"group", "capacity", "vacancies"}
+            if not required_capacity_columns.issubset(capacity_header):
+                return {
+                    "success": False,
+                    "location": location,
+                    "error": "Capacity sheet must contain Group, Capacity, and Vacancies columns",
+                }
 
             vacancies: list[dict[str, Any]] = []
             categories: list[dict[str, Any]] = []
@@ -393,8 +404,9 @@ class StaffRosterClient(WorkbookGraphClient):
                 if not capacity_text:
                     continue
                 max_capacity = int(float(capacity_text))
-                current_count = current_counts.get(normalized_group, 0)
-                remaining_capacity = max_capacity - current_count
+                vacancies_text = _cell(row, capacity_header.get("vacancies"))
+                remaining_capacity = int(float(vacancies_text)) if vacancies_text else 0
+                current_count = max_capacity - remaining_capacity
                 category = {
                     "job_category": group,
                     "current_count": current_count,
@@ -530,10 +542,18 @@ class StaffRosterClient(WorkbookGraphClient):
                         "talent": _cell(row, roster_header.get("talent")),
                         "background_eligibility": _cell(row, roster_header.get("background_eligibility")),
                         "date_approved": _cell(row, roster_header.get("date_approved")),
+                        "fingerprint_expiration_date": _cell(row, roster_header.get("fingerprint_expiration_date")),
                         "license": _cell(row, roster_header.get("license")),
                         "nine_cell": _cell(row, roster_header.get("nine_cell")),
                         "notes": _cell(row, roster_header.get("notes")),
                         "status": _cell(row, roster_header.get("status")),
+                        "salary": _cell(row, roster_header.get("salary")),
+                        "start_date": _cell(row, roster_header.get("start_date")),
+                        "term": _cell(row, roster_header.get("term")),
+                        "rate_type": _cell(row, roster_header.get("rate_type")),
+                        "part_time_full_time": _cell(row, roster_header.get("part_time_full_time")),
+                        "shared": _cell(row, roster_header.get("shared")),
+                        "funding_source": _cell(row, roster_header.get("funding_source")),
                         "nti_culture": _cell(row, roster_header.get("nti_culture")),
                         "nti_content": _cell(row, roster_header.get("nti_content")),
                         "mupd_culture": _cell(row, roster_header.get("mupd_culture")),
@@ -675,6 +695,11 @@ class StaffRosterClient(WorkbookGraphClient):
                     "location": location,
                     "error": f"No roster section found for group '{job_category}'",
                 }
+            vacancy_row = self._find_group_vacancy_row(
+                roster_rows,
+                roster_header,
+                job_category=resolved_job_category or job_category,
+            )
 
             for index, row in enumerate(roster_rows[1:], start=2):
                 if self._row_matches_roster_identity(
@@ -705,7 +730,7 @@ class StaffRosterClient(WorkbookGraphClient):
                     "location": location,
                     "error": str(capacity.get("error", "Capacity check failed")),
                 }
-            if not capacity.get("has_capacity"):
+            if not capacity.get("has_capacity") and vacancy_row is None:
                 return {
                     "success": False,
                     "employee_email": employee_email,
@@ -756,6 +781,18 @@ class StaffRosterClient(WorkbookGraphClient):
                 item_id=workbook["item_id"],
             )
 
+            vacancy_removed = False
+            if vacancy_row is not None:
+                delete_row = vacancy_row + 1 if vacancy_row >= insert_row else vacancy_row
+                await self._delete_roster_row(
+                    drive_id=workbook["drive_id"],
+                    item_id=workbook["item_id"],
+                    sheet_name=workbook["roster_sheet_name"],
+                    row_number=delete_row,
+                    row_width=len(new_row),
+                )
+                vacancy_removed = True
+
             refreshed_rows = await self._used_range_rows(
                 drive_id=workbook["drive_id"],
                 item_id=workbook["item_id"],
@@ -788,7 +825,12 @@ class StaffRosterClient(WorkbookGraphClient):
                         "location": location,
                         "row_id": str(insert_row),
                         "already_exists": False,
-                        "remaining_capacity": int(capacity.get("remaining_capacity", 0)) - 1,
+                        "remaining_capacity": (
+                            int(capacity.get("remaining_capacity", 0))
+                            if vacancy_removed
+                            else int(capacity.get("remaining_capacity", 0)) - 1
+                        ),
+                        "vacancy_removed": vacancy_removed,
                     }
             for index, row in enumerate(refreshed_rows[1:], start=2):
                 if self._row_matches_roster_identity(
@@ -808,7 +850,12 @@ class StaffRosterClient(WorkbookGraphClient):
                         "location": location,
                         "row_id": str(index),
                         "already_exists": False,
-                        "remaining_capacity": int(capacity.get("remaining_capacity", 0)) - 1,
+                        "remaining_capacity": (
+                            int(capacity.get("remaining_capacity", 0))
+                            if vacancy_removed
+                            else int(capacity.get("remaining_capacity", 0)) - 1
+                        ),
+                        "vacancy_removed": vacancy_removed,
                     }
 
             return {
@@ -1028,10 +1075,18 @@ class StaffRosterClient(WorkbookGraphClient):
         talent: str = "",
         background_eligibility: str = "",
         date_approved: str = "",
+        fingerprint_expiration_date: str = "",
         license_value: str = "",
         nine_cell: str = "",
         notes: str = "",
         roster_status: str = "",
+        salary: str = "",
+        start_date: str = "",
+        term: str = "",
+        rate_type: str = "",
+        part_time_full_time: str = "",
+        shared: str = "",
+        funding_source: str = "",
         nti_culture: str = "",
         nti_content: str = "",
         mupd_culture: str = "",
@@ -1129,10 +1184,18 @@ class StaffRosterClient(WorkbookGraphClient):
                 talent=talent,
                 background_eligibility=background_eligibility,
                 date_approved=date_approved,
+                fingerprint_expiration_date=fingerprint_expiration_date,
                 license_value=license_value,
                 nine_cell=nine_cell,
                 notes=notes,
                 roster_status=roster_status,
+                salary=salary,
+                start_date=start_date or str(employee.get("start_date", "") or ""),
+                term=term,
+                rate_type=rate_type,
+                part_time_full_time=part_time_full_time,
+                shared=shared,
+                funding_source=funding_source,
                 nti_culture=nti_culture,
                 nti_content=nti_content,
                 mupd_culture=mupd_culture,

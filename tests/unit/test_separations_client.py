@@ -11,7 +11,7 @@ from onboarding_agent.integrations.workbook.separations_client import Separation
 async def test_add_separation_record_preserves_work_and_personal_email_columns() -> None:
     client = SeparationsClient()
     rows = [
-        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"],
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"],
     ]
     graph = AsyncMock(return_value={})
 
@@ -52,7 +52,7 @@ async def test_add_separation_record_preserves_work_and_personal_email_columns()
 async def test_add_separation_record_writes_workflow_type_to_status_column() -> None:
     client = SeparationsClient()
     rows = [
-        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Status"],
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Status"],
     ]
     graph = AsyncMock(return_value={})
 
@@ -92,7 +92,7 @@ async def test_add_separation_record_writes_workflow_type_to_status_column() -> 
 async def test_add_separation_record_requires_workflow_type_before_writing() -> None:
     client = SeparationsClient()
     rows = [
-        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Separation Type", "Status"],
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Separation Type", "Status"],
     ]
     graph = AsyncMock(return_value={})
 
@@ -132,7 +132,7 @@ async def test_add_separation_record_requires_workflow_type_before_writing() -> 
 async def test_add_separation_record_allows_same_email_for_different_role() -> None:
     client = SeparationsClient()
     rows = [
-        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Separation Type"],
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Separation Type"],
         ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Separation"],
     ]
     graph = AsyncMock(return_value={})
@@ -174,7 +174,7 @@ async def test_add_separation_record_allows_same_email_for_different_role() -> N
 async def test_add_separation_record_dedupes_same_email_same_role() -> None:
     client = SeparationsClient()
     rows = [
-        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Separation Type"],
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Separation Type"],
         ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Separation"],
     ]
 

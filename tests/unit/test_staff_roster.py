@@ -29,18 +29,54 @@ def test_column_letter_supports_multi_letter_ranges():
 
 
 def test_header_map_matches_normalized_staff_roster_headers():
-    header = ["Employee Name", "Employee Email", "Group", "Start Date"]
+    header = ["Employee Name", "Work Email", "Group", "Hire Date"]
     aliases = {
         "name": {"employee name"},
-        "email": {"employee email"},
-        "group": {"job category", "group"},
-        "start_date": {"start date"},
+        "email": {"work email"},
+        "group": {"group"},
+        "start_date": {"hire date"},
     }
     assert _header_map(header, aliases) == {
         "name": 0,
         "email": 1,
         "group": 2,
         "start_date": 3,
+    }
+
+
+def test_header_map_matches_finalized_staff_roster_headers():
+    header = [
+        "Employee ID",
+        "Employee Name",
+        "Job Title",
+        "Work Email",
+        "Date",
+        "Fingerprint Expiration Date",
+        "Hire Date",
+        "Part Time/Full Time",
+        "Funding Source",
+    ]
+    aliases = {
+        "employee_id": {"employee id"},
+        "name": {"employee name"},
+        "position": {"job title"},
+        "email": {"work email"},
+        "date_approved": {"date"},
+        "fingerprint_expiration_date": {"fingerprint expiration date"},
+        "start_date": {"hire date"},
+        "part_time_full_time": {"part time/full time"},
+        "funding_source": {"funding source"},
+    }
+    assert _header_map(header, aliases) == {
+        "employee_id": 0,
+        "name": 1,
+        "position": 2,
+        "email": 3,
+        "date_approved": 4,
+        "fingerprint_expiration_date": 5,
+        "start_date": 6,
+        "part_time_full_time": 7,
+        "funding_source": 8,
     }
 
 
@@ -545,13 +581,13 @@ async def test_execute_new_hire_card_action_refreshes_review_link_on_docusign_ca
 @pytest.mark.asyncio
 async def test_staff_roster_client_verifies_write_before_success():
     client = StaffRosterClient()
-    roster_header = ["Employee Name", "Employee Email", "Group", "Location"]
+    roster_header = ["Employee Name", "Work Email", "Group", "Location"]
     roster_rows = [
         roster_header,
         ["Existing Teacher", "existing@company.org", "Teacher", "Bronx"],
         ["Totals", "1", "Teacher", "Bronx"],
     ]
-    capacity_header = ["Group", "Capacity"]
+    capacity_header = ["Group", "Capacity", "Vacancies"]
 
     with (
         patch.object(
@@ -576,7 +612,7 @@ async def test_staff_roster_client_verifies_write_before_success():
             new=AsyncMock(
                 side_effect=[
                     roster_rows,
-                        [capacity_header, ["Teacher", "2"]],
+                        [capacity_header, ["Teacher", "2", "1"]],
                     roster_rows,
                     [roster_header],
                 ]
@@ -609,8 +645,7 @@ async def test_staff_roster_client_verifies_write_before_success():
 @pytest.mark.asyncio
 async def test_check_staff_roster_capacity_normalizes_plural_group_name():
     client = StaffRosterClient()
-    capacity_rows = [["Group", "Capacity"], ["Teacher", "15"]]
-    roster_rows = [["Employee Name", "Work Email", "Group"], ["Alice Example", "alice@example.com", "Teacher"]]
+    capacity_rows = [["Group", "Capacity", "Vacancies"], ["Teacher", "15", "14"]]
 
     with (
         patch.object(
@@ -626,7 +661,7 @@ async def test_check_staff_roster_capacity_normalizes_plural_group_name():
         patch.object(
             client,
             "_used_range_rows",
-            new=AsyncMock(side_effect=[capacity_rows, roster_rows]),
+            new=AsyncMock(return_value=capacity_rows),
         ),
     ):
         result = await client.check_staff_roster_capacity("Collier", "Teachers")
@@ -639,12 +674,7 @@ async def test_check_staff_roster_capacity_normalizes_plural_group_name():
 @pytest.mark.asyncio
 async def test_check_staff_roster_capacity_counts_personal_email_only_rows():
     client = StaffRosterClient()
-    capacity_rows = [["Group", "Capacity"], ["Teacher", "1"]]
-    roster_rows = [
-        ["Employee Name", "Work Email", "Personal Email", "Group"],
-        ["Alice Example", "", "alice@example.com", "Teacher"],
-        ["Totals", "1", "", "Teacher"],
-    ]
+    capacity_rows = [["Group", "Capacity", "Vacancies"], ["Teacher", "1", "0"]]
 
     with (
         patch.object(
@@ -660,7 +690,7 @@ async def test_check_staff_roster_capacity_counts_personal_email_only_rows():
         patch.object(
             client,
             "_used_range_rows",
-            new=AsyncMock(side_effect=[capacity_rows, roster_rows]),
+            new=AsyncMock(return_value=capacity_rows),
         ),
     ):
         result = await client.check_staff_roster_capacity("Collier", "Teacher")
@@ -674,18 +704,10 @@ async def test_check_staff_roster_capacity_counts_personal_email_only_rows():
 async def test_list_staff_roster_vacancies_returns_groups_below_capacity():
     client = StaffRosterClient()
     capacity_rows = [
-        ["Group", "Capacity"],
-        ["Teacher", "2"],
-        ["Support Staff", "1"],
-        ["Leadership", "1"],
-    ]
-    roster_rows = [
-        ["Employee Name", "Work Email", "Personal Email", "Group"],
-        ["Alice Example", "", "alice@example.com", "Teacher"],
-        ["Totals", "1", "", "Teacher"],
-        ["Bob Example", "bob@example.com", "", "Support Staff"],
-        ["Carol Example", "carol@example.com", "", "Leadership"],
-        ["Dana Example", "dana@example.com", "", "Leadership"],
+        ["Group", "Capacity", "Vacancies"],
+        ["Teacher", "2", "1"],
+        ["Support Staff", "1", "0"],
+        ["Leadership", "1", "-1"],
     ]
 
     with (
@@ -702,7 +724,7 @@ async def test_list_staff_roster_vacancies_returns_groups_below_capacity():
         patch.object(
             client,
             "_used_range_rows",
-            new=AsyncMock(side_effect=[capacity_rows, roster_rows]),
+            new=AsyncMock(return_value=capacity_rows),
         ),
     ):
         result = await client.list_staff_roster_vacancies("Collier")
@@ -749,11 +771,11 @@ async def test_list_staff_roster_vacancies_tool_returns_client_result(mock_staff
 async def test_add_employee_to_staff_roster_rejects_personal_email_only_capacity_full_group():
     client = StaffRosterClient()
     roster_rows = [
-        ["Employee Name", "Work Email", "Personal Email", "Group", "Position", "Location"],
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"],
         ["Alice Example", "", "alice@example.com", "Teacher", "Teacher", "Bronx"],
         ["Totals", "1", "", "Teacher", "", "Bronx"],
     ]
-    capacity_rows = [["Group", "Capacity"], ["Teacher", "1"]]
+    capacity_rows = [["Group", "Capacity", "Vacancies"], ["Teacher", "1", "0"]]
     tracker = AsyncMock()
     tracker.resolve_employee_relaxed.return_value = {
         "found": True,
@@ -805,7 +827,7 @@ async def test_add_employee_to_staff_roster_rejects_personal_email_only_capacity
 @pytest.mark.asyncio
 async def test_add_employee_to_staff_roster_inserts_above_group_totals():
     client = StaffRosterClient()
-    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_header = ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
     roster_rows_before = [
         roster_header,
         ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
@@ -821,7 +843,7 @@ async def test_add_employee_to_staff_roster_inserts_above_group_totals():
         ["Bob Example", "bob@company.org", "bob@example.com", "Auxiliary", "Custodian", "Bronx"],
         ["Totals", "1", "", "Auxiliary", "", "Bronx"],
     ]
-    capacity_rows = [["Group", "Capacity"], ["Teacher", "5"]]
+    capacity_rows = [["Group", "Capacity", "Vacancies"], ["Teacher", "5", "4"]]
     graph = AsyncMock(return_value={})
 
     with (
@@ -848,7 +870,6 @@ async def test_add_employee_to_staff_roster_inserts_above_group_totals():
                 side_effect=[
                     roster_rows_before,
                     capacity_rows,
-                    roster_rows_before,
                     roster_rows_after,
                 ]
             ),
@@ -884,13 +905,143 @@ async def test_add_employee_to_staff_roster_inserts_above_group_totals():
 
 
 @pytest.mark.asyncio
+async def test_add_employee_to_staff_roster_removes_group_vacancy_row():
+    client = StaffRosterClient()
+    roster_header = ["Employee ID", "Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
+    roster_rows_before = [
+        roster_header,
+        ["1001", "Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["Vacancy", "Vacancy", "", "", "Teacher", "", "Bronx"],
+        ["", "Totals", "2", "", "Teacher", "", "Bronx"],
+    ]
+    roster_rows_after = [
+        roster_header,
+        ["1001", "Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
+        ["", "Carol Example", "", "carol@example.com", "Teacher", "Teacher", "Bronx"],
+        ["", "Totals", "2", "", "Teacher", "", "Bronx"],
+    ]
+    capacity_rows = [["Group", "Capacity", "Vacancies"], ["Teacher", "3", "1"]]
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Carol Example",
+        "email": "carol@example.com",
+        "location": "Bronx",
+        "job_title": "Teacher",
+        "position": "Teacher",
+        "start_date": "2026-04-10",
+        "manager_email": "",
+    }
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.TrackerClient", return_value=tracker),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(side_effect=[roster_rows_before, capacity_rows, roster_rows_after]),
+        ),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.add_employee_to_staff_roster(
+            "carol@example.com",
+            "Teacher",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    assert result["success"] is True
+    assert result["vacancy_removed"] is True
+    assert result["row_id"] == "3"
+    assert result["remaining_capacity"] == 1
+    assert graph.await_args_list[0].args[0] == "POST"
+    assert "/range(address='A4%3AG4')/insert" in graph.await_args_list[0].args[1]
+    assert graph.await_args_list[1].args[0] == "PATCH"
+    assert "/range(address='A4%3AG4')" in graph.await_args_list[1].args[1]
+    assert graph.await_args_list[2].args[0] == "POST"
+    assert "/range(address='A3%3AG3')/delete" in graph.await_args_list[2].args[1]
+
+
+@pytest.mark.asyncio
+async def test_add_employee_to_staff_roster_allows_replacing_vacancy_when_capacity_is_full():
+    client = StaffRosterClient()
+    roster_header = ["Employee ID", "Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
+    roster_rows_before = [
+        roster_header,
+        ["Vacancy", "Vacancy", "", "", "Teacher", "", "Bronx"],
+        ["", "Totals", "1", "", "Teacher", "", "Bronx"],
+    ]
+    roster_rows_after = [
+        roster_header,
+        ["", "Carol Example", "", "carol@example.com", "Teacher", "Teacher", "Bronx"],
+        ["", "Totals", "1", "", "Teacher", "", "Bronx"],
+    ]
+    capacity_rows = [["Group", "Capacity", "Vacancies"], ["Teacher", "1", "0"]]
+    tracker = AsyncMock()
+    tracker.resolve_employee_relaxed.return_value = {
+        "found": True,
+        "name": "Carol Example",
+        "email": "carol@example.com",
+        "location": "Bronx",
+        "job_title": "Teacher",
+        "position": "Teacher",
+        "start_date": "2026-04-10",
+        "manager_email": "",
+    }
+    graph = AsyncMock(return_value={})
+
+    with (
+        patch("onboarding_agent.integrations.workbook.staff_roster_client.TrackerClient", return_value=tracker),
+        patch.object(
+            client,
+            "_used_range_rows",
+            new=AsyncMock(side_effect=[roster_rows_before, capacity_rows, roster_rows_after]),
+        ),
+        patch.object(
+            client,
+            "_staff_roster_workbook",
+            return_value={
+                "drive_id": "drive-1",
+                "item_id": "item-1",
+                "roster_sheet_name": "Roster",
+                "capacity_sheet_name": "Capacity",
+            },
+        ),
+        patch.object(client, "_graph_workbook_request", new=graph),
+    ):
+        result = await client.add_employee_to_staff_roster(
+            "carol@example.com",
+            "Teacher",
+            location="Bronx",
+            job_title="Teacher",
+            status_change="New Hire",
+        )
+
+    assert result["success"] is True
+    assert result["vacancy_removed"] is True
+    assert result["row_id"] == "2"
+    assert result["remaining_capacity"] == 0
+
+
+@pytest.mark.asyncio
 async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_location_unique():
     client = StaffRosterClient()
     roster_rows = [
-        ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"],
+        ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"],
         ["Totals", "0", "", "Teacher", "", "Collier"],
     ]
-    capacity_rows = [["Group", "Capacity"], ["Teacher", "2"]]
+    capacity_rows = [["Group", "Capacity", "Vacancies"], ["Teacher", "2", "2"]]
     tracker = AsyncMock()
     tracker.resolve_employee_relaxed.return_value = {
         "found": True,
@@ -915,18 +1066,17 @@ async def test_add_employee_to_staff_roster_relaxes_tracker_job_title_when_locat
                 "capacity_sheet_name": "Capacity",
             },
         ),
-        patch.object(
-            client,
-            "_used_range_rows",
-            new=AsyncMock(side_effect=[
-                roster_rows,
-                capacity_rows,
-                roster_rows,
-                [
-                    roster_rows[0],
-                    ["Matt", "", "mdoyle@example.com", "Teacher", "Teacher", "Collier"],
-                    ["Totals", "1", "", "Teacher", "", "Collier"],
-                ],
+            patch.object(
+                client,
+                "_used_range_rows",
+                new=AsyncMock(side_effect=[
+                    roster_rows,
+                    capacity_rows,
+                    [
+                        roster_rows[0],
+                        ["Matt", "", "mdoyle@example.com", "Teacher", "Teacher", "Collier"],
+                        ["Totals", "1", "", "Teacher", "", "Collier"],
+                    ],
             ]),
         ),
         patch.object(client, "_insert_roster_row", new=AsyncMock()),
@@ -1041,10 +1191,18 @@ async def test_update_employee_in_staff_roster_returns_summary(
         talent="",
         background_eligibility="",
         date_approved="",
+        fingerprint_expiration_date="",
         license_value="",
         nine_cell="",
         notes="",
         roster_status="",
+        salary="",
+        start_date="",
+        term="",
+        rate_type="",
+        part_time_full_time="",
+        shared="",
+        funding_source="",
         nti_culture="",
         nti_content="",
         mupd_culture="",
@@ -1087,7 +1245,7 @@ async def test_find_employee_in_staff_roster_tool_returns_extended_fields(
 @pytest.mark.asyncio
 async def test_remove_employee_from_staff_roster_deletes_matching_row():
     client = StaffRosterClient()
-    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_header = ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
     roster_rows = [
         roster_header,
         ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
@@ -1155,7 +1313,7 @@ async def test_remove_employee_from_staff_roster_deletes_matching_row():
 @pytest.mark.asyncio
 async def test_update_employee_in_staff_roster_patches_existing_row():
     client = StaffRosterClient()
-    roster_header = ["Employee ID", "Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location", "Status"]
+    roster_header = ["Employee ID", "Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location", "Status"]
     roster_rows = [
         roster_header,
         ["", "Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx", ""],
@@ -1225,7 +1383,7 @@ async def test_update_employee_in_staff_roster_patches_existing_row():
 @pytest.mark.asyncio
 async def test_update_employee_in_staff_roster_moves_to_new_group_section():
     client = StaffRosterClient()
-    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_header = ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
     roster_rows = [
         roster_header,
         ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"],
@@ -1256,7 +1414,7 @@ async def test_update_employee_in_staff_roster_moves_to_new_group_section():
             new=AsyncMock(
                 side_effect=[
                     roster_rows,
-                    [["Group", "Capacity"], ["Auxiliary", "5"]],
+                    [["Group", "Capacity", "Vacancies"], ["Auxiliary", "5", "5"]],
                     roster_rows,
                     roster_rows,
                 ]
@@ -1301,7 +1459,7 @@ async def test_update_employee_in_staff_roster_moves_to_new_group_section():
 @pytest.mark.asyncio
 async def test_find_employee_in_staff_roster_falls_back_to_name_and_position_when_email_changes():
     client = StaffRosterClient()
-    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_header = ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
     roster_row = ["Alice Example", "alice@company.org", "", "Teacher", "Teacher", "Bronx"]
 
     with (
@@ -1337,7 +1495,7 @@ async def test_find_employee_in_staff_roster_falls_back_to_name_and_position_whe
 @pytest.mark.asyncio
 async def test_find_employee_in_staff_roster_prefers_personal_email_column():
     client = StaffRosterClient()
-    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_header = ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
     roster_row = ["Alice Example", "alice@company.org", "alice@example.com", "Teacher", "Teacher", "Bronx"]
 
     with (
@@ -1592,7 +1750,7 @@ async def test_handle_separation_card_action_does_not_create_partial_record_when
 @pytest.mark.asyncio
 async def test_remove_employee_from_staff_roster_prefers_roster_group_and_position_before_tracker_fallback():
     client = StaffRosterClient()
-    roster_header = ["Employee Name", "Employee Email", "Personal Email", "Group", "Position", "Location"]
+    roster_header = ["Employee Name", "Work Email", "Personal Email", "Group", "Job Title", "Location"]
     roster_rows = [
         roster_header,
         ["Alice Example", "", "alice@example.com", "Teacher", "Teacher", "Bronx"],

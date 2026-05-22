@@ -10,6 +10,7 @@ from onboarding_agent.integrations.teams.bot import (
     _refresh_cards_from_session_context,
     _refresh_draft_result_surfaces,
     _run_deterministic_card_action_in_background,
+    _send_clear_to_start_card_from_command,
     _should_refresh_cards,
 )
 from onboarding_agent.integrations.teams.card_actions import handle_clear_to_start_card_action
@@ -138,12 +139,32 @@ def test_parse_clear_to_start_command() -> None:
     assert usage == ""
 
 
+def test_parse_clear_to_start_command_accepts_submission_id_words() -> None:
+    handled, args, usage = _parse_clear_to_start_command(
+        "/clear-to-start employee@example.com submission id 163"
+    )
+
+    assert handled is True
+    assert args == ["employee@example.com", "163"]
+    assert usage == ""
+
+
 def test_parse_clear_to_start_command_reports_usage() -> None:
     handled, args, usage = _parse_clear_to_start_command("/clear-to-start")
 
     assert handled is True
     assert args == []
     assert usage == "Usage: /clear-to-start <email> [submission_id]"
+
+
+@pytest.mark.asyncio
+async def test_send_clear_to_start_card_from_command_rejects_partial_email() -> None:
+    result = await _send_clear_to_start_card_from_command(AsyncMock(), ["mdoyle@bridgeprepacademy"])
+
+    assert result == (
+        "Clear-to-start requires the employee's full email address. "
+        "Received `mdoyle@bridgeprepacademy`."
+    )
 
 
 def test_expand_slash_command_rejects_unknown_update_field_target() -> None:

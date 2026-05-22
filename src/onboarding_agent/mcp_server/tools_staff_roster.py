@@ -27,11 +27,19 @@ _ROSTER_UPDATE_PARAM_BY_FIELD = {
     "talent": "talent",
     "background_eligibility": "background_eligibility",
     "date_approved": "date_approved",
+    "fingerprint_expiration_date": "fingerprint_expiration_date",
     "license": "license_value",
     "personal_email": "personal_email",
     "nine_cell": "nine_cell",
     "notes": "notes",
     "status": "roster_status",
+    "salary": "salary",
+    "start_date": "start_date",
+    "term": "term",
+    "rate_type": "rate_type",
+    "part_time_full_time": "part_time_full_time",
+    "shared": "shared",
+    "funding_source": "funding_source",
     "nti_culture": "nti_culture",
     "nti_content": "nti_content",
     "mupd_culture": "mupd_culture",
@@ -62,9 +70,9 @@ def register(mcp: FastMCP) -> None:
         """List all staff roster groups with open capacity at one location.
 
         Use this for questions like "Are there any vacancies?", "What groups
-        have openings?", or "Which job categories are below capacity?". The
-        result includes only groups/job categories where current roster count
-        is below max capacity in `vacancies`, plus all capacity categories in
+        have openings?", or "Which job categories are below capacity?". This
+        reads the `Vacancies` formulas from the capacity sheet and returns only
+        groups with vacancies in `vacancies`, plus all capacity categories in
         `categories` for context.
         """
         return await _staff_roster().list_staff_roster_vacancies(location)
@@ -227,10 +235,18 @@ def register(mcp: FastMCP) -> None:
         talent: str = "",
         background_eligibility: str = "",
         date_approved: str = "",
+        fingerprint_expiration_date: str = "",
         license_value: str = "",
         nine_cell: str = "",
         notes: str = "",
         roster_status: str = "",
+        salary: str = "",
+        start_date: str = "",
+        term: str = "",
+        rate_type: str = "",
+        part_time_full_time: str = "",
+        shared: str = "",
+        funding_source: str = "",
         nti_culture: str = "",
         nti_content: str = "",
         mupd_culture: str = "",
@@ -245,9 +261,12 @@ def register(mcp: FastMCP) -> None:
         This tool supports broad row updates such as `employee_id`,
         `employee_name`, `position`, `work_email`, `personal_email`,
         `roster_status`, `grade_level`, `subject`, `supplements`, `talent`,
-        `background_eligibility`, `date_approved`, `license_value`,
-        `nine_cell`, `notes`, `nti_culture`, `nti_content`, `mupd_culture`,
-        `mupd_content`, `rt_boy_pd_content`, `cc_1`, `cc_2`, and `cc_3`.
+        `background_eligibility`, `date_approved`,
+        `fingerprint_expiration_date`, `license_value`, `nine_cell`, `notes`,
+        `salary`, `start_date`, `term`, `rate_type`,
+        `part_time_full_time`, `shared`, `funding_source`, `nti_culture`,
+        `nti_content`, `mupd_culture`, `mupd_content`,
+        `rt_boy_pd_content`, `cc_1`, `cc_2`, and `cc_3`.
 
         If `job_category` changes, the employee is moved into the target
         group's section above its `Totals` row. Use `current_job_category`
@@ -272,10 +291,18 @@ def register(mcp: FastMCP) -> None:
             talent=talent,
             background_eligibility=background_eligibility,
             date_approved=date_approved,
+            fingerprint_expiration_date=fingerprint_expiration_date,
             license_value=license_value,
             nine_cell=nine_cell,
             notes=notes,
             roster_status=roster_status,
+            salary=salary,
+            start_date=start_date,
+            term=term,
+            rate_type=rate_type,
+            part_time_full_time=part_time_full_time,
+            shared=shared,
+            funding_source=funding_source,
             nti_culture=nti_culture,
             nti_content=nti_content,
             mupd_culture=mupd_culture,

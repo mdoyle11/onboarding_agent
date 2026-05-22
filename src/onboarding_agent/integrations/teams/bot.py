@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shlex
 from typing import Any
 
@@ -49,6 +50,7 @@ from onboarding_agent.observability.pii import identifier_attributes, redact_tex
 from onboarding_agent.observability.tracing import set_span_attributes, start_span
 
 logger = logging.getLogger(__name__)
+_EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
 
 _SLASH_COMMAND_HELP = """\
 **Onboarding Agent Help**
@@ -217,7 +219,14 @@ def _parse_clear_to_start_command(user_text: str) -> tuple[bool, list[str], str]
         return False, [], ""
     if len(parts) < 2:
         return True, [], "Usage: /clear-to-start <email> [submission_id]"
-    return True, parts[1:], ""
+    args = parts[1:]
+    if len(args) >= 4 and args[1].lower() == "submission" and args[2].lower() == "id":
+        return True, [args[0], args[3]], ""
+    if len(args) >= 3 and args[1].lower() in {"submission-id", "submission_id"}:
+        return True, [args[0], args[2]], ""
+    if len(args) >= 3 and args[1].lower() == "id":
+        return True, [args[0], args[2]], ""
+    return True, args, ""
 
 
 async def _send_clear_to_start_card_from_command(context: TurnContext, args: list[str]) -> str:
@@ -225,6 +234,11 @@ async def _send_clear_to_start_card_from_command(context: TurnContext, args: lis
     from onboarding_agent.integrations.workbook.tracker_client import TrackerClient
 
     employee_email = args[0]
+    if not _EMAIL_RE.match(employee_email):
+        return (
+            "Clear-to-start requires the employee's full email address. "
+            f"Received `{employee_email}`."
+        )
     submission_id = args[1] if len(args) > 1 else ""
     tracker_record = await TrackerClient().find_employee_in_tracker(
         employee_email,

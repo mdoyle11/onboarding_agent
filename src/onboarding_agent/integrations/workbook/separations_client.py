@@ -136,10 +136,11 @@ class SeparationsClient(WorkbookGraphClient):
             # Populate from roster snapshot first, then override with explicit args
             _roster_fields = [
                 "employee_id", "position", "grade_level", "subject", "supplements",
-                "talent", "background_eligibility", "date_approved", "license",
-                "personal_email", "nine_cell", "status",
+                "talent", "background_eligibility", "date_approved", "fingerprint_expiration_date",
+                "license", "personal_email", "nine_cell", "status", "salary",
                 "nti_culture", "nti_content", "mupd_culture", "mupd_content",
                 "rt_boy_pd_content", "cc_1", "cc_2", "cc_3", "start_date",
+                "term", "rate_type", "part_time_full_time", "shared", "funding_source",
             ]
             for field in _roster_fields:
                 idx = header.get(field)
